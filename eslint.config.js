@@ -12,6 +12,7 @@ export default tseslint.config(
       "artifacts",
       "playwright-report",
       "test-results",
+      ".pfh",
     ],
   },
   js.configs.recommended,

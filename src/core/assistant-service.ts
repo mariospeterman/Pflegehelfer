@@ -12,11 +12,18 @@ import {
 } from "./assistant.js";
 import type { PflegehelferService } from "./service.js";
 import { DomainError, type Purpose } from "./types.js";
+import {
+  actionReviewLabel,
+  clinicalActionPlanSchema,
+  type ClinicalAction,
+} from "../ai/clinical-action-plan.js";
 
 export interface AssistantRequest {
   prompt: string;
   patientId: string | null;
   purpose?: Purpose;
+  inputModality?: "typed" | "voice";
+  voiceTranscriptConfirmed?: boolean;
 }
 
 export interface AssistantResponse {
@@ -57,28 +64,30 @@ export interface AssistantDraftHandoff {
 
 const q = (value: string): string => JSON.stringify(value);
 
-function toOpenUi(components: AssistantComponent[]): string {
+export function toOpenUi(components: AssistantComponent[]): string {
   const statements = components.map((component, index) => {
     const name = `item${index}`;
     switch (component.type) {
+      case "PatientPicker":
+        return `${name} = PatientPicker(${q(component.title)}, ${q(component.message)}, ${JSON.stringify(component.patients)})`;
       case "PatientSummary":
-        return `${name} = ClinicalCard("neutral", ${q(component.title)}, ${q(component.summary)}, ${q(component.sourceLabel)})`;
+        return `${name} = PatientContextCard(${q(component.patientId)}, ${q(component.title)}, ${q(component.summary)}, ${q(component.sourceLabel)})`;
       case "TaskList":
-        return `${name} = ClinicalCard("task", ${q(`${component.title} · ${component.count}`)}, ${q(component.summary)}, ${q(component.sourceLabel)})`;
+        return `${name} = TaskListCard(${q(component.title)}, ${component.count}, ${q(component.summary)}, ${q(component.sourceLabel)})`;
       case "VitalTrend":
-        return `${name} = VitalCard(${q(component.label)}, ${q(component.value)}, ${q(component.sourceLabel)})`;
+        return `${name} = VitalTrendCard(${q(component.label)}, ${q(component.value)}, ${q(component.sourceLabel)})`;
       case "HandoverChecklist":
-        return `${name} = ClinicalCard("handover", ${q(`${component.title} · ${component.openCount} offen`)}, ${q(component.summary)}, ${q(component.sourceLabel)})`;
+        return `${name} = HandoverDeltaCard(${q(component.title)}, ${component.openCount}, ${q(component.summary)}, ${q(component.sourceLabel)})`;
       case "DraftAction":
-        return `${name} = DraftActionCard(${q(component.kind)}, ${q(component.title)}, ${q(component.preview)}, ${q(component.actionLabel)}, ${q(component.intentToken)}, ${q(component.sourceLabel)})`;
+        return `${name} = DraftActionCard(${q(component.kind)}, ${q(component.title)}, ${q(component.preview)}, ${q(component.actionLabel)}, ${q(component.intentToken)}, ${q(component.sourceLabel)}, ${JSON.stringify(component.reviewItems ?? [])})`;
       case "MedicationReadOnly":
-        return `${name} = ClinicalCard("warning", "Medikation · nur lesbar", ${q(component.summary)}, ${q(component.sourceLabel)})`;
+        return `${name} = MedicationReadOnlyCard(${q(component.summary)}, ${q(component.sourceLabel)})`;
       case "SafetyAlert":
         return `${name} = SafetyNotice(${q(component.severity)}, ${q(component.message)})`;
       case "KnowledgeAnswer":
-        return `${name} = ClinicalCard("neutral", ${q(component.title)}, ${q(component.answer)}, ${q(component.sourceLabel)})`;
+        return `${name} = PolicyAnswerCard(${q(component.title)}, ${q(component.answer)}, ${q(component.sourceLabel)})`;
       case "UnknownState":
-        return `${name} = SafetyNotice("info", ${q(component.message)})`;
+        return `${name} = UnknownStateCard(${q(component.message)})`;
     }
   });
   return [
@@ -137,6 +146,12 @@ export class AssistantService {
         "Assistenzanfrage ist ungültig.",
         400,
       );
+    if (request.inputModality === "voice" && !request.voiceTranscriptConfirmed)
+      throw new DomainError(
+        "VALIDATION",
+        "Das Sprachtranskript muss vor der Verarbeitung sichtbar bestätigt werden.",
+        400,
+      );
     const snapshot = this.clinical.snapshot(userId, purpose);
     const patient = request.patientId
       ? snapshot.patients.find((item) => item.id === request.patientId)
@@ -183,6 +198,17 @@ export class AssistantService {
         );
       return patient;
     };
+    const patientPicker = (): AssistantComponent => ({
+      type: "PatientPicker",
+      title: "Patientenkontext wählen",
+      message:
+        "Diese Anfrage benötigt einen bewusst gewählten Patientenkontext. Es wurde nichts gelesen oder verändert.",
+      patients: snapshot.patients.map((item) => ({
+        id: item.id,
+        label: `${item.room} · ${item.displayName}`,
+        secondary: `Geb. ${item.birthDate.split("-").reverse().join(".")} · Fall ${item.mrn}`,
+      })),
+    });
     const issue = (
       command:
         | "note:draft"
@@ -204,7 +230,11 @@ export class AssistantService {
 
     switch (classification.intent) {
       case "patient-summary": {
-        const current = requirePatient();
+        const current = patient;
+        if (!current) {
+          components.push(patientPicker());
+          break;
+        }
         evidence.push({
           resourceId: `Patient/${current.id}`,
           version: current.source.version,
@@ -251,7 +281,11 @@ export class AssistantService {
         break;
       }
       case "latest-vitals": {
-        const current = requirePatient();
+        const current = patient;
+        if (!current) {
+          components.push(patientPicker());
+          break;
+        }
         const observations = snapshot.observations
           .filter((item) => item.patientId === current.id)
           .toSorted((a, b) => b.effectiveAt.localeCompare(a.effectiveAt));
@@ -322,7 +356,11 @@ export class AssistantService {
         break;
       }
       case "draft-note": {
-        const current = requirePatient();
+        const current = patient;
+        if (!current) {
+          components.push(patientPicker());
+          break;
+        }
         if (!["care-assistant", "registered-nurse"].includes(actor.role)) {
           components.push({
             type: "SafetyAlert",
@@ -345,13 +383,20 @@ export class AssistantService {
           title: `Pflegenotiz für ${current.displayName}`,
           preview: draft,
           actionLabel: "Als prüfpflichtigen Entwurf anlegen",
-          intentToken: issue("note:draft", { structuredText: draft }),
+          intentToken: issue("note:draft", {
+            structuredText: draft,
+            inputModality: request.inputModality ?? "typed",
+          }),
           sourceLabel: "Benutzereingabe · noch nicht dokumentiert",
         });
         break;
       }
       case "draft-physician-question": {
-        const current = requirePatient();
+        const current = patient;
+        if (!current) {
+          components.push(patientPicker());
+          break;
+        }
         if (
           [
             "administration",
@@ -384,7 +429,11 @@ export class AssistantService {
         break;
       }
       case "draft-task": {
-        const current = requirePatient();
+        const current = patient;
+        if (!current) {
+          components.push(patientPicker());
+          break;
+        }
         if (["management", "hr", "it", "quality-safety"].includes(actor.role)) {
           components.push({
             type: "SafetyAlert",
@@ -406,7 +455,11 @@ export class AssistantService {
         break;
       }
       case "care-update": {
-        const current = requirePatient();
+        const current = patient;
+        if (!current) {
+          components.push(patientPicker());
+          break;
+        }
         if (!["care-assistant", "registered-nurse"].includes(actor.role)) {
           components.push({
             type: "SafetyAlert",
@@ -416,32 +469,41 @@ export class AssistantService {
           });
           break;
         }
-        const normalized = prompt.replace(/\s+/g, " ").trim();
-        const bloodPressure = normalized.match(
-          /(?:blutdruck|\brr\b)[^0-9]{0,16}(\d{2,3})\s*(?:zu|\/|auf)\s*(\d{2,3})/i,
-        );
-        if (!bloodPressure)
+        const planned = await this.models.planCareUpdate(prompt);
+        if (!planned.plan || planned.plan.ambiguities.length > 0)
           throw new DomainError(
             "VALIDATION",
-            "Für den gebündelten Eintrag fehlt ein eindeutig lesbarer Blutdruck, zum Beispiel 151 zu 88.",
+            "Der gebündelte Eintrag ist nicht eindeutig. Bitte Messwert, ausgeführte Arbeit, Empfänger und Zeitpunkt klar nennen.",
             400,
           );
-        const systolic = Number(bloodPressure[1]);
-        const diastolic = Number(bloodPressure[2]);
-        const minutesMatch = normalized.match(/(?:in|nach)\s+(\d{1,3})\s*min/i);
-        const followUpMinutes = Math.min(
-          240,
-          Math.max(5, Number(minutesMatch?.[1] ?? 30)),
-        );
-        const dueAt = new Date(
-          Date.now() + followUpMinutes * 60_000,
-        ).toISOString();
-        const bundlePreview = [
-          `1. Pflegedokumentation: ${normalized} → nach Freigabe: pending-provider an ${current.source.provider === "carecoach" ? "careCoach" : "WiCare"}`,
-          `2. Blutdruck: ${systolic}/${diastolic} mmHg → nach Freigabe: pending-provider an device-gateway`,
-          "3. Teamnachricht: ärztlichen Dienst über den aktuellen Zustand informieren → Medplum Communication: sent",
-          `4. Folgeaufgabe: Blutdruckkontrolle in ${followUpMinutes} Minuten → Medplum Task: new`,
-        ].join("\n");
+        runtime = {
+          route:
+            planned.model === "deterministic-clinical-planner-v1"
+              ? "deterministic"
+              : planned.mode === "hosted-test"
+                ? "hosted-test"
+                : "fast-local",
+          label:
+            planned.model === "deterministic-clinical-planner-v1"
+              ? "Deterministischer klinischer Aktionsplan"
+              : `${planned.mode === "hosted-test" ? "Synthetischer Testdienst" : "Lokales Sprachmodell"} · strukturierter Aktionsplan`,
+          degraded: planned.degraded,
+        };
+        const reviewItems = planned.plan.actions.map((action) => ({
+          id: action.id,
+          label: actionReviewLabel(action),
+          kind:
+            action.type === "note-proposal"
+              ? ("note" as const)
+              : action.type === "observation-proposal"
+                ? ("observation" as const)
+                : action.type === "communication-proposal"
+                  ? ("communication" as const)
+                  : ("task" as const),
+        }));
+        const bundlePreview = reviewItems
+          .map((item, index) => `${index + 1}. ${item.label}`)
+          .join("\n");
         components.push({
           type: "DraftAction",
           kind: "care-update",
@@ -449,14 +511,11 @@ export class AssistantService {
           preview: bundlePreview,
           actionLabel: "Änderungen gemeinsam prüfen",
           intentToken: issue("care-update:draft", {
-            structuredText: normalized,
-            systolic: String(systolic),
-            diastolic: String(diastolic),
-            dueAt,
-            followUpMinutes: String(followUpMinutes),
+            plan: JSON.stringify(planned.plan),
+            inputModality: request.inputModality ?? "typed",
           }),
-          sourceLabel:
-            "Benutzereingabe · 4 getrennte, deterministisch validierte Aktionen",
+          sourceLabel: `${planned.model} · ${reviewItems.length} getrennte, servervalidierte Vorschläge`,
+          reviewItems,
         });
         break;
       }
@@ -501,7 +560,11 @@ export class AssistantService {
         break;
       }
       case "medication-request": {
-        const current = requirePatient();
+        const current = patient;
+        if (!current) {
+          components.push(patientPicker());
+          break;
+        }
         components.push(
           {
             type: "SafetyAlert",
@@ -625,6 +688,10 @@ export class AssistantService {
       case "note:draft":
         return this.clinical.createNoteDraft(userId, {
           patientId: intent.patientId,
+          transcript:
+            intent.payload.inputModality === "voice"
+              ? (intent.payload.structuredText ?? "")
+              : null,
           structuredText: intent.payload.structuredText ?? "",
           purpose: intent.purpose,
         });
@@ -667,70 +734,90 @@ export class AssistantService {
           } satisfies AssistantDraftHandoff,
         };
       case "care-update:draft": {
-        const structuredText = intent.payload.structuredText ?? "";
-        const systolic = Number(intent.payload.systolic);
-        const diastolic = Number(intent.payload.diastolic);
-        const dueAt = intent.payload.dueAt ?? new Date().toISOString();
-        const followUpMinutes = intent.payload.followUpMinutes ?? "30";
-        return this.clinical.runAtomically(() => {
-          const note = this.clinical.createNoteDraft(userId, {
-            patientId: intent.patientId,
-            transcript: structuredText,
-            structuredText,
-            purpose: intent.purpose,
-          });
-          const observation = this.clinical.createObservationDraft(userId, {
-            patientId: intent.patientId,
-            code: "blood-pressure",
-            value: systolic,
-            secondaryValue: diastolic,
-            effectiveAt: new Date().toISOString(),
-            purpose: intent.purpose,
-          });
-          const approvedNote = this.clinical.approve(userId, "note", note.id, {
-            expectedVersion: note.version,
-            patientMrn: currentPatient.mrn,
-            patientBirthDate: currentPatient.birthDate,
-            reviewedDiff: true,
-            purpose: intent.purpose,
-          });
-          const approvedObservation = this.clinical.approve(
-            userId,
-            "observation",
-            observation.id,
-            {
-              expectedVersion: observation.version,
-              patientMrn: currentPatient.mrn,
-              patientBirthDate: currentPatient.birthDate,
-              reviewedDiff: true,
-              purpose: intent.purpose,
-            },
+        const plan = clinicalActionPlanSchema.parse(
+          JSON.parse(intent.payload.plan ?? "null"),
+        );
+        const reviewed = new Set(context.reviewedActionIds ?? []);
+        if (
+          reviewed.size === 0 ||
+          [...reviewed].some(
+            (id) => !plan.actions.some((action) => action.id === id),
+          )
+        )
+          throw new DomainError(
+            "VALIDATION",
+            "Mindestens eine sichtbare Aktion muss einzeln bestätigt werden.",
+            400,
           );
-          const communication = this.clinical.createCommunication(userId, {
-            patientId: intent.patientId,
-            request: "Aktuellen Pflegezustand und Blutdruck beurteilen",
-            reason: structuredText,
-            recipientRole: "physician",
-            priority: "elevated",
-            dueAt,
-            purpose: intent.purpose,
+        const selected = plan.actions.filter((action) =>
+          reviewed.has(action.id),
+        );
+        return this.clinical.runAtomically(() => {
+          const results = selected.map((action: ClinicalAction) => {
+            switch (action.type) {
+              case "note-proposal":
+                return this.clinical.createNoteDraft(userId, {
+                  patientId: intent.patientId,
+                  transcript:
+                    intent.payload.inputModality === "voice"
+                      ? action.structuredText
+                      : null,
+                  structuredText: action.structuredText,
+                  purpose: intent.purpose,
+                });
+              case "observation-proposal":
+                return this.clinical.createObservationDraft(userId, {
+                  patientId: intent.patientId,
+                  code: action.code,
+                  value: action.systolic,
+                  secondaryValue: action.diastolic,
+                  effectiveAt: new Date().toISOString(),
+                  purpose: intent.purpose,
+                });
+              case "communication-proposal":
+                return this.clinical.createCommunication(userId, {
+                  patientId: intent.patientId,
+                  request: action.request,
+                  reason: action.reason,
+                  recipientRole: action.recipientRole,
+                  priority: action.priority,
+                  dueAt: new Date(
+                    Date.now() + action.dueInMinutes * 60_000,
+                  ).toISOString(),
+                  purpose: intent.purpose,
+                });
+              case "task-proposal":
+                return this.clinical.createTask(userId, {
+                  patientId: intent.patientId,
+                  title: action.title,
+                  reason: action.reason,
+                  ownerRole: action.ownerRole,
+                  priority: action.priority,
+                  dueAt: new Date(
+                    Date.now() + action.dueInMinutes * 60_000,
+                  ).toISOString(),
+                  purpose: intent.purpose,
+                });
+            }
           });
-          const task = this.clinical.createTask(userId, {
+          this.clinical.audit.append({
+            actor,
+            action: "assistant:plan-executed",
             patientId: intent.patientId,
-            title: "Blutdruck erneut kontrollieren",
-            reason: `Kontrolle nach ${followUpMinutes} Minuten gemäss freigegebenem Pflegeeintrag`,
-            ownerRole: "registered-nurse",
-            priority: "elevated",
-            dueAt,
             purpose: intent.purpose,
+            outcome: "success",
+            detail: {
+              selectedActionCount: selected.length,
+              excludedActionCount: plan.actions.length - selected.length,
+            },
           });
           return {
-            bundle: {
-              note: approvedNote,
-              observation: approvedObservation,
-              communication,
-              task,
-            },
+            bundle: results,
+            draftOnly: selected.every(
+              (action) =>
+                action.type === "note-proposal" ||
+                action.type === "observation-proposal",
+            ),
           };
         });
       }

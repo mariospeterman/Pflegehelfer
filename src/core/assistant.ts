@@ -13,6 +13,24 @@ const recordId = z.string().regex(/^[A-Za-z0-9.-]{1,64}$/);
 export const assistantComponentSchema = z.discriminatedUnion("type", [
   z
     .object({
+      type: z.literal("PatientPicker"),
+      title: z.string().trim().min(1).max(120),
+      message: boundedText,
+      patients: z
+        .array(
+          z
+            .object({
+              id: recordId,
+              label: z.string().trim().min(1).max(120),
+              secondary: z.string().trim().min(1).max(120),
+            })
+            .strict(),
+        )
+        .max(20),
+    })
+    .strict(),
+  z
+    .object({
       type: z.literal("PatientSummary"),
       patientId: recordId,
       title: z.string().trim().min(1).max(120),
@@ -61,6 +79,19 @@ export const assistantComponentSchema = z.discriminatedUnion("type", [
       actionLabel: z.string().trim().min(1).max(80),
       intentToken: z.uuid(),
       sourceLabel: z.string().trim().min(1).max(180),
+      reviewItems: z
+        .array(
+          z
+            .object({
+              id: z.string().regex(/^action-[1-6]$/),
+              label: z.string().trim().min(1).max(1400),
+              kind: z.enum(["note", "observation", "communication", "task"]),
+            })
+            .strict(),
+        )
+        .min(1)
+        .max(6)
+        .optional(),
     })
     .strict(),
   z
@@ -134,6 +165,7 @@ export interface IntentExecutionContext {
   purpose: Purpose;
   resourceVersion: number;
   explicitlyConfirmed: boolean;
+  reviewedActionIds?: string[];
 }
 
 /**

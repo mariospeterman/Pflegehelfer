@@ -208,6 +208,7 @@ describe("approved local knowledge and deep-model boundary", () => {
     vi.stubGlobal("fetch", fetchMock);
     const gateway = new ModelGateway({
       PFH_AI_MODE: "local-openai",
+      PFH_DEMO_MODE: "true",
       PFH_LLM_BASE_URL: "http://127.0.0.1:11434/v1",
       PFH_LLM_MODEL: "local-test-model",
     });
@@ -252,6 +253,7 @@ describe("approved local knowledge and deep-model boundary", () => {
     );
     const result = await new ModelGateway({
       PFH_AI_MODE: "local-openai",
+      PFH_DEMO_MODE: "true",
       PFH_LLM_BASE_URL: "http://127.0.0.1:11434/v1",
       PFH_LLM_MODEL: "local-test-model",
     }).classify("Was braucht diese Person heute besonders?");

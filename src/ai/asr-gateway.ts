@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { DomainError } from "../core/types.js";
 import { validateLocalAiEndpoint } from "./local-endpoint-policy.js";
+import {
+  extractCriticalEntities,
+  type CriticalEntity,
+} from "../core/critical-entities.js";
 
 export type AsrRuntimeMode = "disabled" | "browser-demo" | "local-openai";
 
@@ -13,8 +17,25 @@ export interface AsrRuntimeStatus {
 }
 
 const transcriptionResponse = z
-  .object({ text: z.string().trim().min(1).max(8000) })
+  .object({
+    text: z.string().trim().min(1).max(8000),
+    language: z.string().max(20).optional(),
+    segments: z
+      .array(z.object({ avg_logprob: z.number().optional() }).passthrough())
+      .optional(),
+  })
   .passthrough();
+
+export interface TranscriptionResult {
+  text: string;
+  language: string;
+  model: string;
+  confidence: number | null;
+  confidenceState: "reported" | "unknown";
+  criticalEntities: CriticalEntity[];
+  qualityFlags: string[];
+  audioRetained: false;
+}
 
 /**
  * Isolated speech-to-text gateway. Audio is streamed to the configured local
@@ -71,7 +92,10 @@ export class AsrGateway {
     };
   }
 
-  async transcribe(audio: Uint8Array, mimeType: string): Promise<string> {
+  async transcribe(
+    audio: Uint8Array,
+    mimeType: string,
+  ): Promise<TranscriptionResult> {
     let audioCopy: Uint8Array<ArrayBuffer> | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -97,7 +121,7 @@ export class AsrGateway {
       );
       form.set("model", this.model);
       form.set("language", "de");
-      form.set("response_format", "json");
+      form.set("response_format", "verbose_json");
       const controller = new AbortController();
       timer = setTimeout(() => controller.abort(), 60_000);
       const response = await fetch(
@@ -117,7 +141,31 @@ export class AsrGateway {
           `Lokaler ASR-Endpunkt antwortet mit HTTP ${response.status}.`,
           503,
         );
-      return transcriptionResponse.parse(await response.json()).text;
+      const parsed = transcriptionResponse.parse(await response.json());
+      const reported = parsed.segments
+        ?.map((segment) => segment.avg_logprob)
+        .filter((value): value is number => typeof value === "number");
+      const confidence =
+        reported && reported.length > 0
+          ? Math.max(
+              0,
+              Math.min(
+                1,
+                reported.reduce((sum, value) => sum + Math.exp(value), 0) /
+                  reported.length,
+              ),
+            )
+          : null;
+      return {
+        text: parsed.text,
+        language: parsed.language ?? "de-CH",
+        model: this.model,
+        confidence,
+        confidenceState: confidence === null ? "unknown" : "reported",
+        criticalEntities: extractCriticalEntities(parsed.text, confidence),
+        qualityFlags: confidence === null ? ["confidence-not-reported"] : [],
+        audioRetained: false,
+      };
     } catch (error) {
       if (error instanceof DomainError) throw error;
       throw new DomainError(

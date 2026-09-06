@@ -10,3 +10,4 @@ artifacts/
 !.env.example
 backups/
 .gstack/
+.pfh/

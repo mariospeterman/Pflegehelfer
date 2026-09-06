@@ -8,7 +8,9 @@ import {
   providerIntegrationRoutes,
   providerRegistryFixtures,
   ProviderContractSimulator,
+  ProviderRegistry,
   type CanonicalClinicalCommand,
+  type ProviderAdapter,
 } from "../src/core/provider-integration/index.js";
 
 const now = "2026-09-05T12:00:00.000Z";
@@ -106,6 +108,80 @@ describe("provider registry", () => {
           ),
       ).toBe(true);
     }
+  });
+
+  it("resolves verified capabilities without enabling gated operations", async () => {
+    const simulator = providerRegistryFixtures.simulatorManifest("wicare");
+    const production = providerRegistryFixtures.productionManifest("wicare");
+    const gatedWrite = production.gates.find(
+      (gate) => gate.capability === "Observation.write",
+    )!;
+    const manifest = adapterManifestSchema.parse({
+      ...simulator,
+      profile: "production",
+      displayName: "WiCare partially verified fixture",
+      capabilities: simulator.capabilities.map((capability) =>
+        capability.operation === "Observation.write"
+          ? {
+              ...capability,
+              support: "external-vendor-gate" as const,
+              conditions: ["Write contract not supplied"],
+            }
+          : capability,
+      ),
+      gates: [gatedWrite],
+    });
+    const adapter: ProviderAdapter = {
+      manifest: () => manifest,
+      discoverCapabilities: () => Promise.resolve(manifest.capabilities),
+      health: () =>
+        Promise.resolve({
+          status: "available",
+          checkedAt: now,
+          latencyMs: 1,
+          message: "verified fixture",
+        }),
+      pullChanges: () =>
+        Promise.resolve({
+          records: [],
+          nextCursor: { value: "0" },
+          hasMore: false,
+        }),
+      read: () => Promise.reject(new Error("not exercised")),
+      mapInbound: () => Promise.resolve([]),
+      prepareCommand: () => Promise.reject(new Error("not exercised")),
+      executeCommand: () => Promise.reject(new Error("not exercised")),
+      getCommandStatus: () => Promise.reject(new Error("not exercised")),
+      reconcile: () => Promise.reject(new Error("not exercised")),
+    };
+    const registry = new ProviderRegistry();
+    registry.register(
+      {
+        schemaVersion: "1.0.0",
+        provider: "wicare",
+        profile: "production",
+        adapterVersion: "1.0.0",
+        enabled: true,
+        connection: {
+          kind: "verified-vendor-contract",
+          contractReference: "verified-read-contract-v1",
+          credentialSecretRef: "providers/wicare/read",
+          endpoint: "https://wicare.example.invalid/api",
+        },
+      },
+      manifest,
+      adapter,
+    );
+    expect(
+      registry.adapterForOperation("wicare", "production", "Patient.read"),
+    ).toBe(adapter);
+    expect(
+      registry.adapterForOperation("wicare", "production", "Observation.write"),
+    ).toBeNull();
+    await expect(registry.get("wicare", "production")).resolves.toMatchObject({
+      operationalStatus: "DEGRADED",
+      gates: [expect.objectContaining({ capability: "Observation.write" })],
+    });
   });
 });
 

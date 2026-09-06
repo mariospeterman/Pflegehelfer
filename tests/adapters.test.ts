@@ -26,5 +26,11 @@ describe("FHIR R4 boundary mapping", () => {
       },
     });
     expect(observation.component).toHaveLength(2);
+    expect(
+      observationToFhirR4({
+        ...observations[0]!,
+        status: "pending-provider",
+      }).status,
+    ).toBe("final");
   });
 });

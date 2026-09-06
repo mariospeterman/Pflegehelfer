@@ -14,6 +14,8 @@ import type { CommandReceipt, ServiceCheckpoint } from "../core/service.js";
 
 const checkpointId = fhirResourceId("Binary", "workflow-control-plane-v1");
 const receiptContentType = "application/vnd.pflegehelfer.command-receipt+json";
+const conversationContentType =
+  "application/vnd.pflegehelfer.shift-conversation+json";
 const managedClinicalResourceTypes = [
   "Patient",
   "Encounter",
@@ -363,6 +365,127 @@ export interface ClinicalWorkspaceStatus {
   checkedAt: string;
 }
 
+export interface ShiftConversationTurn {
+  id: string;
+  prompt: string;
+  response: unknown;
+  createdAt: string;
+  inputModality: "typed" | "voice";
+}
+
+export interface ShiftConversation {
+  actorId: string;
+  expiresAt: string;
+  turns: ShiftConversationTurn[];
+}
+
+const conversationSchema = z
+  .object({
+    actorId: z.string().regex(/^[A-Za-z0-9:._-]{1,80}$/),
+    expiresAt: z.iso.datetime(),
+    turns: z
+      .array(
+        z
+          .object({
+            id: z.uuid(),
+            prompt: z.string().max(1200),
+            response: z.unknown(),
+            createdAt: z.iso.datetime(),
+            inputModality: z.enum(["typed", "voice"]),
+          })
+          .strict(),
+      )
+      .max(80),
+  })
+  .strict();
+
+function conversationId(actorId: string): string {
+  return fhirResourceId("Binary", `shift-conversation:${actorId}`);
+}
+
+function serializeConversation(
+  conversation: ShiftConversation,
+  hmacKey: string | null,
+): Binary {
+  const bounded = conversationSchema.parse(conversation);
+  const payload = JSON.stringify(bounded);
+  return {
+    resourceType: "Binary",
+    id: conversationId(bounded.actorId),
+    meta: {
+      security: [
+        {
+          system: "http://terminology.hl7.org/CodeSystem/v3-Confidentiality",
+          code: "V",
+          display: "very restricted",
+        },
+      ],
+      tag: [
+        {
+          system: "https://pflegehelfer.example.invalid/control-plane",
+          code: "short-lived-shift-conversation-v1",
+        },
+      ],
+    },
+    contentType: conversationContentType,
+    data: Buffer.from(
+      JSON.stringify({
+        schemaVersion: 1,
+        sha256: createHash("sha256").update(payload).digest("hex"),
+        ...(hmacKey
+          ? {
+              hmacKeyId: createHash("sha256")
+                .update(hmacKey)
+                .digest("hex")
+                .slice(0, 16),
+              hmacSha256: createHmac("sha256", hmacKey)
+                .update(payload)
+                .digest("hex"),
+            }
+          : {}),
+        payload: bounded,
+      }),
+      "utf8",
+    ).toString("base64"),
+  };
+}
+
+function deserializeConversation(
+  binary: Binary,
+  actorId: string,
+  hmacKey: string | null,
+  previousHmacKeys: string[],
+): ShiftConversation {
+  if (binary.contentType !== conversationContentType || !binary.data)
+    throw new Error("Shift conversation has an unexpected format.");
+  const envelope = JSON.parse(
+    Buffer.from(binary.data, "base64").toString("utf8"),
+  ) as {
+    schemaVersion?: unknown;
+    sha256?: unknown;
+    hmacSha256?: unknown;
+    hmacKeyId?: unknown;
+    payload?: unknown;
+  };
+  if (envelope.schemaVersion !== 1)
+    throw new Error("Shift conversation has an unsupported version.");
+  const payload = JSON.stringify(envelope.payload);
+  if (createHash("sha256").update(payload).digest("hex") !== envelope.sha256)
+    throw new Error("Shift conversation failed integrity validation.");
+  if (
+    hmacKey &&
+    !verifyHmac(payload, envelope.hmacSha256, envelope.hmacKeyId, [
+      hmacKey,
+      ...previousHmacKeys,
+    ])
+  )
+    throw new Error("Shift conversation failed authenticity validation.");
+  const conversation = conversationSchema.parse(envelope.payload);
+  if (conversation.actorId !== actorId)
+    throw new Error("Shift conversation actor mismatch.");
+  return conversation;
+}
+
 export interface ClinicalWorkspace {
   readonly mode: ClinicalWorkspaceStatus["mode"];
   initialize(
@@ -377,12 +500,16 @@ export interface ClinicalWorkspace {
   ): Promise<void>;
   loadCheckpoint(): Promise<ServiceCheckpoint | null>;
   loadCommandReceipt(key: string): Promise<CommandReceipt | null>;
+  loadConversation(actorId: string): Promise<ShiftConversation | null>;
+  saveConversation(conversation: ShiftConversation): Promise<void>;
+  deleteConversation(actorId: string): Promise<void>;
   status(): Promise<ClinicalWorkspaceStatus>;
   detailUrl(resourceReference?: string): string | null;
 }
 
 export class InMemoryClinicalWorkspace implements ClinicalWorkspace {
   readonly mode = "in-memory" as const;
+  private readonly conversations = new Map<string, ShiftConversation>();
   initialize(): Promise<void> {
     return Promise.resolve();
   }
@@ -394,6 +521,24 @@ export class InMemoryClinicalWorkspace implements ClinicalWorkspace {
   }
   loadCommandReceipt(): Promise<CommandReceipt | null> {
     return Promise.resolve(null);
+  }
+  loadConversation(actorId: string): Promise<ShiftConversation | null> {
+    const conversation = this.conversations.get(actorId);
+    if (!conversation) return Promise.resolve(null);
+    if (conversation.expiresAt < new Date().toISOString()) {
+      this.conversations.delete(actorId);
+      return Promise.resolve(null);
+    }
+    return Promise.resolve(structuredClone(conversation));
+  }
+  saveConversation(conversation: ShiftConversation): Promise<void> {
+    const bounded = conversationSchema.parse(conversation);
+    this.conversations.set(bounded.actorId, structuredClone(bounded));
+    return Promise.resolve();
+  }
+  deleteConversation(actorId: string): Promise<void> {
+    this.conversations.delete(actorId);
+    return Promise.resolve();
   }
   status(): Promise<ClinicalWorkspaceStatus> {
     return Promise.resolve({
@@ -415,6 +560,11 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
   private readonly client: MedplumClient;
   private login: Promise<unknown> | null = null;
   private checkpointVersionId: string | null = null;
+  private statusCache: {
+    expiresAt: number;
+    value: ClinicalWorkspaceStatus;
+  } | null = null;
+  private statusInFlight: Promise<ClinicalWorkspaceStatus> | null = null;
 
   constructor(
     private readonly baseUrl: string,
@@ -614,7 +764,72 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
     }
   }
 
+  async loadConversation(actorId: string): Promise<ShiftConversation | null> {
+    await this.connect();
+    try {
+      const binary = await this.client.readResource(
+        "Binary",
+        conversationId(actorId),
+      );
+      const conversation = deserializeConversation(
+        binary,
+        actorId,
+        this.checkpointHmacKey,
+        this.previousCheckpointHmacKeys,
+      );
+      if (conversation.expiresAt < new Date().toISOString()) {
+        await this.deleteConversation(actorId);
+        return null;
+      }
+      return conversation;
+    } catch (error) {
+      if (isNotFoundError(error)) return null;
+      throw error;
+    }
+  }
+
+  async saveConversation(conversation: ShiftConversation): Promise<void> {
+    await this.connect();
+    const binary = serializeConversation(conversation, this.checkpointHmacKey);
+    const response = await this.client.executeBatch({
+      resourceType: "Bundle",
+      type: "transaction",
+      entry: [
+        {
+          resource: binary,
+          request: { method: "PUT", url: `Binary/${binary.id}` },
+        },
+      ],
+    });
+    const status = response.entry?.[0]?.response?.status ?? "";
+    if (!/^2\d\d(?:\s|$)/.test(status))
+      throw new Error(`Conversation persistence rejected: ${status}`);
+  }
+
+  async deleteConversation(actorId: string): Promise<void> {
+    await this.connect();
+    try {
+      await this.client.deleteResource("Binary", conversationId(actorId));
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
+    }
+  }
+
   async status(): Promise<ClinicalWorkspaceStatus> {
+    if (this.statusCache && this.statusCache.expiresAt > Date.now())
+      return structuredClone(this.statusCache.value);
+    if (this.statusInFlight) return this.statusInFlight;
+    this.statusInFlight = this.readStatus();
+    try {
+      const value = await this.statusInFlight;
+      this.statusCache = { expiresAt: Date.now() + 30_000, value };
+      return structuredClone(value);
+    } finally {
+      this.statusInFlight = null;
+    }
+  }
+
+  private async readStatus(): Promise<ClinicalWorkspaceStatus> {
     const checkedAt = new Date().toISOString();
     try {
       await this.connect();
@@ -665,10 +880,15 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
 }
 
 export function clinicalWorkspaceFromEnvironment(): ClinicalWorkspace {
-  if (process.env.PFH_STORAGE_MODE !== "medplum")
-    return new InMemoryClinicalWorkspace();
-  const baseUrl = process.env.PFH_FHIR_BASE_URL;
   const demoMode = process.env.PFH_DEMO_MODE === "true";
+  if (process.env.PFH_STORAGE_MODE !== "medplum") {
+    if (!demoMode)
+      throw new Error(
+        "Production startup requires PFH_STORAGE_MODE=medplum; in-memory storage is test/demo only.",
+      );
+    return new InMemoryClinicalWorkspace();
+  }
+  const baseUrl = process.env.PFH_FHIR_BASE_URL;
   const clientId =
     process.env.MEDPLUM_CLIENT_ID ??
     (demoMode ? process.env.MEDPLUM_DEFAULT_SUPER_ADMIN_CLIENT_ID : undefined);

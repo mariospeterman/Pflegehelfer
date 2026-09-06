@@ -2,6 +2,10 @@ import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./tests/e2e",
+  // Journeys intentionally include repeated role reloads, persistence checks
+  // and multi-client SSE cleanup; keep them bounded without making loaded CI
+  // hosts race a generic 30-second wall-clock budget.
+  timeout: 60_000,
   fullyParallel: false,
   // All journeys reset and mutate one shared clinical environment. Parallel
   // workers would make those deterministic workflow assertions race.

@@ -1,5 +1,11 @@
 import { z } from "zod";
 import { validateLocalAiEndpoint } from "./local-endpoint-policy.js";
+import {
+  clinicalActionPlanSchema,
+  deterministicCareUpdatePlan,
+  verifyModelPlanAgainstDeterministicCompiler,
+  type ClinicalActionPlan,
+} from "./clinical-action-plan.js";
 
 export const assistantIntentSchema = z
   .object({
@@ -36,6 +42,13 @@ export interface ModelRuntimeStatus {
   ready: boolean;
   dataBoundary: "none" | "deterministic" | "synthetic-hosted" | "local-network";
   message: string;
+}
+
+export interface ClinicalPlanResult {
+  plan: ClinicalActionPlan | null;
+  mode: AiRuntimeMode;
+  model: string;
+  degraded: boolean;
 }
 
 function deterministicIntent(prompt: string): AssistantIntent {
@@ -92,6 +105,14 @@ export class ModelGateway {
       30_000,
       Math.max(2_000, Number(env.PFH_LLM_TIMEOUT_MS ?? 10_000)),
     );
+    if (
+      this.mode === "local-openai" &&
+      env.PFH_DEMO_MODE !== "true" &&
+      !/^[a-f0-9]{64}$/.test(env.PFH_LLM_MODEL_DIGEST ?? "")
+    )
+      throw new Error(
+        "Production local AI requires an immutable PFH_LLM_MODEL_DIGEST and governed model pack.",
+      );
     if (
       this.mode === "hosted-test" &&
       (env.PFH_LLM_DATA_CLASSIFICATION !== "synthetic-only" ||
@@ -245,6 +266,84 @@ export class ModelGateway {
         intent: fallback,
         mode: this.mode,
         model: this.model,
+        degraded: true,
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async planCareUpdate(prompt: string): Promise<ClinicalPlanResult> {
+    const fallback = deterministicCareUpdatePlan(prompt);
+    if (
+      !fallback ||
+      this.mode === "disabled" ||
+      this.mode === "deterministic" ||
+      !this.baseUrl
+    )
+      return {
+        plan: fallback,
+        mode: this.mode,
+        model: "deterministic-clinical-planner-v1",
+        degraded: this.mode !== "disabled" && this.mode !== "deterministic",
+      };
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    try {
+      const response = await fetch(
+        `${this.baseUrl.replace(/\/$/, "")}/chat/completions`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            ...(this.apiKey ? { authorization: `Bearer ${this.apiKey}` } : {}),
+          },
+          body: JSON.stringify({
+            model: this.model,
+            temperature: 0,
+            max_tokens: 1200,
+            response_format: {
+              type: "json_schema",
+              json_schema: {
+                name: "clinical_action_plan_v1",
+                strict: true,
+                schema: z.toJSONSchema(clinicalActionPlanSchema),
+              },
+            },
+            messages: [
+              {
+                role: "system",
+                content:
+                  "Extract, never invent, a bounded clinical action proposal. Use exact zero-based source spans into the user text. Allowed actions are only note-proposal, blood-pressure observation-proposal, physician communication-proposal, and registered-nurse task-proposal. Do not include patient identity, provider targets, FHIR, diagnoses, prescriptions, URLs, or approvals. Put uncertainty in ambiguities. Return only schema-valid JSON.",
+              },
+              { role: "user", content: prompt.slice(0, 1200) },
+            ],
+          }),
+          signal: controller.signal,
+        },
+      );
+      if (!response.ok) throw new Error(`model-http-${response.status}`);
+      const body = (await response.json()) as {
+        choices?: { message?: { content?: string } }[];
+      };
+      const content = body.choices?.[0]?.message?.content;
+      if (!content) throw new Error("model-empty");
+      return {
+        plan: verifyModelPlanAgainstDeterministicCompiler(
+          prompt,
+          JSON.parse(content),
+          fallback,
+        ),
+        mode: this.mode,
+        model: this.model,
+        degraded: false,
+      };
+    } catch {
+      return {
+        plan: fallback,
+        mode: this.mode,
+        model: "deterministic-clinical-planner-v1",
         degraded: true,
       };
     } finally {

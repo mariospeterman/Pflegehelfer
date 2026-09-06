@@ -41,6 +41,7 @@ describe("local ASR privacy boundary", () => {
       const form = init?.body as FormData;
       expect(form.get("model")).toBe("asr-test");
       expect(form.get("language")).toBe("de");
+      expect(form.get("response_format")).toBe("verbose_json");
       return Promise.resolve(
         new Response(JSON.stringify({ text: "Blutdruck 128 zu 76" }), {
           status: 200,
@@ -55,9 +56,17 @@ describe("local ASR privacy boundary", () => {
       PFH_ASR_BASE_URL: "http://127.0.0.1:9000/v1",
       PFH_ASR_MODEL: "asr-test",
     });
-    await expect(gateway.transcribe(bytes, "audio/webm")).resolves.toBe(
-      "Blutdruck 128 zu 76",
-    );
+    await expect(
+      gateway.transcribe(bytes, "audio/webm"),
+    ).resolves.toMatchObject({
+      text: "Blutdruck 128 zu 76",
+      confidence: null,
+      confidenceState: "unknown",
+      audioRetained: false,
+      criticalEntities: [
+        expect.objectContaining({ kind: "measurement", text: "128 zu 76" }),
+      ],
+    });
     expect(fetchMock).toHaveBeenCalledWith(
       "http://127.0.0.1:9000/v1/audio/transcriptions",
       expect.any(Object),

@@ -25,17 +25,25 @@ async function openFocus(
     Synchronisation: "sync",
   }[name];
   await page.locator(`[data-nav="${target}"]:visible`).click();
+  if (name === "Patient") {
+    const selector = page.getByLabel("Patient auswählen");
+    if ((await selector.isVisible()) && (await selector.inputValue()) === "")
+      await selector.selectOption("p-anna");
+    else if (!(await selector.isVisible())) {
+      const anna = page.getByRole("button", { name: /214A Anna Beispiel/ });
+      if (await anna.isVisible()) await anna.click();
+    }
+  }
 }
 
 async function choosePatient(page: Page, id: "p-anna" | "p-luca") {
-  const select = page.getByLabel("Patient auswählen");
+  const select = page.locator('select[aria-label="Patient auswählen"]:visible');
+  const button = page
+    .locator(".patient-context-list button:visible")
+    .filter({ hasText: id === "p-anna" ? "214A" : "207" });
+  await expect(select.or(button)).toBeVisible();
   if (await select.isVisible()) await select.selectOption(id);
-  else
-    await page
-      .getByRole("button", {
-        name: id === "p-anna" ? /214A Anna Beispiel/ : /207 Luca Demo/,
-      })
-      .click();
+  else await button.click();
 }
 
 test("conversation-first shell is responsive, accessible and patient-aware", async ({
@@ -46,6 +54,8 @@ test("conversation-first shell is responsive, accessible and patient-aware", asy
   await expect(page.getByText("Guten Morgen, Lea.")).toBeVisible();
   await expect(page.getByText("Blutdruck kontrollieren")).toBeVisible();
   await expect(page.getByText("Aktuell", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Patient auswählen")).toHaveValue("");
+  await expect(page.locator(".patient-safety-context:visible")).toHaveCount(0);
   await page.waitForTimeout(600);
   expect(await page.evaluate(() => window.scrollY)).toBe(0);
 
@@ -91,7 +101,7 @@ test("conversation-first shell is responsive, accessible and patient-aware", asy
     await expect(page.getByLabel("Demo-Rolle wechseln")).toBeVisible();
     const touchTargets = await page
       .locator(
-        ".mobile-context-tabs button:visible, .role-control select:visible, .mobile-patient-select select:visible, .quick-prompts button:visible",
+        ".mobile-context-tabs button:visible, .role-control select:visible, .mobile-patient-select select:visible, .quick-prompts button:visible, .in-chat-tabs button:visible, .assistant-action-review button:visible",
       )
       .evaluateAll((elements) =>
         elements.map((element) => {
@@ -137,6 +147,7 @@ test("role isolation keeps clinical context out of HR, management, IT and servic
   await expect(page.getByText("Anna Beispiel")).toHaveCount(0);
 
   await chooseRole(page, "u-admin");
+  await choosePatient(page, "p-anna");
   await expect(
     page
       .locator(".patient-safety-context:visible")
@@ -227,20 +238,61 @@ test("one natural-language bedside update creates the reviewed four-part bundle"
   await expect(review).toBeFocused();
   await expect(review).toContainText("SH-260901-001");
   await expect(review).toContainText(text);
-  await review.getByRole("button", { name: "Prüfen & freigeben" }).click();
+  await review
+    .getByRole("button", { name: "Geprüfte Auswahl anlegen" })
+    .click();
   await expect(
-    page.getByText(/Pflegeeintrag, Messwert, Arztfrage/),
+    page.getByText(/Geprüft: Die ausgewählten Aktionen/),
   ).toBeVisible();
   await expect(page.getByText(text).last()).toBeVisible();
   await expect(page.getByText("151/88 mmHg", { exact: true })).toBeVisible();
-  await expect(page.getByText("2 ausstehend", { exact: true })).toBeVisible();
+  const snapshotResponse = await page.request.get("/api/v1/snapshot", {
+    headers: { "x-demo-user": "u-nurse" },
+  });
+  const snapshot = (await snapshotResponse.json()) as {
+    notes: Array<{ structuredText: string; status: string }>;
+    observations: Array<{ value: number; status: string }>;
+    communications: Array<{ request: string; state: string }>;
+    tasks: Array<{ title: string; state: string }>;
+  };
+  expect(
+    snapshot.notes.some(
+      (note) => note.structuredText === text && note.status === "draft",
+    ),
+  ).toBe(true);
+  expect(
+    snapshot.observations.some(
+      (observation) =>
+        observation.value === 151 && observation.status === "draft",
+    ),
+  ).toBe(true);
+  expect(
+    snapshot.communications.some(
+      (message) =>
+        message.request ===
+          "Aktuellen Pflegezustand und Blutdruck beurteilen" &&
+        message.state === "sent",
+    ),
+  ).toBe(true);
+  expect(
+    snapshot.tasks.some(
+      (task) =>
+        task.title === "Blutdruck erneut kontrollieren" && task.state === "new",
+    ),
+  ).toBe(true);
 
   await openFocus(page, "Team");
   await expect(
-    page.getByText("Aktuellen Pflegezustand und Blutdruck beurteilen"),
+    page
+      .locator('[data-genui-component="ClinicalContextProjection"]')
+      .getByText("Aktuellen Pflegezustand und Blutdruck beurteilen", {
+        exact: true,
+      }),
   ).toBeVisible();
   await openFocus(page, "Meine Schicht");
-  await expect(page.getByText("Blutdruck erneut kontrollieren")).toBeVisible();
+  await expect(
+    page.getByText("Blutdruck erneut kontrollieren", { exact: true }),
+  ).toBeVisible();
 });
 
 test("fixed in-conversation forms cover notes, vitals, tasks and named team mentions", async ({
@@ -341,6 +393,18 @@ test("only the exact named recipient receives the live actionable notification",
     await Promise.all([david.goto("/"), elif.goto("/")]);
     await chooseRole(david, "u-physician");
     await chooseRole(elif, "u-physician-evening");
+    await Promise.all([
+      expect(
+        david
+          .getByLabel("Arbeitskontext")
+          .getByText("Dr. David Keller", { exact: true }),
+      ).toBeVisible(),
+      expect(
+        elif
+          .getByLabel("Arbeitskontext")
+          .getByText("Dr. Elif Aydin", { exact: true }),
+      ).toBeVisible(),
+    ]);
     const created = await request.post("/api/v1/communications", {
       headers: {
         "x-demo-user": "u-nurse",
@@ -556,7 +620,7 @@ test("role session epoch blocks stale mutation notices and patient leakage", asy
   await expect(page.getByText("Anna Beispiel")).toHaveCount(0);
 });
 
-test("patient switching cancels in-flight work and restores only partitioned history", async ({
+test("patient switching archives stale drafts and locks in-flight work", async ({
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop", "context safety runs once");
@@ -572,10 +636,21 @@ test("patient switching cancels in-flight work and restores only partitioned his
   await expect(page.getByLabel("Assistenzvorschlag prüfen")).toBeVisible();
   await choosePatient(page, "p-luca");
   await expect(page.getByLabel("Assistenzvorschlag prüfen")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Änderungen gemeinsam prüfen" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByText(
+      /frühere Vorschlag wurde beim Kontextwechsel sicher geschlossen/,
+    ),
+  ).toBeVisible();
   await expect(page.getByLabel("Nachricht an Pflegehelfer")).toHaveValue("");
   await expect(
     page.locator(".user-message").filter({ hasText: text }),
-  ).toHaveCount(0);
+  ).toBeVisible();
+  await expect(
+    page.getByText(/Patientenkontext bewusst gewählt · 207 · Luca Demo/),
+  ).toBeVisible();
   await choosePatient(page, "p-anna");
   await expect(
     page.locator(".user-message").filter({ hasText: text }),
@@ -602,12 +677,17 @@ test("patient switching cancels in-flight work and restores only partitioned his
   await page.getByRole("button", { name: "Nachricht senden" }).click();
   await seen;
   expect(requestedPatient).toBe("p-anna");
-  await choosePatient(page, "p-luca");
+  const lucaControl = page.getByRole("button", { name: /207 Luca Demo/ });
+  await expect(lucaControl).toBeDisabled();
   release();
-  await page.waitForTimeout(150);
   await expect(
     page.locator(".user-message").filter({ hasText: "Patientenprofil" }),
-  ).toHaveCount(0);
+  ).toBeVisible();
+  await expect(lucaControl).toBeEnabled();
+  await choosePatient(page, "p-luca");
+  await expect(
+    page.locator(".user-message").filter({ hasText: "Patientenprofil" }),
+  ).toBeVisible();
 });
 
 test("local voice lifecycle stops tracks and never uploads after patient change", async ({

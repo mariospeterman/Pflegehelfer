@@ -174,6 +174,15 @@ function task(item: ClinicalTask): Task {
     ],
     meta: { tag: sourceTags(item.source) },
     status: taskStatus[item.state],
+    businessStatus: {
+      coding: [
+        {
+          system: "https://pflegehelfer.example.invalid/task-workflow-state",
+          code: item.state,
+        },
+      ],
+      text: item.state,
+    },
     intent: "order",
     priority:
       item.priority === "urgent"
@@ -193,10 +202,16 @@ function task(item: ClinicalTask): Task {
       ? { reference: ref("Practitioner", item.ownerId) }
       : { display: item.ownerRole },
     executionPeriod: { end: item.dueAt },
-    note: [
-      ...item.comments.map((text) => ({ text })),
-      ...(item.completionEvidence ? [{ text: item.completionEvidence }] : []),
-    ],
+    ...(item.comments.length > 0 || item.completionEvidence
+      ? {
+          note: [
+            ...item.comments.map((text) => ({ text })),
+            ...(item.completionEvidence
+              ? [{ text: item.completionEvidence }]
+              : []),
+          ],
+        }
+      : {}),
   };
 }
 
@@ -315,7 +330,7 @@ function provenance(resource: Resource): Provenance | null {
   };
 }
 
-function auditEvent(entry: AuditEntry): AuditEvent {
+export function auditEventToFhirR4(entry: AuditEntry): AuditEvent {
   const action = entry.action.includes(":read") ? "R" : "E";
   return {
     resourceType: "AuditEvent",
@@ -466,6 +481,6 @@ export function toFhirResourceSet(
     ...clinical
       .map(provenance)
       .filter((item): item is Provenance => item !== null),
-    ...auditEntries.map(auditEvent),
+    ...auditEntries.map(auditEventToFhirR4),
   ];
 }

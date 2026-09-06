@@ -212,6 +212,7 @@ export function App() {
   const [online, setOnline] = useState(navigator.onLine);
   const [apiReachable, setApiReachable] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [assistantBusy, setAssistantBusy] = useState(false);
   const [notice, setNotice] = useState<{
     kind: "success" | "error";
     text: string;
@@ -286,7 +287,7 @@ export function App() {
       setSelectedPatientId((current) =>
         current && data.patients.some((patient) => patient.id === current)
           ? current
-          : (data.patients[0]?.id ?? null),
+          : null,
       );
     } catch (failure) {
       if (generation !== loadGeneration.current) return;
@@ -306,12 +307,71 @@ export function App() {
   }, [load]);
 
   useEffect(() => {
-    const timer = window.setInterval(() => {
+    const controller = new AbortController();
+    let reconnectTimer: number | null = null;
+    let stopped = false;
+    let lastEventId = 0;
+    const connect = async () => {
+      try {
+        const response = await fetch("/api/v1/events", {
+          headers: {
+            "x-demo-user": userId,
+            ...(lastEventId > 0
+              ? { "last-event-id": String(lastEventId) }
+              : {}),
+          },
+          signal: controller.signal,
+        });
+        if (!response.ok || !response.body)
+          throw new Error("events-unavailable");
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (!stopped) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const frames = buffer.split("\n\n");
+          buffer = frames.pop() ?? "";
+          for (const frame of frames) {
+            const id = /^id:\s*(\d+)$/m.exec(frame)?.[1];
+            if (id) lastEventId = Number(id);
+          }
+          if (
+            frames.some((frame) =>
+              frame.includes("event: snapshot-invalidated"),
+            )
+          )
+            await load();
+        }
+      } catch (failure) {
+        if (
+          stopped ||
+          (failure instanceof DOMException && failure.name === "AbortError")
+        )
+          return;
+      }
+      if (!stopped)
+        reconnectTimer = window.setTimeout(() => void connect(), 5_000);
+    };
+    void connect();
+    const recoveryTimer = window.setInterval(() => {
       if (navigator.onLine && document.visibilityState === "visible")
         void load();
-    }, 3_000);
-    return () => window.clearInterval(timer);
-  }, [load]);
+    }, 60_000);
+    const refreshVisible = () => {
+      if (document.visibilityState === "visible" && navigator.onLine)
+        void load();
+    };
+    document.addEventListener("visibilitychange", refreshVisible);
+    return () => {
+      stopped = true;
+      controller.abort();
+      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
+      window.clearInterval(recoveryTimer);
+      document.removeEventListener("visibilitychange", refreshVisible);
+    };
+  }, [load, userId]);
 
   useEffect(() => {
     const update = () => setOnline(navigator.onLine);
@@ -506,6 +566,7 @@ export function App() {
           <select
             aria-label="Demo-Rolle wechseln"
             value={userId}
+            disabled={assistantBusy}
             onChange={(event) => changeUser(event.target.value)}
           >
             {snapshot.users.map((user) => (
@@ -581,6 +642,7 @@ export function App() {
               <button
                 key={item.id}
                 className={patient?.id === item.id ? "active" : ""}
+                disabled={assistantBusy}
                 onClick={() => {
                   setSelectedPatientId(item.id);
                   setFocus("patient");
@@ -590,6 +652,14 @@ export function App() {
                 <strong>{item.displayName}</strong>
               </button>
             ))}
+            <button
+              className={!patient ? "active" : ""}
+              disabled={assistantBusy}
+              onClick={() => setSelectedPatientId(null)}
+            >
+              <span>—</span>
+              <strong>Kein Patient aktiv</strong>
+            </button>
             {patient && (
               <PatientSafetyContext
                 patient={patient}
@@ -637,11 +707,13 @@ export function App() {
             <select
               aria-label="Patient auswählen"
               value={patient?.id ?? ""}
+              disabled={assistantBusy}
               onChange={(event) => {
-                setSelectedPatientId(event.target.value);
-                setFocus("patient");
+                setSelectedPatientId(event.target.value || null);
+                if (event.target.value) setFocus("patient");
               }}
             >
+              <option value="">Kein Patient aktiv</option>
               {snapshot.patients.map((item) => (
                 <option key={item.id} value={item.id}>
                   {item.room} · {item.displayName}
@@ -660,13 +732,18 @@ export function App() {
           </label>
         )}
         <AssistantSurface
-          key={`${userId}:${roleEpoch}:${focus}:${patient?.id ?? "no-patient"}`}
+          key={`${userId}:${roleEpoch}`}
           patient={patient}
           userId={userId}
           online={connected}
           snapshotRevision={revision}
           contextProjection={streamProjectionRegistry[focus]}
-          conversationId={`${userId}:${focus}:${patient?.id ?? "no-patient"}`}
+          conversationId={`${userId}:shift`}
+          onSelectPatient={(patientId) => {
+            setSelectedPatientId(patientId);
+            setFocus("patient");
+          }}
+          onBusyChange={setAssistantBusy}
           onHandoff={(next) => {
             setSelectedPatientId(next.patientId);
             setHandoff(next);

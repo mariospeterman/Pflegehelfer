@@ -291,4 +291,57 @@ describe("purpose-specific BFF", () => {
     expect(mismatchedReplay.statusCode).toBe(409);
     expect(mismatchedReplay.json()).toMatchObject({ error: "INVALID_STATE" });
   });
+
+  it("restores only the actor-bound short-lived shift conversation", async () => {
+    const app = buildApp(undefined, { demoMode: true });
+    apps.push(app);
+    const query = await app.inject({
+      method: "POST",
+      url: "/api/v1/assistant/query",
+      headers: commandHeaders("u-assistant"),
+      payload: {
+        patientId: null,
+        prompt: "Meine offenen Aufgaben",
+        inputModality: "typed",
+      },
+    });
+    expect(query.statusCode).toBe(200);
+    const own = await app.inject({
+      method: "GET",
+      url: "/api/v1/assistant/conversation",
+      headers: { "x-demo-user": "u-assistant" },
+    });
+    expect(own.json<{ turns: unknown[] }>().turns).toHaveLength(1);
+    const other = await app.inject({
+      method: "GET",
+      url: "/api/v1/assistant/conversation",
+      headers: { "x-demo-user": "u-nurse" },
+    });
+    expect(other.json<{ turns: unknown[] }>().turns).toEqual([]);
+    const rejectedVoice = await app.inject({
+      method: "POST",
+      url: "/api/v1/assistant/query",
+      headers: commandHeaders("u-assistant"),
+      payload: {
+        patientId: "p-anna",
+        prompt: "Blutdruck 128 zu 76 dokumentieren",
+        inputModality: "voice",
+      },
+    });
+    expect(rejectedVoice.statusCode).toBe(400);
+    const forgedVoice = await app.inject({
+      method: "POST",
+      url: "/api/v1/assistant/query",
+      headers: commandHeaders("u-assistant"),
+      payload: {
+        patientId: "p-anna",
+        prompt: "Blutdruck 128 zu 76 dokumentieren",
+        inputModality: "voice",
+        voiceTranscriptConfirmed: true,
+        voiceReceiptId: "00000000-0000-4000-8000-000000000999",
+      },
+    });
+    expect(forgedVoice.statusCode).toBe(403);
+    expect(forgedVoice.json()).toMatchObject({ error: "AUTH_DENIED" });
+  });
 });

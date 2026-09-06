@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Writable } from "node:stream";
@@ -6,7 +6,11 @@ import fastifyStatic from "@fastify/static";
 import fastifyMultipart from "@fastify/multipart";
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import { z } from "zod";
-import { AssistantService } from "../core/assistant-service.js";
+import {
+  AssistantService,
+  toOpenUi,
+  type AssistantResponse,
+} from "../core/assistant-service.js";
 import { fhirResourceId } from "../core/fhir-resource-set.js";
 import { AsrGateway } from "../ai/asr-gateway.js";
 import { ModelGateway } from "../ai/model-gateway.js";
@@ -141,8 +145,26 @@ const assistantQueryBody = z
     prompt: z.string().trim().min(2).max(1200),
     patientId: z.string().nullable(),
     purpose: purposeSchema.optional(),
+    inputModality: z.enum(["typed", "voice"]).default("typed"),
+    voiceTranscriptConfirmed: z.boolean().optional(),
+    voiceReceiptId: z.uuid().optional(),
+    voiceConfirmedEntityIds: z.array(z.string().max(120)).max(64).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((input, context) => {
+    if (input.inputModality === "voice" && !input.voiceTranscriptConfirmed)
+      context.addIssue({
+        code: "custom",
+        path: ["voiceTranscriptConfirmed"],
+        message: "Voice transcripts require explicit review.",
+      });
+    if (input.inputModality === "voice" && !input.voiceReceiptId)
+      context.addIssue({
+        code: "custom",
+        path: ["voiceReceiptId"],
+        message: "Voice input requires a server-issued transcription receipt.",
+      });
+  });
 const assistantIntentBody = z
   .object({
     patientId: z.string(),
@@ -150,8 +172,35 @@ const assistantIntentBody = z
     purpose: purposeSchema,
     resourceVersion: z.number().int().nonnegative(),
     explicitlyConfirmed: z.literal(true),
+    reviewedActionIds: z
+      .array(z.string().regex(/^action-[1-6]$/))
+      .max(6)
+      .optional(),
   })
   .strict();
+
+function archiveAssistantResponse(
+  response: AssistantResponse,
+): AssistantResponse {
+  const hadAction = response.components.some(
+    (component) => component.type === "DraftAction",
+  );
+  const components = response.components.filter(
+    (component) => component.type !== "DraftAction",
+  );
+  if (hadAction)
+    components.push({
+      type: "SafetyAlert",
+      severity: "info",
+      message:
+        "Dieser frühere Vorschlag ist nicht mehr ausführbar. Bitte neu formulieren, damit Kontext und Version erneut geprüft werden.",
+    });
+  return {
+    ...response,
+    components,
+    openUi: toOpenUi(components),
+  };
+}
 
 export function buildApp(
   providedService?: PflegehelferService,
@@ -179,6 +228,24 @@ export function buildApp(
   const assistant = new AssistantService(service, models, knowledge);
   let durableResources = service.fhirResources();
   let persistenceQueue: Promise<void> = Promise.resolve();
+  let eventRevision = 0;
+  const voiceReceipts = new Map<
+    string,
+    {
+      actorId: string;
+      patientId: string;
+      purpose: z.infer<typeof purposeSchema>;
+      textHash: string;
+      model: string;
+      entityIds: string[];
+      expiresAt: number;
+    }
+  >();
+  const eventSubscribers = new Set<(revision: number) => void>();
+  const publishInvalidation = () => {
+    eventRevision += 1;
+    for (const subscriber of eventSubscribers) subscriber(eventRevision);
+  };
   const requestCommandKeys = new WeakMap<
     object,
     { key: string; requestHash: string }
@@ -188,6 +255,7 @@ export function buildApp(
     operation: () => T | Promise<T>,
     request?: FastifyRequest,
     statusCode = 200,
+    publishChange = false,
   ): Promise<T> => {
     const pending = persistenceQueue.then(async () => {
       const command = request ? requestCommandKeys.get(request) : undefined;
@@ -262,6 +330,7 @@ export function buildApp(
         for (const key of service.commandReceiptKeys())
           committedCommandKeys.add(key);
         durableResources = nextResources;
+        if (request?.method === "POST" || publishChange) publishInvalidation();
         return result;
       } catch (error) {
         const rejectedEntries = service.audit
@@ -294,6 +363,7 @@ export function buildApp(
           if (recovered && recovered.requestHash === command.requestHash) {
             service.recordCommandReceipt(recovered);
             committedCommandKeys.add(command.key);
+            if (request?.method === "POST") publishInvalidation();
             return JSON.parse(recovered.payload) as T;
           }
         }
@@ -347,9 +417,48 @@ export function buildApp(
     if (typeof value !== "string" || value.length > 80) return "u-assistant";
     return value;
   };
+  const persistReadAudit = <T>(operation: () => T): Promise<T> => {
+    const pending = persistenceQueue.then(async () => {
+      const beforeAuditLength = service.audit.length;
+      let writeAttempted = false;
+      try {
+        const result = operation();
+        const auditResources =
+          service.fhirAuditResourcesSince(beforeAuditLength);
+        writeAttempted = true;
+        await workspace.synchronize(auditResources, service.checkpoint());
+        durableResources = [...durableResources, ...auditResources];
+        return result;
+      } catch (error) {
+        service.audit.truncate(beforeAuditLength);
+        if (writeAttempted) {
+          try {
+            const latest = await workspace.loadCheckpoint();
+            if (latest) {
+              service.restoreCheckpoint(latest);
+              durableResources = service.fhirResources();
+            }
+          } catch {
+            // Readiness reports the workspace outage; never claim that an
+            // access event was durably committed when synchronization failed.
+          }
+        }
+        throw error;
+      }
+    });
+    persistenceQueue = pending.then(
+      () => undefined,
+      () => undefined,
+    );
+    return pending;
+  };
   const app = Fastify({
     logger: {
-      level: options.loggerLevel ?? process.env.LOG_LEVEL ?? "info",
+      level:
+        options.loggerLevel ??
+        (process.env.NODE_ENV === "test"
+          ? "silent"
+          : (process.env.LOG_LEVEL ?? "info")),
       ...(options.loggerStream ? { stream: options.loggerStream } : {}),
       redact: {
         paths: [
@@ -394,10 +503,15 @@ export function buildApp(
       ? Math.max(1000, configuredInterval)
       : 5000;
     const escalationTimer = setInterval(() => {
-      void persist(() => {
-        const now = new Date().toISOString();
-        service.runScheduledEscalations(now);
-      }).catch((error: unknown) => {
+      void persist(
+        () => {
+          const now = new Date().toISOString();
+          service.runScheduledEscalations(now);
+        },
+        undefined,
+        200,
+        true,
+      ).catch((error: unknown) => {
         app.log.error(
           {
             errorType:
@@ -557,7 +671,12 @@ export function buildApp(
       .object({ purpose: purposeSchema.optional() })
       .parse(request.query);
     const actorId = userId(request);
-    const snapshot = service.snapshot(actorId, query.purpose);
+    // Access events are part of the clinical audit trail. Commit the small
+    // read-audit delta before returning so idle clients cannot accumulate an
+    // unbounded in-memory batch that later breaks an unrelated clinical write.
+    const snapshot = await persistReadAudit(() =>
+      service.snapshot(actorId, query.purpose),
+    );
     const workspaceStatus = await workspace.status();
     const canUseDetailedWorkspace = [
       "registered-nurse",
@@ -587,6 +706,40 @@ export function buildApp(
     };
   });
 
+  app.get("/api/v1/events", async (request, reply) => {
+    await persistenceQueue;
+    userId(request);
+    reply.hijack();
+    reply.raw.writeHead(200, {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-store, no-transform",
+      connection: "keep-alive",
+      "x-accel-buffering": "no",
+      "x-content-type-options": "nosniff",
+    });
+    reply.raw.write(
+      `event: connected\ndata: {"revision":${eventRevision}}\n\n`,
+    );
+    const send = (revision: number) => {
+      if (!reply.raw.destroyed)
+        reply.raw.write(
+          `id: ${revision}\nevent: snapshot-invalidated\ndata: {"revision":${revision}}\n\n`,
+        );
+    };
+    const lastEventId = Number(request.headers["last-event-id"] ?? 0);
+    if (Number.isFinite(lastEventId) && lastEventId < eventRevision)
+      send(eventRevision);
+    eventSubscribers.add(send);
+    const heartbeat = setInterval(() => {
+      if (!reply.raw.destroyed) reply.raw.write(": heartbeat\n\n");
+    }, 20_000);
+    heartbeat.unref();
+    request.raw.on("close", () => {
+      clearInterval(heartbeat);
+      eventSubscribers.delete(send);
+    });
+  });
+
   app.get("/api/v1/fhir/status", async (request) => {
     await persistenceQueue;
     const actor = service.user(userId(request));
@@ -613,6 +766,35 @@ export function buildApp(
       asr: asr.status(),
       clinicalCoreRequiresAi: false,
     };
+  });
+
+  app.get("/api/v1/assistant/conversation", async (request) => {
+    await persistenceQueue;
+    const actorId = userId(request);
+    const conversation = await workspace.loadConversation(actorId);
+    return {
+      turns: conversation?.turns ?? [],
+      expiresAt: conversation?.expiresAt ?? null,
+    };
+  });
+
+  app.post("/api/v1/assistant/conversation/clear", async (request) => {
+    const actorId = userId(request);
+    const actor = service.user(actorId);
+    await persist(
+      () =>
+        service.audit.append({
+          actor,
+          action: "assistant:conversation-cleared",
+          patientId: null,
+          purpose: actor.defaultPurpose,
+          outcome: "success",
+          detail: { retentionClass: "shift-session" },
+        }),
+      request,
+    );
+    await workspace.deleteConversation(actorId);
+    return { cleared: true, expiresAt: null };
   });
 
   app.post("/api/v1/assistant/transcribe", async (request) => {
@@ -658,7 +840,19 @@ export function buildApp(
       fileBuffer.byteLength,
     );
     try {
-      const text = await asr.transcribe(bytes, file.mimetype);
+      const transcription = await asr.transcribe(bytes, file.mimetype);
+      const receiptId = randomUUID();
+      voiceReceipts.set(receiptId, {
+        actorId,
+        patientId: context.patientId,
+        purpose: context.purpose,
+        textHash: createHash("sha256").update(transcription.text).digest("hex"),
+        model: transcription.model,
+        entityIds: transcription.criticalEntities.map(
+          (entity) => `${entity.kind}:${entity.start}:${entity.end}`,
+        ),
+        expiresAt: Date.now() + 5 * 60_000,
+      });
       return persist(() => {
         service.audit.append({
           actor,
@@ -668,7 +862,7 @@ export function buildApp(
           outcome: "success",
           detail: { asrMode: asr.mode, model: asr.model, audioRetained: false },
         });
-        return { text, retained: false, asr: asr.status() };
+        return { transcription, voiceReceiptId: receiptId, asr: asr.status() };
       });
     } finally {
       fileBuffer.fill(0);
@@ -677,23 +871,75 @@ export function buildApp(
 
   app.post("/api/v1/assistant/query", async (request) => {
     const body = assistantQueryBody.parse(request.body);
-    return persist(() =>
+    const actorId = userId(request);
+    if (body.inputModality === "voice") {
+      const receipt = voiceReceipts.get(body.voiceReceiptId ?? "");
+      // Receipts are one-use and fail closed, including after a downstream
+      // failure, so a transcript can never be replayed into another context.
+      if (body.voiceReceiptId) voiceReceipts.delete(body.voiceReceiptId);
+      const purpose = body.purpose ?? "direct-care";
+      const textHash = createHash("sha256").update(body.prompt).digest("hex");
+      const confirmedEntityIds = [
+        ...(body.voiceConfirmedEntityIds ?? []),
+      ].sort();
+      const expectedEntityIds = [...(receipt?.entityIds ?? [])].sort();
+      if (
+        !receipt ||
+        receipt.expiresAt < Date.now() ||
+        receipt.actorId !== actorId ||
+        receipt.patientId !== body.patientId ||
+        receipt.purpose !== purpose ||
+        receipt.textHash !== textHash ||
+        JSON.stringify(confirmedEntityIds) !== JSON.stringify(expectedEntityIds)
+      )
+        throw new DomainError(
+          "AUTH_DENIED",
+          "Sprachtranskript ist abgelaufen, verändert oder nicht an diesen Kontext gebunden.",
+          403,
+        );
+    }
+    const response = await persist(() =>
       assistant.query(userId(request), {
         prompt: body.prompt,
         patientId: body.patientId,
+        inputModality: body.inputModality,
+        voiceTranscriptConfirmed: body.voiceTranscriptConfirmed ?? false,
         ...(body.purpose ? { purpose: body.purpose } : {}),
       }),
     );
+    const current = await workspace.loadConversation(actorId);
+    const expiresAt = new Date(Date.now() + 8 * 60 * 60_000).toISOString();
+    await workspace.saveConversation({
+      actorId,
+      expiresAt,
+      turns: [
+        ...(current?.turns ?? []),
+        {
+          id: response.id,
+          prompt: body.prompt,
+          response: archiveAssistantResponse(response),
+          createdAt: new Date().toISOString(),
+          inputModality: body.inputModality,
+        },
+      ].slice(-80),
+    });
+    return response;
   });
   app.post("/api/v1/assistant/intents/:token/execute", async (request) => {
     const { token } = z.object({ token: z.uuid() }).parse(request.params);
+    const execution = assistantIntentBody.parse(request.body);
     return persist(
       () =>
-        assistant.executeIntent(
-          userId(request),
-          token,
-          assistantIntentBody.parse(request.body),
-        ),
+        assistant.executeIntent(userId(request), token, {
+          patientId: execution.patientId,
+          encounterId: execution.encounterId,
+          purpose: execution.purpose,
+          resourceVersion: execution.resourceVersion,
+          explicitlyConfirmed: execution.explicitlyConfirmed,
+          ...(execution.reviewedActionIds
+            ? { reviewedActionIds: execution.reviewedActionIds }
+            : {}),
+        }),
       request,
     );
   });
@@ -934,10 +1180,19 @@ export function buildApp(
           message: "Nur der Demo-IT-Operator darf zurücksetzen.",
           requestId: request.id,
         });
-      return persist(() => {
-        service.reset();
+      const result = await persist(() => {
+        service.reset({
+          resetAudit: workspace.mode === "in-memory",
+          actor: operator,
+        });
         return { status: "reset" };
       }, request);
+      await Promise.all(
+        service
+          .checkpoint()
+          .state.users.map((user) => workspace.deleteConversation(user.id)),
+      );
+      return result;
     });
   }
   app.post("/api/v1/outbox/process", async (request) =>

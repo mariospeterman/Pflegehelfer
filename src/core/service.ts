@@ -54,7 +54,7 @@ import type {
   SyncState,
 } from "./types.js";
 import { DomainError } from "./types.js";
-import { toFhirResourceSet } from "./fhir-resource-set.js";
+import { auditEventToFhirR4, toFhirResourceSet } from "./fhir-resource-set.js";
 
 export interface WorkflowState {
   users: DemoUser[];
@@ -211,9 +211,22 @@ export class PflegehelferService {
     return this.clinicalData.read();
   }
 
-  reset(): void {
+  reset(options: { resetAudit?: boolean; actor?: DemoUser } = {}): void {
     this.clinicalData.replace(initialState());
     this.commandReceipts.clear();
+    // The ephemeral in-memory demo/test workspace represents a new synthetic
+    // centre after reset. Durable Medplum environments retain their audit
+    // history and append the reset event to the existing chain.
+    if (options.resetAudit) this.audit.restore([]);
+    if (options.actor)
+      this.audit.append({
+        actor: options.actor,
+        action: "demo:reset",
+        patientId: null,
+        purpose: "operations",
+        outcome: "success",
+        detail: { auditEpochReset: options.resetAudit === true },
+      });
     if (this.providerProfile !== "synthetic-simulator") return;
     this.providerRegistry.resetSimulators();
   }
@@ -277,6 +290,11 @@ export class PflegehelferService {
   /** Full canonical projection for the trusted clinical workspace adapter. */
   fhirResources(): Resource[] {
     return toFhirResourceSet(this.state, this.audit.snapshot());
+  }
+
+  /** Incremental access-audit projection for read-only request commits. */
+  fhirAuditResourcesSince(index: number): Resource[] {
+    return this.audit.slice(index).map(auditEventToFhirR4);
   }
 
   user(userId: string): DemoUser {
@@ -1507,16 +1525,16 @@ export class PflegehelferService {
       item.lastAttemptAt = new Date().toISOString();
       item.state = "processing";
       try {
-        const adapter = this.providerRegistry.adapter(
+        const command = this.providerCommand(item);
+        const adapter = this.providerRegistry.adapterForOperation(
           item.provider,
           this.providerProfile,
+          command.operation,
         );
         if (!adapter) throw new Error("PROVIDER_UNAVAILABLE");
         const receipt = item.receiptId
           ? await adapter.getCommandStatus(item.receiptId)
-          : await adapter.executeCommand(
-              await adapter.prepareCommand(this.providerCommand(item)),
-            );
+          : await adapter.executeCommand(await adapter.prepareCommand(command));
         item.receiptId = receipt.receiptId;
         item.providerVersion = receipt.providerVersion;
         item.errorCode = receipt.errorCode;

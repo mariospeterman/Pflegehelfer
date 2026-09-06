@@ -11,6 +11,7 @@ import {
   serializeCommandReceipt,
   type ClinicalWorkspace,
   type ClinicalWorkspaceStatus,
+  type ShiftConversation,
 } from "../src/infrastructure/medplum-workspace.js";
 import { buildApp } from "../src/server/app.js";
 
@@ -21,7 +22,9 @@ class RecordingWorkspace implements ClinicalWorkspace {
   commitThenFail = false;
   activeWrites = 0;
   maxActiveWrites = 0;
+  maxResourceBatch = 0;
   receipts = new Map<string, CommandReceipt>();
+  conversations = new Map<string, ShiftConversation>();
 
   initialize(): Promise<void> {
     return Promise.resolve();
@@ -33,7 +36,7 @@ class RecordingWorkspace implements ClinicalWorkspace {
     _removedReferences?: string[],
     commandReceipt?: CommandReceipt,
   ): Promise<void> {
-    void resources;
+    this.maxResourceBatch = Math.max(this.maxResourceBatch, resources.length);
     this.activeWrites += 1;
     this.maxActiveWrites = Math.max(this.maxActiveWrites, this.activeWrites);
     await new Promise((resolve) => setTimeout(resolve, 5));
@@ -63,6 +66,21 @@ class RecordingWorkspace implements ClinicalWorkspace {
   loadCommandReceipt(key: string): Promise<CommandReceipt | null> {
     const receipt = this.receipts.get(key);
     return Promise.resolve(receipt ? structuredClone(receipt) : null);
+  }
+
+  loadConversation(actorId: string): Promise<ShiftConversation | null> {
+    return Promise.resolve(
+      structuredClone(this.conversations.get(actorId) ?? null),
+    );
+  }
+
+  saveConversation(conversation: ShiftConversation): Promise<void> {
+    this.conversations.set(conversation.actorId, structuredClone(conversation));
+    return Promise.resolve();
+  }
+  deleteConversation(actorId: string): Promise<void> {
+    this.conversations.delete(actorId);
+    return Promise.resolve();
   }
 
   status(): Promise<ClinicalWorkspaceStatus> {
@@ -249,7 +267,8 @@ describe("durable workflow checkpoint", () => {
         dueAt: "2026-09-06T13:00:00.000Z",
       },
     });
-    await new Promise((resolve) => setTimeout(resolve, 1));
+    while (workspace.activeWrites === 0)
+      await new Promise((resolve) => setImmediate(resolve));
     const read = app.inject({
       method: "GET",
       url: "/api/v1/snapshot",
@@ -303,6 +322,32 @@ describe("durable workflow checkpoint", () => {
     );
     await app.close();
   });
+
+  it("commits read audits incrementally so idle clients cannot overflow the next write", async () => {
+    const service = new PflegehelferService();
+    const workspace = new RecordingWorkspace();
+    const app = buildApp(service, { demoMode: true, workspace });
+    for (let index = 0; index < 170; index += 1) {
+      const response = await app.inject({
+        method: "GET",
+        url: "/api/v1/snapshot",
+        headers: { "x-demo-user": "u-assistant" },
+      });
+      expect(response.statusCode).toBe(200);
+    }
+    const mutation = await app.inject({
+      method: "POST",
+      url: "/api/v1/tasks/t-bp-anna/accept",
+      headers: {
+        "x-demo-user": "u-assistant",
+        "x-command-id": "00000000-0000-4000-8000-000000000170",
+      },
+      payload: {},
+    });
+    expect(mutation.statusCode).toBe(200);
+    expect(workspace.maxResourceBatch).toBeLessThan(20);
+    await app.close();
+  }, 20_000);
 
   it("replays a successful command from the durable receipt after restart", async () => {
     const workspace = new RecordingWorkspace();

@@ -467,7 +467,7 @@ button:disabled {
 .new-thread,
 .text-button,
 .in-chat-tabs button {
-  min-height: 40px;
+  min-height: 44px;
   border-radius: 10px;
   padding: 9px 13px;
   font-weight: 760;
@@ -905,6 +905,92 @@ button:disabled {
 .assistant-card button {
   margin-top: 12px;
 }
+.patient-picker-options,
+.assistant-review-items {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+.patient-picker-options button {
+  display: grid;
+  gap: 3px;
+  min-height: 52px;
+  margin: 0;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--ink);
+  background: var(--surface-soft);
+  text-align: left;
+}
+.patient-picker-options span {
+  color: var(--muted);
+  font-size: 10px;
+}
+.assistant-review-items {
+  padding: 0;
+  border: 0;
+}
+.assistant-review-items legend {
+  margin-bottom: 7px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+.assistant-review-items label {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: 9px;
+  align-items: start;
+  min-height: 48px;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+}
+.assistant-review-items input {
+  width: 20px;
+  height: 20px;
+  margin: 1px 0 0;
+}
+.assistant-review-items span,
+.assistant-review-items strong {
+  display: block;
+}
+.assistant-review-items span {
+  font-size: 12px;
+  line-height: 1.45;
+}
+.assistant-review-items strong {
+  margin-bottom: 2px;
+  color: var(--brand);
+  font-size: 9px;
+  text-transform: uppercase;
+}
+.vital-trend-card strong {
+  display: block;
+  margin: 5px 0;
+  font-size: 23px;
+}
+.vital-line {
+  width: 100%;
+  height: 3px;
+  margin: 8px 0 10px;
+  border-radius: 99px;
+  background: linear-gradient(90deg, #9fd3c4, var(--brand), #9fd3c4);
+}
+.conversation-context-event {
+  justify-self: center;
+  max-width: 92%;
+  padding: 7px 11px;
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.75);
+  font-size: 10px;
+  text-align: center;
+}
 .assistant-vital strong {
   display: block;
   margin: 5px 0;
@@ -956,9 +1042,14 @@ button:disabled {
 }
 .assistant-action-review {
   margin-left: 48px;
+  margin-bottom: 150px;
+  scroll-margin-top: 82px;
   padding: 17px;
   border-color: #d5aa58;
   box-shadow: 0 10px 34px rgba(108, 71, 10, 0.1);
+}
+.assistant-action-review button {
+  min-height: 44px;
 }
 .assistant-action-review h3 {
   margin: 4px 0 8px;
@@ -996,11 +1087,70 @@ button:disabled {
   left: 258px;
   padding: 10px 24px max(12px, env(safe-area-inset-bottom));
   background: linear-gradient(transparent, #eef3f1 25%);
+  max-height: min(72dvh, 580px);
+  overflow-y: auto;
+}
+.composer-dock.review-hidden {
+  display: none;
 }
 .composer-dock > * {
   width: min(772px, 100%);
   margin-right: auto;
   margin-left: auto;
+}
+.voice-review {
+  display: grid;
+  gap: 7px;
+  margin-bottom: 7px;
+  padding: 10px 12px;
+  border: 1px solid #d5aa58;
+  border-radius: 12px;
+  background: #fff8e8;
+  font-size: 11px;
+}
+.voice-review > div:first-child,
+.voice-review > label {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+.voice-review > label {
+  justify-content: flex-start;
+  min-height: 36px;
+  font-weight: 700;
+}
+.voice-review input {
+  width: 22px;
+  height: 22px;
+}
+.voice-entities {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.voice-entities label {
+  display: inline-grid;
+  grid-template-columns: 22px auto;
+  align-items: center;
+  gap: 2px 6px;
+  padding: 4px 6px;
+  border: 1px solid #e7c77e;
+  border-radius: 8px;
+  background: #fffdf7;
+}
+.voice-entities label small {
+  grid-column: 2;
+  color: #765f31;
+}
+.voice-entities mark {
+  padding: 3px 6px;
+  border-radius: 6px;
+  color: #6f4b10;
+  background: #ffe7ad;
+}
+.conversation:has(.voice-review) {
+  padding-bottom: 310px;
 }
 .quick-prompts {
   display: flex;
@@ -1417,6 +1567,8 @@ button:disabled {
   }
   .assistant-action-review {
     margin-left: 38px;
+    max-height: calc(100dvh - 245px);
+    overflow-y: auto;
   }
   .assistant-action-review .button-row {
     display: grid;

@@ -11,8 +11,8 @@ const loinc: Record<Observation["code"], { code: string; display: string }> = {
   "blood-pressure": { code: "85354-9", display: "Blood pressure panel" },
   temperature: { code: "8310-5", display: "Body temperature" },
   "oxygen-saturation": {
-    code: "59408-5",
-    display: "Oxygen saturation in Arterial blood by Pulse oximetry",
+    code: "2708-6",
+    display: "Oxygen saturation in Arterial blood",
   },
   pulse: { code: "8867-4", display: "Heart rate" },
   weight: { code: "29463-7", display: "Body weight" },
@@ -59,7 +59,9 @@ export function observationToFhirR4(observation: Observation): FhirR4Resource {
       profile: ["http://hl7.org/fhir/StructureDefinition/vitalsigns"],
       tag: sourceTag(observation.source.provider),
     },
-    status: ["synced", "approved"].includes(observation.status)
+    status: ["synced", "approved", "pending-provider"].includes(
+      observation.status,
+    )
       ? "final"
       : "preliminary",
     category: [

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
 
 const [group = "help", action = ""] = process.argv.slice(2);
 const baseUrl = process.env.PFH_BASE_URL ?? "http://127.0.0.1:4173";
@@ -60,11 +61,21 @@ else if (group === "demo" && action === "reset")
       2,
     ),
   );
-else if (group === "fhir" && action === "validate")
-  console.log(
-    "fhir validate: R4 structures target CH Core 6.0.0 mapping semantics; no executable CH Core validator package is pinned, production requires an imported governed package registry",
-  );
-else if (group === "model" && action === "list")
+else if (
+  group === "fhir" &&
+  ["import", "verify", "validate"].includes(action)
+) {
+  const exitCode = await new Promise<number>((resolveExit, reject) => {
+    const child = spawn(
+      process.execPath,
+      ["--import", "tsx", "tools/fhir-validator.ts", action],
+      { stdio: "inherit" },
+    );
+    child.once("error", reject);
+    child.once("exit", (code) => resolveExit(code ?? 1));
+  });
+  if (exitCode !== 0) process.exitCode = exitCode;
+} else if (group === "model" && action === "list")
   console.log(JSON.stringify(await request("/api/v1/ai/status"), null, 2));
 else if (group === "backup" && action === "restore-test")
   console.log(
@@ -72,7 +83,7 @@ else if (group === "backup" && action === "restore-test")
   );
 else {
   console.log(
-    "Usage: pfhctl preflight | status | provider list|test | demo reset | fhir validate | model list | backup restore-test",
+    "Usage: pfhctl preflight | status | provider list|test | demo reset | fhir import|verify|validate | model list | backup restore-test",
   );
   if (group !== "help") process.exitCode = 2;
 }

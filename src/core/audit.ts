@@ -28,6 +28,10 @@ export function verifyAuditEntries(entries: readonly AuditEntry[]): boolean {
 export class AuditChain {
   private entries: AuditEntry[] = [];
 
+  get length(): number {
+    return this.entries.length;
+  }
+
   append(input: {
     actor: DemoUser;
     actorType?: "human" | "system";
@@ -66,6 +70,16 @@ export class AuditChain {
 
   snapshot(): AuditEntry[] {
     return structuredClone(this.entries);
+  }
+
+  slice(start: number): AuditEntry[] {
+    return structuredClone(this.entries.slice(start));
+  }
+
+  truncate(length: number): void {
+    if (!Number.isInteger(length) || length < 0 || length > this.entries.length)
+      throw new Error("Invalid audit-chain rollback boundary.");
+    this.entries.length = length;
   }
 
   restore(entries: readonly AuditEntry[]): void {

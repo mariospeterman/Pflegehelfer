@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { ModelGateway } from "../src/ai/model-gateway.js";
 import {
+  deterministicCareUpdatePlan,
+  verifyModelPlanAgainstDeterministicCompiler,
+} from "../src/ai/clinical-action-plan.js";
+import {
   AssistantService,
   type AssistantResponse,
 } from "../src/core/assistant-service.js";
@@ -34,14 +38,22 @@ function executionContext(
 ): IntentExecutionContext {
   if (!response.patientContext)
     throw new Error("Expected a patient-bound assistant response");
-  return {
+  const reviewItems = draftAction(response).reviewItems;
+  const context = {
     patientId: response.patientContext.patientId,
     encounterId: response.patientContext.encounterId,
     purpose: "direct-care",
     resourceVersion: response.patientContext.resourceVersion,
     explicitlyConfirmed: true,
+    ...(reviewItems
+      ? {
+          reviewedActionIds: reviewItems.map((item) => item.id),
+        }
+      : {}),
     ...override,
   };
+  if (context.reviewedActionIds === undefined) delete context.reviewedActionIds;
+  return context as IntentExecutionContext;
 }
 
 describe("assistant presentation boundary", () => {
@@ -97,30 +109,40 @@ describe("assistant action gateway", () => {
     const action = draftAction(response);
     expect(action.kind).toBe("care-update");
     expect(action.preview).toContain("151/88 mmHg");
-    expect(action.preview).toContain("pending-provider an WiCare");
-    expect(action.preview).toContain("Medplum Communication: sent");
+    expect(action.reviewItems).toHaveLength(4);
+    expect(action.preview).toContain("Teamnachricht an Ärztlicher Dienst");
     const existingTaskStates = new Map(
       before.tasks.map((task) => [task.id, task.state]),
     );
 
-    expect(
-      assistant.executeIntent(
-        "u-nurse",
-        action.intentToken,
-        executionContext(response),
-      ),
-    ).toMatchObject({
-      bundle: {
-        note: { status: "pending-provider" },
-        observation: {
+    const result = assistant.executeIntent(
+      "u-nurse",
+      action.intentToken,
+      executionContext(response),
+    ) as { bundle: unknown[]; draftOnly: boolean };
+    expect(result.draftOnly).toBe(false);
+    expect(result.bundle).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: "draft",
+        }),
+        expect.objectContaining({
           value: 151,
           secondaryValue: 88,
-          status: "pending-provider",
-        },
-        communication: { recipientRole: "physician", state: "sent" },
-        task: { title: "Blutdruck erneut kontrollieren", state: "new" },
-      },
-    });
+          status: "draft",
+        }),
+        expect.objectContaining({ recipientRole: "physician", state: "sent" }),
+        expect.objectContaining({
+          title: "Blutdruck erneut kontrollieren",
+          state: "new",
+        }),
+      ]),
+    );
+    const note = result.bundle.find(
+      (item): item is { structuredText: unknown } =>
+        typeof item === "object" && item !== null && "structuredText" in item,
+    );
+    expect(typeof note?.structuredText).toBe("string");
     const after = clinical.snapshot("u-nurse");
     expect(after.notes).toHaveLength(before.notes.length + 1);
     expect(after.observations).toHaveLength(before.observations.length + 1);
@@ -128,7 +150,34 @@ describe("assistant action gateway", () => {
     expect(after.tasks).toHaveLength(before.tasks.length + 1);
     for (const [id, state] of existingTaskStates)
       expect(after.tasks.find((task) => task.id === id)?.state).toBe(state);
-    expect(after.outbox).toHaveLength(before.outbox.length + 2);
+    expect(after.outbox).toHaveLength(before.outbox.length);
+    expect(after.notes.at(-1)?.status).toBe("draft");
+    expect(after.observations.at(-1)?.status).toBe("draft");
+  });
+
+  it("refuses to compile medication or dose instructions from free text", () => {
+    expect(
+      deterministicCareUpdatePlan(
+        "Blutdruck 151 zu 88. Marcumar sofort geben und Arzt informieren.",
+      ),
+    ).toBeNull();
+  });
+
+  it("rejects schema-valid model fields that differ from deterministic compilation", () => {
+    const prompt =
+      "Mobilisiert, Blutdruck 151 zu 88, Arzt informieren und Kontrolle in 30 Minuten.";
+    const compiled = deterministicCareUpdatePlan(prompt);
+    if (!compiled) throw new Error("Expected deterministic care plan");
+    const invented = structuredClone(compiled);
+    const task = invented.actions.find(
+      (action) => action.type === "task-proposal",
+    );
+    if (!task || task.type !== "task-proposal")
+      throw new Error("Expected compiled task");
+    task.title = "Insulin 20 IE sofort geben";
+    expect(() =>
+      verifyModelPlanAgainstDeterministicCompiler(prompt, invented, compiled),
+    ).toThrow("CLINICAL_PLAN_NOT_SEMANTICALLY_GROUNDED");
   });
 
   it("burns a token when a caller tries to steal it for another patient", async () => {

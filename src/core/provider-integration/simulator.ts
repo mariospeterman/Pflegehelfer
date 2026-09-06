@@ -124,10 +124,7 @@ export class ProviderContractSimulator implements ProviderAdapter {
     const nextOffset = offset + records.length;
     return {
       records: clone(records),
-      nextCursor:
-        nextOffset < this.records.length
-          ? { value: `sim:${nextOffset}` }
-          : null,
+      nextCursor: { value: `sim:${nextOffset}` },
       hasMore: nextOffset < this.records.length,
     };
   }

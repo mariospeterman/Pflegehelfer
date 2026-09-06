@@ -108,6 +108,30 @@ export class ProviderRegistry {
     return registration.adapter;
   }
 
+  adapterForOperation(
+    provider: ProviderId,
+    profile: ProviderProfile,
+    operation: ProviderOperation,
+  ): ProviderAdapter | null {
+    const registration = this.registrations.get(key(provider, profile));
+    const capability = registration?.manifest.capabilities.find(
+      (candidate) => candidate.operation === operation,
+    );
+    if (
+      !registration?.config.enabled ||
+      !registration.adapter ||
+      registration.config.connection.kind === "external-vendor-gate" ||
+      !capability ||
+      (capability.support !== "supported" &&
+        !(
+          profile === "synthetic-simulator" &&
+          capability.support === "conditional"
+        ))
+    )
+      return null;
+    return registration.adapter;
+  }
+
   manifest(
     provider: ProviderId,
     profile: ProviderProfile,
@@ -120,7 +144,10 @@ export class ProviderRegistry {
     provider: ProviderId,
     mode: ProviderSimulatorMode,
   ): ProviderHealth {
-    const adapter = this.adapter(provider, "synthetic-simulator");
+    const registration = this.registrations.get(
+      key(provider, "synthetic-simulator"),
+    );
+    const adapter = registration?.adapter ?? null;
     if (!(adapter instanceof ProviderContractSimulator))
       throw new Error("SYNTHETIC_PROVIDER_SIMULATOR_NOT_CONFIGURED");
     adapter.setMode(mode);
@@ -164,10 +191,7 @@ export class ProviderRegistry {
       registration.manifest.capabilities.some(
         (capability) => capability.support === "external-vendor-gate",
       );
-    if (
-      registration.config.connection.kind === "external-vendor-gate" ||
-      hasUnresolvedGates
-    ) {
+    if (registration.config.connection.kind === "external-vendor-gate") {
       operationalStatus = "EXTERNAL_VENDOR_GATE";
     } else if (!registration.config.enabled) {
       operationalStatus = "DISABLED";
@@ -178,7 +202,9 @@ export class ProviderRegistry {
           registration.config.profile === "synthetic-simulator"
             ? "SIMULATED"
             : health.status === "available"
-              ? "READY"
+              ? hasUnresolvedGates
+                ? "DEGRADED"
+                : "READY"
               : health.status === "degraded"
                 ? "DEGRADED"
                 : "UNAVAILABLE";
