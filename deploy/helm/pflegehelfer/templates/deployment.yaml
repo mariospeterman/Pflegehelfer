@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: {{ .Release.Name }} }
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector: { matchLabels: { app: {{ .Release.Name }} } }
+  template:
+    metadata: { labels: { app: {{ .Release.Name }} } }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 10001, fsGroup: 10001 }
+      containers:
+        - name: pflegehelfer
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}{{ if .Values.image.digest }}@{{ .Values.image.digest }}{{ end }}"
+          imagePullPolicy: IfNotPresent
+          ports: [{ name: http, containerPort: 4173 }]
+          env:
+            - { name: HOST, value: "0.0.0.0" }
+            - { name: PORT, value: "4173" }
+            - { name: PFH_DEMO_MODE, value: {{ .Values.config.demoMode | quote }} }
+            - { name: PFH_STORAGE_MODE, value: {{ .Values.config.storageMode | quote }} }
+            - { name: PFH_FHIR_BASE_URL, value: {{ .Values.config.fhirBaseUrl | quote }} }
+            - { name: MEDPLUM_APP_BASE_URL, value: {{ .Values.config.medplumAppBaseUrl | quote }} }
+            - {
+                name: PFH_AI_ENABLED,
+                value: {{ .Values.config.aiEnabled | quote }},
+              }
+          envFrom:
+            - secretRef: { name: {{ .Values.secrets.existingSecret }} }
+          readinessProbe:
+            {
+              httpGet: { path: /ready, port: http },
+              initialDelaySeconds: 3,
+              periodSeconds: 10,
+            }
+          livenessProbe:
+            {
+              httpGet: { path: /health, port: http },
+              initialDelaySeconds: 10,
+              periodSeconds: 20,
+            }
+          resources: {{ toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            {
+              allowPrivilegeEscalation: false,
+              readOnlyRootFilesystem: true,
+              capabilities: { drop: ["ALL"] },
+            }

@@ -1,0 +1,204 @@
+import { randomUUID } from "node:crypto";
+import { z } from "zod";
+import {
+  DomainError,
+  type DemoUser,
+  type Purpose,
+  type Role,
+} from "./types.js";
+
+const boundedText = z.string().trim().min(1).max(1200);
+const recordId = z.string().regex(/^[A-Za-z0-9.-]{1,64}$/);
+
+export const assistantComponentSchema = z.discriminatedUnion("type", [
+  z
+    .object({
+      type: z.literal("PatientSummary"),
+      patientId: recordId,
+      title: z.string().trim().min(1).max(120),
+      summary: boundedText,
+      sourceLabel: z.string().trim().min(1).max(180),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("TaskList"),
+      title: z.string().trim().min(1).max(120),
+      summary: boundedText,
+      count: z.number().int().min(0).max(50),
+      sourceLabel: z.string().trim().min(1).max(180),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("VitalTrend"),
+      patientId: recordId,
+      label: z.string().trim().min(1).max(80),
+      value: z.string().trim().min(1).max(80),
+      sourceLabel: z.string().trim().min(1).max(180),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("HandoverChecklist"),
+      title: z.string().trim().min(1).max(120),
+      summary: boundedText,
+      openCount: z.number().int().min(0).max(100),
+      sourceLabel: z.string().trim().min(1).max(180),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("DraftAction"),
+      kind: z.enum([
+        "nursing-note",
+        "physician-question",
+        "task",
+        "care-update",
+      ]),
+      title: z.string().trim().min(1).max(120),
+      preview: boundedText,
+      actionLabel: z.string().trim().min(1).max(80),
+      intentToken: z.uuid(),
+      sourceLabel: z.string().trim().min(1).max(180),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("MedicationReadOnly"),
+      patientId: recordId,
+      summary: boundedText,
+      sourceLabel: z.string().trim().min(1).max(180),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("SafetyAlert"),
+      severity: z.enum(["info", "warning"]),
+      message: boundedText,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("KnowledgeAnswer"),
+      title: z.string().trim().min(1).max(120),
+      answer: z.string().trim().min(1).max(2400),
+      sourceLabel: z.string().trim().min(1).max(500),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("UnknownState"),
+      message: boundedText,
+    })
+    .strict(),
+]);
+
+export type AssistantComponent = z.infer<typeof assistantComponentSchema>;
+
+export function validateAssistantComponents(
+  input: unknown,
+): AssistantComponent[] {
+  const result = z.array(assistantComponentSchema).max(12).safeParse(input);
+  if (!result.success)
+    throw new DomainError(
+      "VALIDATION",
+      "Unbekannte oder nicht freigegebene Generative-UI-Komponente.",
+      400,
+    );
+  return result.data;
+}
+
+export type AssistantIntentCommand =
+  "note:draft" | "communication:draft" | "task:draft" | "care-update:draft";
+
+export interface BoundIntentInput {
+  command: AssistantIntentCommand;
+  patientId: string;
+  encounterId: string;
+  purpose: Purpose;
+  resourceVersion: number;
+  payload: Record<string, string>;
+  ttlMs?: number;
+}
+
+interface IntentRecord extends Omit<BoundIntentInput, "ttlMs"> {
+  actorId: string;
+  actorRole: Role;
+  expiresAt: number;
+}
+
+export interface IntentExecutionContext {
+  patientId: string;
+  encounterId: string;
+  purpose: Purpose;
+  resourceVersion: number;
+  explicitlyConfirmed: boolean;
+}
+
+/**
+ * Server-side one-use intent registry. Tokens contain no identifiers and every
+ * security-relevant context value is bound and rechecked on consumption.
+ */
+export class OpaqueIntentBroker {
+  private readonly intents = new Map<string, IntentRecord>();
+
+  issue(actor: DemoUser, input: BoundIntentInput): string {
+    if (!actor.patientIds.includes(input.patientId))
+      throw new DomainError(
+        "AUTH_DENIED",
+        "Assistenzaktion liegt ausserhalb des Behandlungskontexts.",
+        403,
+      );
+    const token = randomUUID();
+    this.intents.set(token, {
+      actorId: actor.id,
+      actorRole: actor.role,
+      command: input.command,
+      patientId: input.patientId,
+      encounterId: input.encounterId,
+      purpose: input.purpose,
+      resourceVersion: input.resourceVersion,
+      payload: structuredClone(input.payload),
+      expiresAt: Date.now() + (input.ttlMs ?? 120_000),
+    });
+    return token;
+  }
+
+  consume(
+    token: string,
+    actor: DemoUser,
+    context: IntentExecutionContext,
+  ): Omit<IntentRecord, "actorId" | "actorRole" | "expiresAt"> {
+    const record = this.intents.get(token);
+    this.intents.delete(token);
+    if (!record || record.expiresAt < Date.now())
+      throw new DomainError(
+        "AUTH_DENIED",
+        "Assistenzaktion ist ungültig oder abgelaufen.",
+        403,
+      );
+    if (
+      record.actorId !== actor.id ||
+      record.actorRole !== actor.role ||
+      !context.explicitlyConfirmed ||
+      record.patientId !== context.patientId ||
+      record.encounterId !== context.encounterId ||
+      record.purpose !== context.purpose ||
+      record.resourceVersion !== context.resourceVersion
+    )
+      throw new DomainError(
+        "AUTH_DENIED",
+        "Assistenzaktion stimmt nicht mit Identität, Kontext oder Version überein.",
+        403,
+      );
+    return {
+      command: record.command,
+      patientId: record.patientId,
+      encounterId: record.encounterId,
+      purpose: record.purpose,
+      resourceVersion: record.resourceVersion,
+      payload: structuredClone(record.payload),
+    };
+  }
+}

@@ -1,0 +1,158 @@
+name: pflegehelfer
+
+# Representative self-hosted showcase stack. Secrets are generated into the
+# ignored .env.demo file by `pnpm demo:env`; no credential is committed here.
+services:
+  medplum-postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: medplum
+      POSTGRES_PASSWORD: ${MEDPLUM_DEMO_POSTGRES_PASSWORD:?Run pnpm demo:env first}
+      POSTGRES_DB: medplum
+    command:
+      - postgres
+      - -c
+      - listen_addresses=*
+      - -c
+      - statement_timeout=60000
+      - -c
+      - default_transaction_isolation=REPEATABLE READ
+      - -c
+      - shared_preload_libraries=pg_stat_statements,auto_explain
+    volumes:
+      - medplum-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U medplum"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [clinical]
+
+  medplum-redis:
+    image: redis:7
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --requirepass
+      - ${MEDPLUM_DEMO_REDIS_PASSWORD:?Run pnpm demo:env first}
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'redis-cli -a "$${MEDPLUM_DEMO_REDIS_PASSWORD}" ping | grep PONG',
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    environment:
+      MEDPLUM_DEMO_REDIS_PASSWORD: ${MEDPLUM_DEMO_REDIS_PASSWORD:?Run pnpm demo:env first}
+    networks: [clinical]
+
+  medplum-server:
+    image: medplum/medplum-server:5.1.37
+    restart: unless-stopped
+    depends_on:
+      medplum-postgres:
+        condition: service_healthy
+      medplum-redis:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8103:8103"
+    # The image entrypoint enables OpenTelemetry instrumentation. The local
+    # showcase keeps telemetry in Pflegehelfer and starts the Medplum server
+    # directly so first boot remains deterministic on developer laptops.
+    entrypoint: ["node", "packages/server/dist/index.js"]
+    command: ["env"]
+    environment:
+      MEDPLUM_PORT: 8103
+      MEDPLUM_BASE_URL: http://localhost:8103/
+      MEDPLUM_APP_BASE_URL: http://localhost:3001/
+      MEDPLUM_STORAGE_BASE_URL: http://localhost:8103/storage/
+      MEDPLUM_DATABASE_HOST: medplum-postgres
+      MEDPLUM_DATABASE_PORT: 5432
+      MEDPLUM_DATABASE_DBNAME: medplum
+      MEDPLUM_DATABASE_USERNAME: medplum
+      MEDPLUM_DATABASE_PASSWORD: ${MEDPLUM_DEMO_POSTGRES_PASSWORD:?Run pnpm demo:env first}
+      MEDPLUM_REDIS_HOST: medplum-redis
+      MEDPLUM_REDIS_PORT: 6379
+      MEDPLUM_REDIS_PASSWORD: ${MEDPLUM_DEMO_REDIS_PASSWORD:?Run pnpm demo:env first}
+      MEDPLUM_BINARY_STORAGE: file:./binary/
+      MEDPLUM_SUPPORT_EMAIL: '"Pflegehelfer Demo" <noreply@pflegehelfer.demo.invalid>'
+      MEDPLUM_EMAIL_PROVIDER: none
+      MEDPLUM_REGISTER_ENABLED: "false"
+      MEDPLUM_ALLOWED_ORIGINS: http://127.0.0.1:5173,http://127.0.0.1:3001,http://localhost:3001
+      MEDPLUM_DEFAULT_SUPER_ADMIN_EMAIL: ${MEDPLUM_DEFAULT_SUPER_ADMIN_EMAIL:?Run pnpm demo:env first}
+      MEDPLUM_DEFAULT_SUPER_ADMIN_PASSWORD: ${MEDPLUM_DEFAULT_SUPER_ADMIN_PASSWORD:?Run pnpm demo:env first}
+      MEDPLUM_DEFAULT_SUPER_ADMIN_CLIENT_ID: ${MEDPLUM_DEFAULT_SUPER_ADMIN_CLIENT_ID:?Run pnpm demo:env first}
+      MEDPLUM_DEFAULT_SUPER_ADMIN_CLIENT_SECRET: ${MEDPLUM_DEFAULT_SUPER_ADMIN_CLIENT_SECRET:?Run pnpm demo:env first}
+      MEDPLUM_MAX_JSON_SIZE: 1mb
+      MEDPLUM_MAX_BATCH_SIZE: 50mb
+      MEDPLUM_INTROSPECTION_ENABLED: "false"
+      MEDPLUM_SAVE_AUDIT_EVENTS: "true"
+      MEDPLUM_SHUTDOWN_TIMEOUT_MILLISECONDS: 30000
+    volumes:
+      - medplum-binary-data:/app/binary
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          'fetch("http://localhost:8103/healthcheck").then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))',
+        ]
+      interval: 20s
+      timeout: 10s
+      retries: 20
+      # A truly empty Medplum database builds the complete R4 structure,
+      # value-set and search-parameter indexes before serving health checks.
+      # Slower developer disks can need more than eight minutes on first boot.
+      # Failures during this grace period are ignored; any successful probe
+      # still marks the service healthy immediately.
+      start_period: 12m
+    networks: [clinical]
+
+  medplum-app:
+    image: medplum/medplum-app:5.1.37
+    restart: unless-stopped
+    depends_on:
+      medplum-server:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:3001:3000"
+    networks: [clinical]
+
+  pflegehelfer:
+    profiles: [showcase]
+    build: .
+    ports: ["127.0.0.1:4173:4173"]
+    environment:
+      PFH_AI_MODE: deterministic
+      PFH_DEMO_MODE: "true"
+      PFH_STORAGE_MODE: medplum
+      PFH_FHIR_BASE_URL: http://medplum-server:8103/
+      MEDPLUM_APP_BASE_URL: http://localhost:3001/
+      MEDPLUM_DEFAULT_SUPER_ADMIN_CLIENT_ID: ${MEDPLUM_DEFAULT_SUPER_ADMIN_CLIENT_ID:?Run pnpm demo:env first}
+      MEDPLUM_DEFAULT_SUPER_ADMIN_CLIENT_SECRET: ${MEDPLUM_DEFAULT_SUPER_ADMIN_CLIENT_SECRET:?Run pnpm demo:env first}
+      LOG_LEVEL: info
+    depends_on:
+      medplum-server:
+        condition: service_healthy
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4173/ready"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+    networks: [clinical]
+
+networks:
+  clinical:
+    internal: false # demo host access; production charts split ingress/clinical/AI zones
+
+volumes:
+  medplum-postgres-data:
+  medplum-binary-data:

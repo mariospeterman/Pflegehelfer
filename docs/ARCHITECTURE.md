@@ -13,7 +13,7 @@ Chat UI → Local LLM → Medplum ↔ WiCare/careCoach
 It should be:
 
 ```text
-Fixed clinical PWA + constrained Generative UI
+GenUI conversation + voice-first clinical PWA
                     │
                     ▼
        Clinical Query and Action Gateway
@@ -44,6 +44,28 @@ The critical boundaries are:
 * **The LLM can read through controlled tools and create drafts, but never writes directly to Medplum or a provider.**
 * **Clinical writes pass through permissions, deterministic checks, human review, workflow state and provider acknowledgement.**
 * **The core application remains usable when the AI is unavailable.**
+
+## Product experience invariant
+
+**Pflegehelfer is GenUI/chat/voice-first: the conversation stream is the
+primary workspace, and tasks, patient summaries, vitals, documentation,
+Übergabe, Visite, forms and provider actions materialize contextually as
+approved interactive GenUI components. Fixed UI exists only for patient/role
+context, navigation/history, safety, authentication, synchronization state and
+deterministic approvals.**
+
+“Conversation-first” does not mean an unstructured chatbot or direct model
+access to clinical systems. Deterministic shift events, nurse-call mirrors,
+provider acknowledgements and team messages enter the same stream as user
+questions. Every generated action is a typed, bounded draft; normal code owns
+authorization, validation, workflow transitions, human approval, audit,
+Medplum persistence and provider commands. The product therefore feels like one
+natural-language coworker without weakening the trust boundaries below.
+
+This invariant supersedes later examples in this historical architecture that
+describe permanent `Heute / Zimmer / Patienten / Übergabe / Inbox` pages. Those
+capabilities remain, but appear as contextual stream modes and interactive
+components rather than independent dashboard modules.
 
 This makes Pflegehelfer a **clinical workflow and interoperability layer** that improves WiCare, careCoach and connected systems instead of becoming another isolated documentation application.
 
@@ -132,8 +154,8 @@ flowchart TB
     subgraph EXPERIENCE["1. Staff experience"]
         DEVICE["Managed smartphone, tablet or workstation"]
         APP["Pflegehelfer PWA<br/>optional managed native shell"]
-        SHELL["Fixed clinical shell<br/>My Shift · Rooms · Patients · Tasks<br/>Inbox · Übergabe · Visite"]
-        GENUI["Constrained OpenUI renderer<br/>allowlisted cards, charts and draft forms"]
+        SHELL["Minimal safety shell<br/>identity · patient · sync · history · approvals"]
+        GENUI["Primary GenUI conversation stream<br/>tasks · vitals · notes · team · handover · rounds"]
         VOICEUI["Push-to-talk voice input<br/>explicit patient and workflow context"]
 
         DEVICE --> APP
@@ -308,7 +330,7 @@ This matrix can differ between institutions without changing the PWA or AI archi
 
 ## Swiss FHIR baseline
 
-The current published CH Core version is **FHIR R4 7.0.0-ballot**, active since 10 June 2026 and presently still a ballot specification. Pflegehelfer should therefore pin the package version and run compatibility tests before adopting later releases rather than automatically updating it. ([FHIR.ch][5])
+The current non-ballot publication is **CH Core 6.0.0 (STU 6)**, published 16 December 2025. **CH Core 7.0.0-ballot**, generated 10 June 2026 against FHIR R4 4.0.1, is a compatibility target rather than a production baseline. Pflegehelfer therefore pins 6.0.0 for the reference mapping and evaluates 7.0.0-ballot separately before any governed promotion. ([FHIR.ch][5])
 
 Principal resources include:
 
@@ -513,20 +535,24 @@ That prevents update loops and allows forensic reconstruction.
 
 ---
 
-# 5. User experience: fixed shell plus constrained GenUI
+# 5. User experience: GenUI conversation first, fixed safety shell
 
-The interface should not be a blank chat window. Routine clinical work requires predictable locations, consistent controls and muscle memory.
+The interface is one context-aware conversation stream, not a blank chatbot and
+not a conventional module dashboard with AI bolted on. Predictability comes
+from a fixed composer, patient/role banner, compact stream modes, approved
+component catalog, stable action placement and deterministic approval sheets.
 
-## Fixed navigation
+## Fixed safety and context controls
 
-The primary mobile structure should be:
+Only the following controls remain permanently fixed:
 
 ```text
-My Shift
-Rooms
-Tasks
-Inbox
-More
+authenticated person and active role
+ward/shift and selected patient context
+conversation history/back navigation
+online/offline and pending synchronization state
+push-to-talk and text composer
+explicit approval/signature and break-glass controls
 ```
 
 Patient context opens from a room, assignment, task, search, QR code or NFC identifier.
@@ -540,9 +566,13 @@ The persistent patient banner displays:
 * offline/synchronization state,
 * source and update time.
 
-## Main screens
+The stream can be focused with compact in-chat modes such as **My Shift**,
+**Patient**, **Team** and **Synchronization**. These change which deterministic
+events and components are materialized; they are not separate legacy pages.
 
-### My Shift
+## Contextual stream workspaces
+
+### My Shift stream
 
 ```text
 Incoming Übergabe
@@ -554,7 +584,7 @@ Recent changes
 Synchronization problems
 ```
 
-### Room and patient
+### Patient stream
 
 ```text
 Current risks and relevant context
@@ -2608,19 +2638,21 @@ The open-source OpenUI project is a good choice for Pflegehelfer. It provides a 
 
 Pflegehelfer should use the open-source renderer locally, not an external Thesys cloud endpoint for patient data.
 
-## 7.1 Fixed shell plus bounded generation
+## 7.1 Conversation-first shell plus bounded generation
 
-The application should not be a blank chat screen. It should have a stable, predictable clinical shell:
+The application uses a stable conversation surface. The stream is primary;
+fixed controls surround it only where context, safety and approval require
+predictability:
 
 ```text
 ┌─────────────────────────────────────┐
-│ Patient identity and safety header  │
+│ Role · patient · safety · sync       │
 ├─────────────────────────────────────┤
-│ Heute | Verlauf | Werte | Team      │
+│ Shift | Patient | Team | Sync       │
 ├─────────────────────────────────────┤
 │                                     │
-│ Fixed clinical content area         │
-│ + approved OpenUI components        │
+│ Conversation and event stream       │
+│ + approved interactive GenUI        │
 │                                     │
 ├─────────────────────────────────────┤
 │ Hold to speak | type | quick action │
@@ -2698,17 +2730,19 @@ For the first production release, medication orders should remain read-only in P
 
 # 8. Mobile and PWA user experience
 
-## 8.1 Primary navigation
+## 8.1 Primary conversation modes
 
-The employee-facing navigation should contain only five persistent areas:
+The employee-facing shell exposes four compact stream modes:
 
-1. **Heute**
-2. **Zimmer**
-3. **Patienten**
-4. **Übergabe**
-5. **Inbox**
+1. **Meine Schicht** — Übergabe, alerts, current and upcoming work.
+2. **Patient** — selected/scanned patient context, documentation and trends.
+3. **Team** — transparent, patient-bound comments, questions, mentions and acknowledgements.
+4. **Synchronisation** — pending, acknowledged, rejected and conflict states.
 
-Chat is not a separate universe. It is available contextually inside each screen.
+The text/voice conversation is always present and is the primary control plane.
+Room selection, QR/NFC and task links only change its explicit patient context.
+Übergabe, rounds and inbox are generated workspaces within the stream rather
+than destinations that remove the user from it.
 
 ### Heute
 

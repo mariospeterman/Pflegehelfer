@@ -489,21 +489,24 @@ Do not create:
 * huge gradients;
 * dense analytics on care screens;
 * nested navigation;
-* chat-only workflows.
+* an unstructured chat that bypasses typed workflow and approval;
+* a conventional dashboard with an AI assistant bolted on.
 
 The experience should feel like a high-quality modern Swiss healthcare tool, not a consumer AI demo.
 
-The stable primary navigation is conceptually:
+The conversation stream is the primary workspace. Stable fixed controls are
+limited to identity/role, patient context, history, safety, sync state,
+composer and deterministic approval. Compact contextual modes are:
 
 ```text
-Heute
-Zimmer
-Patienten
-Übergabe
-Inbox
+Meine Schicht
+Patient
+Team
+Synchronisation
 ```
 
-Contextual patient work includes:
+All patient work materializes inside that stream as registered, interactive
+GenUI components:
 
 ```text
 overview

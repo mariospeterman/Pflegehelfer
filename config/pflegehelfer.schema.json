@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Pflegehelfer configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "environment": { "enum": ["demo", "production"] },
+    "port": { "type": "integer", "minimum": 1024, "maximum": 65535 },
+    "aiEnabled": { "type": "boolean", "default": false },
+    "fhirBaseUrl": { "type": "string", "format": "uri" },
+    "oidcIssuer": { "type": "string", "format": "uri" }
+  },
+  "required": ["environment", "port", "aiEnabled"]
+}

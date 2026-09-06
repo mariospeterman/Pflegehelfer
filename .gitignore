@@ -1,0 +1,12 @@
+node_modules/
+dist/
+playwright-report/
+test-results/
+artifacts/
+.DS_Store
+*.log
+.env
+.env.*
+!.env.example
+backups/
+.gstack/

@@ -1,0 +1,18 @@
+{
+  "name": "Pflegehelfer · Sonnenhof Demo",
+  "short_name": "Pflegehelfer",
+  "description": "Sichere synthetische Schweizer Pflege-Workflow-Demo",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f3f6f4",
+  "theme_color": "#0b6358",
+  "lang": "de-CH",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
