@@ -91,23 +91,6 @@ export class ProviderRegistry {
     });
   }
 
-  adapter(
-    provider: ProviderId,
-    profile: ProviderProfile,
-  ): ProviderAdapter | null {
-    const registration = this.registrations.get(key(provider, profile));
-    if (
-      !registration?.config.enabled ||
-      registration.config.connection.kind === "external-vendor-gate" ||
-      registration.manifest.gates.length > 0 ||
-      registration.manifest.capabilities.some(
-        (capability) => capability.support === "external-vendor-gate",
-      )
-    )
-      return null;
-    return registration.adapter;
-  }
-
   adapterForOperation(
     provider: ProviderId,
     profile: ProviderProfile,

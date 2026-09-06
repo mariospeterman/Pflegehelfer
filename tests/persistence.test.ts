@@ -11,7 +11,6 @@ import {
   serializeCommandReceipt,
   type ClinicalWorkspace,
   type ClinicalWorkspaceStatus,
-  type ShiftConversation,
 } from "../src/infrastructure/medplum-workspace.js";
 import { buildApp } from "../src/server/app.js";
 
@@ -24,7 +23,6 @@ class RecordingWorkspace implements ClinicalWorkspace {
   maxActiveWrites = 0;
   maxResourceBatch = 0;
   receipts = new Map<string, CommandReceipt>();
-  conversations = new Map<string, ShiftConversation>();
 
   initialize(): Promise<void> {
     return Promise.resolve();
@@ -66,21 +64,6 @@ class RecordingWorkspace implements ClinicalWorkspace {
   loadCommandReceipt(key: string): Promise<CommandReceipt | null> {
     const receipt = this.receipts.get(key);
     return Promise.resolve(receipt ? structuredClone(receipt) : null);
-  }
-
-  loadConversation(actorId: string): Promise<ShiftConversation | null> {
-    return Promise.resolve(
-      structuredClone(this.conversations.get(actorId) ?? null),
-    );
-  }
-
-  saveConversation(conversation: ShiftConversation): Promise<void> {
-    this.conversations.set(conversation.actorId, structuredClone(conversation));
-    return Promise.resolve();
-  }
-  deleteConversation(actorId: string): Promise<void> {
-    this.conversations.delete(actorId);
-    return Promise.resolve();
   }
 
   status(): Promise<ClinicalWorkspaceStatus> {

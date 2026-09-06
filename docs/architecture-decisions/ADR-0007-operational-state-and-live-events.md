@@ -1,6 +1,6 @@
 # ADR-0007: Separate operational state and durable live events
 
-- Status: Accepted target; migration incomplete
+- Status: Accepted
 - Date: 2026-09-06
 - Clarifies: ADR-0004
 

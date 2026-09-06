@@ -13,6 +13,7 @@ RUN addgroup -S pfh && adduser -S -G pfh -u 10001 pfh
 COPY --from=build --chown=pfh:pfh /app/dist ./dist
 COPY --from=build --chown=pfh:pfh /app/node_modules ./node_modules
 COPY --from=build --chown=pfh:pfh /app/package.json ./package.json
+COPY --from=build --chown=pfh:pfh /app/db ./db
 USER 10001
 EXPOSE 4173
 CMD ["node", "dist/src/server/index.js"]

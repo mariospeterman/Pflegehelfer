@@ -78,6 +78,10 @@ export function toOpenUi(components: AssistantComponent[]): string {
         return `${name} = VitalTrendCard(${q(component.label)}, ${q(component.value)}, ${q(component.sourceLabel)})`;
       case "HandoverChecklist":
         return `${name} = HandoverDeltaCard(${q(component.title)}, ${component.openCount}, ${q(component.summary)}, ${q(component.sourceLabel)})`;
+      case "TeamInbox":
+        return `${name} = TeamInboxCard(${q(component.title)}, ${component.count}, ${q(component.summary)}, ${q(component.sourceLabel)})`;
+      case "SyncSummary":
+        return `${name} = SyncSummaryCard(${q(component.title)}, ${component.pending}, ${component.conflicts}, ${q(component.summary)}, ${q(component.sourceLabel)})`;
       case "DraftAction":
         return `${name} = DraftActionCard(${q(component.kind)}, ${q(component.title)}, ${q(component.preview)}, ${q(component.actionLabel)}, ${q(component.intentToken)}, ${q(component.sourceLabel)}, ${JSON.stringify(component.reviewItems ?? [])})`;
       case "MedicationReadOnly":
@@ -132,6 +136,16 @@ export class AssistantService {
     private readonly models = new ModelGateway(),
     private readonly knowledge = new ApprovedKnowledgeService(),
   ) {}
+
+  revokeResponseIntents(response: AssistantResponse): void {
+    for (const component of response.components)
+      if (component.type === "DraftAction")
+        this.intents.revoke(component.intentToken);
+  }
+
+  revokeActorIntents(actorId: string): void {
+    this.intents.revokeActor(actorId);
+  }
 
   async query(
     userId: string,
@@ -352,6 +366,55 @@ export class AssistantService {
             handover.deltaTaskIds.length +
             handover.unresolvedCommunicationIds.length,
           sourceLabel: `Deterministische Delta-Abfrage · ${handover.createdAt}`,
+        });
+        break;
+      }
+      case "team-inbox": {
+        const messages = snapshot.communications.filter(
+          (item) =>
+            item.state !== "closed" &&
+            (item.recipientId === actor.id ||
+              item.recipientRole === actor.role),
+        );
+        for (const item of messages.slice(0, 8))
+          evidence.push({
+            resourceId: `Communication/${item.id}`,
+            version: item.source.version,
+            label: `${item.source.provider} · ${item.state}`,
+          });
+        components.push({
+          type: "TeamInbox",
+          title: "Teamfragen und Erwähnungen",
+          count: messages.length,
+          summary:
+            messages
+              .slice(0, 6)
+              .map(
+                (item) => `${item.request} · ${item.priority} · ${item.state}`,
+              )
+              .join("\n") || "Keine offenen Teamfragen für diese Rolle.",
+          sourceLabel: "FHIR Communication · rollenbezogener Posteingang",
+        });
+        break;
+      }
+      case "sync-status": {
+        const pending = snapshot.outbox.filter(
+          (item) => !["delivered", "synced"].includes(item.state),
+        );
+        components.push({
+          type: "SyncSummary",
+          title: "Synchronisation und Abgleich",
+          pending: pending.length,
+          conflicts: snapshot.syncSummary.conflicts,
+          summary:
+            pending
+              .slice(0, 6)
+              .map((item) => `${item.provider} · ${item.state}`)
+              .join("\n") || "Alle aktuellen Übertragungen sind quittiert.",
+          sourceLabel:
+            snapshot.capabilityProfile === "synthetic-simulator"
+              ? "Provider-Hub · Simulatorprofil"
+              : "Provider-Hub · verifizierte Fähigkeiten",
         });
         break;
       }
@@ -605,6 +668,17 @@ export class AssistantService {
     }
 
     const validated = validateAssistantComponents(components);
+    const composition = await this.models.composeOpenUi(
+      validated.map((component) => component.type),
+    );
+    const composed = composition.order.map((handle) => {
+      const index = Number.parseInt(handle.replace("candidate-", ""), 10) - 1;
+      return validated[index]!;
+    });
+    if (composition.degraded)
+      warnings.push(
+        "Die Modellkomposition war nicht verfügbar; die sichere deterministische Reihenfolge wurde verwendet.",
+      );
     this.clinical.audit.append({
       actor,
       action: "assistant:query",
@@ -633,8 +707,8 @@ export class AssistantService {
             mrn: patient.mrn,
           }
         : null,
-      components: validated,
-      openUi: toOpenUi(validated),
+      components: composed,
+      openUi: toOpenUi(composed),
       evidence,
       warnings,
     };

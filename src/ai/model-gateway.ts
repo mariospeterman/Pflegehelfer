@@ -14,6 +14,8 @@ export const assistantIntentSchema = z
       "open-tasks",
       "latest-vitals",
       "handover",
+      "team-inbox",
+      "sync-status",
       "draft-note",
       "draft-physician-question",
       "draft-task",
@@ -51,6 +53,12 @@ export interface ClinicalPlanResult {
   degraded: boolean;
 }
 
+export interface OpenUiCompositionResult {
+  order: string[];
+  composedByModel: boolean;
+  degraded: boolean;
+}
+
 function deterministicIntent(prompt: string): AssistantIntent {
   const text = prompt.toLocaleLowerCase("de-CH");
   // Multi-object bedside updates must be recognized before their individual
@@ -71,6 +79,10 @@ function deterministicIntent(prompt: string): AssistantIntent {
     return "medication-request";
   if (/übergabe|uebergabe|handover|schichtwechsel/.test(text))
     return "handover";
+  if (/synchron|provider|abgleich|schnittstelle/.test(text))
+    return "sync-status";
+  if (/teamfrage|teamfragen|@|erwähnung|mention/.test(text))
+    return "team-inbox";
   if (/blutdruck|vital|temperatur|sättigung|saettigung|puls|gewicht/.test(text))
     return "latest-vitals";
   if (/offen|aufgabe|task|zu tun|todo/.test(text)) return "open-tasks";
@@ -234,7 +246,7 @@ export class ModelGateway {
               {
                 role: "system",
                 content:
-                  'Classify the user\'s German clinical workflow request. Reply with exactly one JSON object in the exact shape {"intent":"patient-summary"}. The object must contain only the intent key. Replace the example value with exactly one of: patient-summary, open-tasks, latest-vitals, handover, draft-note, draft-physician-question, draft-task, care-update, knowledge-query, medication-request, unknown. No explanation, no other keys, no arrays. Never diagnose, prescribe, approve, or invent patient facts.',
+                  'Classify the user\'s German clinical workflow request. Reply with exactly one JSON object in the exact shape {"intent":"patient-summary"}. The object must contain only the intent key. Replace the example value with exactly one of: patient-summary, open-tasks, latest-vitals, handover, team-inbox, sync-status, draft-note, draft-physician-question, draft-task, care-update, knowledge-query, medication-request, unknown. No explanation, no other keys, no arrays. Never diagnose, prescribe, approve, or invent patient facts.',
               },
               { role: "user", content: prompt.slice(0, 1200) },
             ],
@@ -268,6 +280,111 @@ export class ModelGateway {
         model: this.model,
         degraded: true,
       };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async composeOpenUi(
+    candidateTypes: string[],
+  ): Promise<OpenUiCompositionResult> {
+    const handles = candidateTypes.map(
+      (_type, index) => `candidate-${index + 1}`,
+    );
+    const fallback = {
+      order: handles,
+      composedByModel: false,
+      degraded: false,
+    };
+    if (
+      this.mode === "disabled" ||
+      this.mode === "deterministic" ||
+      !this.baseUrl ||
+      handles.length < 2
+    )
+      return fallback;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    try {
+      const response = await fetch(
+        `${this.baseUrl.replace(/\/$/, "")}/chat/completions`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            ...(this.apiKey ? { authorization: `Bearer ${this.apiKey}` } : {}),
+          },
+          body: JSON.stringify({
+            model: this.model,
+            temperature: 0,
+            max_tokens: 180,
+            messages: [
+              {
+                role: "system",
+                content: [
+                  "Compose a bounded OpenUI presentation using only opaque candidate handles.",
+                  "Available components: ClinicalStack(children: Candidate[]), Candidate(handle: string).",
+                  "Return exactly an OpenUI Lang program: root = ClinicalStack([item1, ...]) followed by one item line for each candidate.",
+                  "Every supplied handle must occur exactly once. Do not add properties, text, facts, actions, URLs, code or handles.",
+                ].join(" "),
+              },
+              {
+                role: "user",
+                content: handles
+                  .map((handle, index) => `${handle}: ${candidateTypes[index]}`)
+                  .join("\n"),
+              },
+            ],
+          }),
+          signal: controller.signal,
+        },
+      );
+      if (!response.ok) throw new Error("composition-http");
+      const body = (await response.json()) as {
+        choices?: { message?: { content?: string } }[];
+      };
+      const content = body.choices?.[0]?.message?.content ?? "";
+      const programLines = content
+        .trim()
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean);
+      const declarations = new Map(
+        programLines.slice(1).map((line) => {
+          const match = /^(item\d+) = Candidate\("(candidate-\d+)"\)$/.exec(
+            line,
+          );
+          return [match?.[1] ?? "", match?.[2] ?? ""] as const;
+        }),
+      );
+      const rootItems =
+        /^root = ClinicalStack\(\[(.+)\]\)$/
+          .exec(programLines[0] ?? "")?.[1]
+          ?.split(",")
+          .map((item) => item.trim()) ?? [];
+      const declared = rootItems.map((item) => declarations.get(item) ?? "");
+      if (
+        programLines.length !== handles.length + 1 ||
+        !/^root = ClinicalStack\(\[item\d+(, item\d+)*\]\)$/.test(
+          programLines[0] ?? "",
+        ) ||
+        programLines
+          .slice(1)
+          .some(
+            (line) => !/^item\d+ = Candidate\("candidate-\d+"\)$/.test(line),
+          ) ||
+        declared.length !== handles.length ||
+        new Set(declared).size !== handles.length ||
+        declared.some((handle) => !handles.includes(handle)) ||
+        handles.some((handle) => !declared.includes(handle)) ||
+        /<|>|https?:|javascript:|intentToken|patientId|sourceVersion/.test(
+          content,
+        )
+      )
+        throw new Error("composition-schema");
+      return { order: declared, composedByModel: true, degraded: false };
+    } catch {
+      return { ...fallback, degraded: true };
     } finally {
       clearTimeout(timer);
     }

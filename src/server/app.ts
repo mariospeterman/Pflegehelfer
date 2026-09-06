@@ -26,6 +26,10 @@ import {
   InMemoryClinicalWorkspace,
   type ClinicalWorkspace,
 } from "../infrastructure/medplum-workspace.js";
+import {
+  InMemoryOperationalStore,
+  type OperationalStore,
+} from "../infrastructure/operational-store.js";
 
 const roleSchema = z.enum([
   "care-assistant",
@@ -207,6 +211,7 @@ export function buildApp(
   options: {
     demoMode?: boolean;
     workspace?: ClinicalWorkspace;
+    operationalStore?: OperationalStore;
     loggerStream?: Writable;
     loggerLevel?: string;
   } = {},
@@ -222,6 +227,8 @@ export function buildApp(
       demoMode ? "synthetic-simulator" : "production",
     );
   const workspace = options.workspace ?? new InMemoryClinicalWorkspace();
+  const operationalStore =
+    options.operationalStore ?? new InMemoryOperationalStore();
   const models = new ModelGateway();
   const asr = new AsrGateway();
   const knowledge = new ApprovedKnowledgeService();
@@ -299,6 +306,9 @@ export function buildApp(
         if (stagedReceipt) service.recordCommandReceipt(stagedReceipt);
         const nextCheckpoint = service.checkpoint();
         const nextResources = service.fhirResources();
+        const stateChanged =
+          JSON.stringify(nextCheckpoint) !== JSON.stringify(before);
+        if (!stateChanged && !stagedReceipt) return result;
         const previousByReference = new Map(
           durableResources.map((resource) => [
             `${resource.resourceType}/${resource.id}`,
@@ -330,7 +340,8 @@ export function buildApp(
         for (const key of service.commandReceiptKeys())
           committedCommandKeys.add(key);
         durableResources = nextResources;
-        if (request?.method === "POST" || publishChange) publishInvalidation();
+        if (request?.method === "POST" || (publishChange && stateChanged))
+          publishInvalidation();
         return result;
       } catch (error) {
         const rejectedEntries = service.audit
@@ -420,29 +431,21 @@ export function buildApp(
   const persistReadAudit = <T>(operation: () => T): Promise<T> => {
     const pending = persistenceQueue.then(async () => {
       const beforeAuditLength = service.audit.length;
-      let writeAttempted = false;
       try {
         const result = operation();
-        const auditResources =
-          service.fhirAuditResourcesSince(beforeAuditLength);
-        writeAttempted = true;
-        await workspace.synchronize(auditResources, service.checkpoint());
-        durableResources = [...durableResources, ...auditResources];
+        const entries = service.audit.snapshot().slice(beforeAuditLength);
+        for (const entry of entries) await operationalStore.appendAudit(entry);
+        // Operational PostgreSQL is authoritative for access events. Track the
+        // equivalent FHIR projection as already accounted for so the next
+        // clinical mutation does not batch historical read events back into a
+        // Medplum transaction.
+        durableResources = [
+          ...durableResources,
+          ...service.fhirAuditResourcesSince(beforeAuditLength),
+        ];
         return result;
       } catch (error) {
         service.audit.truncate(beforeAuditLength);
-        if (writeAttempted) {
-          try {
-            const latest = await workspace.loadCheckpoint();
-            if (latest) {
-              service.restoreCheckpoint(latest);
-              durableResources = service.fhirResources();
-            }
-          } catch {
-            // Readiness reports the workspace outage; never claim that an
-            // access event was durably committed when synchronization failed.
-          }
-        }
         throw error;
       }
     });
@@ -638,7 +641,10 @@ export function buildApp(
   app.get("/ready", async (_request, reply) => {
     await persistenceQueue;
     const auditValid = service.audit.verify();
-    const workspaceStatus = await workspace.status();
+    const [workspaceStatus, operationalReady] = await Promise.all([
+      workspace.status(),
+      operationalStore.health(),
+    ]);
     if (!demoMode)
       return reply.code(503).send({
         status: "not-ready",
@@ -655,6 +661,14 @@ export function buildApp(
         providersRequired: false,
         auditValid,
         workspace: workspaceStatus,
+      });
+    if (!operationalReady)
+      return reply.code(503).send({
+        status: "not-ready",
+        reason: "operational-store-unavailable",
+        aiRequired: false,
+        providersRequired: false,
+        auditValid,
       });
     return {
       status: auditValid ? "ready" : "not-ready",
@@ -771,11 +785,49 @@ export function buildApp(
   app.get("/api/v1/assistant/conversation", async (request) => {
     await persistenceQueue;
     const actorId = userId(request);
-    const conversation = await workspace.loadConversation(actorId);
+    const actor = service.user(actorId);
+    const session = await operationalStore.getOrStartSession(
+      actorId,
+      actor.role,
+    );
     return {
-      turns: conversation?.turns ?? [],
-      expiresAt: conversation?.expiresAt ?? null,
+      turns: await operationalStore.loadConversation(actorId, actor.role),
+      expiresAt: new Date(Date.now() + 12 * 60 * 60_000).toISOString(),
+      session,
     };
+  });
+
+  app.get("/api/v1/working-session", async (request) => {
+    await persistenceQueue;
+    const actorId = userId(request);
+    const actor = service.user(actorId);
+    return operationalStore.getOrStartSession(actorId, actor.role);
+  });
+
+  app.post("/api/v1/assistant/context", async (request) => {
+    const actorId = userId(request);
+    const actor = service.user(actorId);
+    const body = z
+      .object({ patientId: z.string().nullable() })
+      .strict()
+      .parse(request.body);
+    if (body.patientId) {
+      const allowed = service
+        .snapshot(actorId, actor.defaultPurpose)
+        .patients.some((patient) => patient.id === body.patientId);
+      if (!allowed)
+        throw new DomainError(
+          "AUTH_DENIED",
+          "Patientenkontext ist für diese Rolle nicht freigegeben.",
+          403,
+        );
+    }
+    assistant.revokeActorIntents(actorId);
+    return operationalStore.changePatientContext(
+      actorId,
+      actor.role,
+      body.patientId,
+    );
   });
 
   app.post("/api/v1/assistant/conversation/clear", async (request) => {
@@ -793,7 +845,7 @@ export function buildApp(
         }),
       request,
     );
-    await workspace.deleteConversation(actorId);
+    await operationalStore.clearConversation(actorId, actor.role);
     return { cleared: true, expiresAt: null };
   });
 
@@ -810,6 +862,16 @@ export function buildApp(
       });
     const actorId = userId(request);
     const actor = service.user(actorId);
+    const session = await operationalStore.getOrStartSession(
+      actorId,
+      actor.role,
+    );
+    if (session.patientId !== context.patientId)
+      throw new DomainError(
+        "AUTH_DENIED",
+        "Sprachaufnahme gehört nicht zum aktuellen Patientenkontext.",
+        403,
+      );
     const snapshot = service.snapshot(actorId, context.purpose);
     if (!snapshot.patients.some((patient) => patient.id === context.patientId))
       throw new DomainError(
@@ -872,6 +934,17 @@ export function buildApp(
   app.post("/api/v1/assistant/query", async (request) => {
     const body = assistantQueryBody.parse(request.body);
     const actorId = userId(request);
+    const actor = service.user(actorId);
+    const session = await operationalStore.getOrStartSession(
+      actorId,
+      actor.role,
+    );
+    if (session.patientId !== body.patientId)
+      throw new DomainError(
+        "AUTH_DENIED",
+        "Assistenzanfrage stimmt nicht mit dem bewusst gewählten Patientenkontext überein.",
+        403,
+      );
     if (body.inputModality === "voice") {
       const receipt = voiceReceipts.get(body.voiceReceiptId ?? "");
       // Receipts are one-use and fail closed, including after a downstream
@@ -907,30 +980,136 @@ export function buildApp(
         ...(body.purpose ? { purpose: body.purpose } : {}),
       }),
     );
-    const current = await workspace.loadConversation(actorId);
-    const expiresAt = new Date(Date.now() + 8 * 60 * 60_000).toISOString();
-    await workspace.saveConversation({
-      actorId,
-      expiresAt,
-      turns: [
-        ...(current?.turns ?? []),
-        {
-          id: response.id,
-          prompt: body.prompt,
-          response: archiveAssistantResponse(response),
-          createdAt: new Date().toISOString(),
-          inputModality: body.inputModality,
-        },
-      ].slice(-80),
+    await operationalStore.appendConversationTurn(actorId, actor.role, {
+      id: response.id,
+      prompt: body.prompt,
+      response: archiveAssistantResponse(response),
+      createdAt: new Date().toISOString(),
+      inputModality: body.inputModality,
     });
     return response;
+  });
+
+  app.post("/api/v1/assistant/query/stream", async (request, reply) => {
+    const body = assistantQueryBody.parse(request.body);
+    const actorId = userId(request);
+    const actor = service.user(actorId);
+    const session = await operationalStore.getOrStartSession(
+      actorId,
+      actor.role,
+    );
+    if (session.patientId !== body.patientId)
+      throw new DomainError(
+        "AUTH_DENIED",
+        "Assistenzanfrage stimmt nicht mit dem bewusst gewählten Patientenkontext überein.",
+        403,
+      );
+    if (body.inputModality === "voice") {
+      const receipt = voiceReceipts.get(body.voiceReceiptId ?? "");
+      if (body.voiceReceiptId) voiceReceipts.delete(body.voiceReceiptId);
+      const purpose = body.purpose ?? "direct-care";
+      const textHash = createHash("sha256").update(body.prompt).digest("hex");
+      const confirmed = [...(body.voiceConfirmedEntityIds ?? [])].sort();
+      const expected = [...(receipt?.entityIds ?? [])].sort();
+      if (
+        !receipt ||
+        receipt.expiresAt < Date.now() ||
+        receipt.actorId !== actorId ||
+        receipt.patientId !== body.patientId ||
+        receipt.purpose !== purpose ||
+        receipt.textHash !== textHash ||
+        JSON.stringify(confirmed) !== JSON.stringify(expected)
+      )
+        throw new DomainError(
+          "AUTH_DENIED",
+          "Sprachtranskript ist abgelaufen, verändert oder nicht an diesen Kontext gebunden.",
+          403,
+        );
+    }
+
+    const response = await persist(() =>
+      assistant.query(actorId, {
+        prompt: body.prompt,
+        patientId: body.patientId,
+        inputModality: body.inputModality,
+        voiceTranscriptConfirmed: body.voiceTranscriptConfirmed ?? false,
+        ...(body.purpose ? { purpose: body.purpose } : {}),
+      }),
+    );
+    let completed = false;
+    request.raw.once("close", () => {
+      if (!completed) assistant.revokeResponseIntents(response);
+    });
+    reply.hijack();
+    reply.raw.statusCode = 200;
+    reply.raw.setHeader("content-type", "application/x-ndjson; charset=utf-8");
+    reply.raw.setHeader("cache-control", "no-store, no-transform");
+    reply.raw.setHeader("x-content-type-options", "nosniff");
+    const write = (frame: unknown) =>
+      reply.raw.write(`${JSON.stringify(frame)}\n`);
+    write({
+      type: "start",
+      response: { ...response, components: [], openUi: "" },
+    });
+    // Partial presentation never carries executable authority. The complete
+    // frame exposes the live proposal only after its thread record is durable.
+    const lines = archiveAssistantResponse(response).openUi.split("\n");
+    for (const [index, line] of lines.entries()) {
+      write({
+        type: "openui",
+        chunk: `${index === 0 ? "" : "\n"}${line}`,
+      });
+    }
+    try {
+      await operationalStore.appendConversationTurn(actorId, actor.role, {
+        id: response.id,
+        prompt: body.prompt,
+        response: archiveAssistantResponse(response),
+        createdAt: new Date().toISOString(),
+        inputModality: body.inputModality,
+      });
+    } catch {
+      assistant.revokeResponseIntents(response);
+      write({
+        type: "error",
+        message:
+          "Der Gesprächszustand konnte nicht sicher gespeichert werden. Es wurde keine Aktion freigeschaltet.",
+      });
+      reply.raw.end();
+      return;
+    }
+    write({ type: "complete", response });
+    completed = true;
+    reply.raw.end();
   });
   app.post("/api/v1/assistant/intents/:token/execute", async (request) => {
     const { token } = z.object({ token: z.uuid() }).parse(request.params);
     const execution = assistantIntentBody.parse(request.body);
+    const actorId = userId(request);
+    const actor = service.user(actorId);
+    const session = await operationalStore.getOrStartSession(
+      actorId,
+      actor.role,
+    );
+    if (session.patientId !== execution.patientId)
+      return persist(() => {
+        service.audit.append({
+          actor,
+          action: "assistant:intent-rejected",
+          patientId: execution.patientId,
+          purpose: execution.purpose,
+          outcome: "denied",
+          detail: { reason: "active-patient-context-mismatch" },
+        });
+        throw new DomainError(
+          "AUTH_DENIED",
+          "Assistenzaktion gehört nicht zum aktuellen Patientenkontext.",
+          403,
+        );
+      }, request);
     return persist(
       () =>
-        assistant.executeIntent(userId(request), token, {
+        assistant.executeIntent(actorId, token, {
           patientId: execution.patientId,
           encounterId: execution.encounterId,
           purpose: execution.purpose,
@@ -1187,11 +1366,9 @@ export function buildApp(
         });
         return { status: "reset" };
       }, request);
-      await Promise.all(
-        service
-          .checkpoint()
-          .state.users.map((user) => workspace.deleteConversation(user.id)),
-      );
+      await operationalStore.resetDemoState();
+      for (const user of service.checkpoint().state.users)
+        assistant.revokeActorIntents(user.id);
       return result;
     });
   }
@@ -1230,6 +1407,10 @@ export function buildApp(
       });
     });
   }
+
+  app.addHook("onClose", async () => {
+    await operationalStore.close();
+  });
 
   return app;
 }

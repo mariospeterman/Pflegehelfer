@@ -1,6 +1,6 @@
 # ADR-0004: Medplum operational workspace with atomic workflow checkpoint
 
-- Status: Accepted
+- Status: Superseded by ADR-0007
 - Date: 2026-09-05
 
 ## Context

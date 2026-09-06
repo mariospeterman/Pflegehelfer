@@ -3,6 +3,24 @@ name: pflegehelfer
 # Representative self-hosted showcase stack. Secrets are generated into the
 # ignored .env.demo file by `pnpm demo:env`; no credential is committed here.
 services:
+  pflegehelfer-postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: pflegehelfer
+      POSTGRES_PASSWORD: ${PFH_DEMO_POSTGRES_PASSWORD:?Run pnpm demo:env first}
+      POSTGRES_DB: pflegehelfer
+    ports:
+      - "127.0.0.1:5434:5432"
+    volumes:
+      - pflegehelfer-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pflegehelfer -d pflegehelfer"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [clinical]
+
   medplum-postgres:
     image: postgres:16
     restart: unless-stopped
@@ -130,12 +148,15 @@ services:
       PFH_AI_MODE: deterministic
       PFH_DEMO_MODE: "true"
       PFH_STORAGE_MODE: medplum
+      PFH_OPERATIONAL_DATABASE_URL: postgresql://pflegehelfer:${PFH_DEMO_POSTGRES_PASSWORD}@pflegehelfer-postgres:5432/pflegehelfer
       PFH_FHIR_BASE_URL: http://medplum-server:8103/
       MEDPLUM_APP_BASE_URL: http://localhost:3001/
       MEDPLUM_DEFAULT_SUPER_ADMIN_CLIENT_ID: ${MEDPLUM_DEFAULT_SUPER_ADMIN_CLIENT_ID:?Run pnpm demo:env first}
       MEDPLUM_DEFAULT_SUPER_ADMIN_CLIENT_SECRET: ${MEDPLUM_DEFAULT_SUPER_ADMIN_CLIENT_SECRET:?Run pnpm demo:env first}
       LOG_LEVEL: info
     depends_on:
+      pflegehelfer-postgres:
+        condition: service_healthy
       medplum-server:
         condition: service_healthy
     read_only: true
@@ -154,5 +175,6 @@ networks:
     internal: false # demo host access; production charts split ingress/clinical/AI zones
 
 volumes:
+  pflegehelfer-postgres-data:
   medplum-postgres-data:
   medplum-binary-data:

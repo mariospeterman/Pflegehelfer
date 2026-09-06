@@ -1,11 +1,11 @@
 {
-  "name": "Pflegehelfer · Sonnenhof Demo",
+  "name": "Pflegehelfer · Tertianum Kronenhof Demo",
   "short_name": "Pflegehelfer",
   "description": "Sichere synthetische Schweizer Pflege-Workflow-Demo",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#f3f6f4",
-  "theme_color": "#0b6358",
+  "background_color": "#f4f6fa",
+  "theme_color": "#153f75",
   "lang": "de-CH",
   "icons": [
     {

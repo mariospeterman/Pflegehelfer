@@ -1,5 +1,5 @@
-# Pflegehelfer agent entry point
+# Pflegehelfer repository instructions
 
-The complete engineering instruction is maintained in [`agent.md`](./agent.md).
+Read and follow [`agent.md`](agent.md), the single canonical [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/PRODUCT_EXPERIENCE.md`](docs/PRODUCT_EXPERIENCE.md) and [`docs/WORKFLOWS.md`](docs/WORKFLOWS.md) before changing code.
 
-Before changing this repository, read that file and [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) completely. The upstream architecture content is retained under this canonical uppercase name so Linux and macOS resolve the same governed file; this entry point exists because agent tooling discovers `AGENTS.md` by convention.
+Non-negotiable: one persistent role-aware GenUI/chat/voice clinical coworker. Do not add workflow-owning dashboards, focus modes or mobile module tabs. Models may interpret/compose bounded presentation; deterministic server code alone authorizes and executes.

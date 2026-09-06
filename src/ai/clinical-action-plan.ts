@@ -107,7 +107,7 @@ export function deterministicCareUpdatePlan(
   // Medication and dose instructions require a dedicated medication workflow
   // and must never be compiled from free text into this general care bundle.
   if (
-    /(?:insulin|medikament|tablette|kapsel|tropfen|injektion|infusion|antibiotik)|\b\d+(?:[,.]\d+)?\s*(?:mg|µg|mcg|g|ml|ie|einheiten?)\b|\b(?:geben|verabreichen|verabreicht|absetzen|abgesetzt|dosieren|dosiert)\b/i.test(
+    /(?:insulin|medikament|tablette|kapsel|tropfen|injektion|infusion|antibiotik|aspirin|\bass\b|paracetamol|ibuprofen|morphin|torasemid|heparin)|\b\d+(?:[,.]\d+)?\s*(?:mg|milligramm|µg|mcg|mikrogramm|g|gramm|ml|milliliter|ie|einheiten?)\b|\b(?:geben|gegeben|verabreichen|verabreicht|absetzen|abgesetzt|dosieren|dosiert|eingenommen)\b/i.test(
       normalized,
     )
   )

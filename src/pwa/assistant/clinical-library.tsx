@@ -364,6 +364,57 @@ const DraftActionCard = defineComponent({
   },
 });
 
+const TeamInboxCard = defineComponent({
+  name: "TeamInboxCard",
+  description: "Role-filtered clinical questions and mentions.",
+  props: z
+    .object({
+      title: z.string().max(160),
+      count: z.number().int().min(0).max(100),
+      summary: z.string().max(1600),
+      source: z.string().max(240),
+    })
+    .strict(),
+  component: ({ props: { title, count, summary, source } }) => (
+    <article className="assistant-card team-inbox-card">
+      <header>
+        <span>@ Team · {count} offen</span>
+        <h3>{title}</h3>
+      </header>
+      <p>{summary}</p>
+      <footer>{source}</footer>
+    </article>
+  ),
+});
+
+const SyncSummaryCard = defineComponent({
+  name: "SyncSummaryCard",
+  description: "Provider delivery receipts and conflicts.",
+  props: z
+    .object({
+      title: z.string().max(160),
+      pending: z.number().int().min(0).max(1000),
+      conflicts: z.number().int().min(0).max(1000),
+      summary: z.string().max(1600),
+      source: z.string().max(240),
+    })
+    .strict(),
+  component: ({ props: { title, pending, conflicts, summary, source } }) => (
+    <article
+      className={`assistant-card sync-summary-card${conflicts ? " has-conflict" : ""}`}
+    >
+      <header>
+        <span>
+          {pending} ausstehend · {conflicts} Konflikte
+        </span>
+        <h3>{title}</h3>
+      </header>
+      <p>{summary}</p>
+      <footer>{source}</footer>
+    </article>
+  ),
+});
+
 const ClinicalStack = defineComponent({
   name: "ClinicalStack",
   description: "Bounded vertical group of approved clinical components.",
@@ -379,6 +430,8 @@ const ClinicalStack = defineComponent({
             TaskListCard.ref,
             VitalTrendCard.ref,
             HandoverDeltaCard.ref,
+            TeamInboxCard.ref,
+            SyncSummaryCard.ref,
             MedicationReadOnlyCard.ref,
             PolicyAnswerCard.ref,
             UnknownStateCard.ref,
@@ -408,6 +461,8 @@ export const clinicalAssistantLibrary = createLibrary({
     TaskListCard,
     VitalTrendCard,
     HandoverDeltaCard,
+    TeamInboxCard,
+    SyncSummaryCard,
     MedicationReadOnlyCard,
     PolicyAnswerCard,
     UnknownStateCard,

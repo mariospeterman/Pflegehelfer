@@ -9,7 +9,6 @@ import {
   useRef,
   useState,
   type FormEvent,
-  type ReactNode,
 } from "react";
 import type { Patient } from "../../core/types";
 import {
@@ -111,6 +110,13 @@ export interface AssistantHandoff {
   dueAt: string;
 }
 
+export interface ConversationOpening {
+  eyebrow: string;
+  title: string;
+  summary: string;
+  progress: string;
+}
+
 interface ChatMessage {
   kind?: "turn";
   id: string;
@@ -185,8 +191,8 @@ export function AssistantSurface({
   onExecuted,
   onHandoff,
   snapshotRevision,
-  contextProjection,
-  conversationId,
+  opening,
+  launchPrompt,
   onSelectPatient,
   onBusyChange,
 }: {
@@ -196,8 +202,8 @@ export function AssistantSurface({
   onExecuted: (message: string) => Promise<void>;
   onHandoff: (handoff: AssistantHandoff) => void;
   snapshotRevision: string;
-  contextProjection: ReactNode;
-  conversationId: string;
+  opening: ConversationOpening;
+  launchPrompt: { id: number; text: string } | null;
   onSelectPatient: (patientId: string) => void;
   onBusyChange: (busy: boolean) => void;
 }) {
@@ -317,7 +323,13 @@ export function AssistantSurface({
           setError("Der kurze Schichtverlauf konnte nicht geladen werden.");
       });
     return () => controller.abort();
-  }, [conversationId, userId]);
+  }, [userId]);
+
+  useEffect(() => {
+    if (!launchPrompt) return;
+    setPrompt(launchPrompt.text);
+    setVoiceReview(null);
+  }, [launchPrompt]);
 
   useEffect(() => {
     if (lastRevision.current === snapshotRevision) return;
@@ -362,7 +374,7 @@ export function AssistantSurface({
       const next = [...current.map(archiveExecutableMessage), marker];
       return next;
     });
-  }, [cancelVoice, conversationId, patient]);
+  }, [cancelVoice, patient]);
 
   useEffect(() => {
     if (!online && pendingAction) {
@@ -416,61 +428,95 @@ export function AssistantSurface({
       requestAbort.current?.abort();
       const controller = new AbortController();
       requestAbort.current = controller;
-      const response = await post<AssistantResponse>(
-        "/api/v1/assistant/query",
-        userId,
-        {
+      const streamed = await fetch("/api/v1/assistant/query/stream", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-demo-user": userId,
+          "x-command-id": crypto.randomUUID(),
+        },
+        body: JSON.stringify({
           prompt: submitted,
           patientId: patient?.id ?? null,
           inputModality: voiceReview?.receiptId ? "voice" : "typed",
           voiceTranscriptConfirmed: voiceReview?.confirmed ?? false,
           voiceReceiptId: voiceReview?.receiptId ?? undefined,
           voiceConfirmedEntityIds: voiceReview?.confirmedEntityIds,
-        },
-        controller.signal,
-      );
+        }),
+        signal: controller.signal,
+      });
+      if (!streamed.ok || !streamed.body) {
+        const body = (await streamed.json()) as { message?: string };
+        throw new Error(body.message ?? "Assistenzaktion fehlgeschlagen.");
+      }
+      const reader = streamed.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let partial = "";
+      let activeId: string | null = null;
+      let completed = false;
+      while (true) {
+        const { value, done } = await reader.read();
+        buffer += decoder.decode(value, { stream: !done });
+        const frames = buffer.split("\n");
+        buffer = frames.pop() ?? "";
+        for (const raw of frames) {
+          if (!raw.trim()) continue;
+          const frame = JSON.parse(raw) as
+            | { type: "start"; response: AssistantResponse }
+            | { type: "openui"; chunk: string }
+            | { type: "complete"; response: AssistantResponse };
+          if (frame.type === "start") {
+            activeId = frame.response.id;
+            rememberMessages((current) => [
+              ...current,
+              {
+                kind: "turn",
+                id: frame.response.id,
+                prompt: submitted,
+                response: frame.response,
+                streaming: true,
+              },
+            ]);
+          } else if (frame.type === "openui" && activeId) {
+            partial += frame.chunk;
+            rememberMessages((current) =>
+              current.map((message) =>
+                "response" in message && message.id === activeId
+                  ? {
+                      ...message,
+                      response: { ...message.response, openUi: partial },
+                      streaming: true,
+                    }
+                  : message,
+              ),
+            );
+          } else if (frame.type === "complete") {
+            completed = true;
+            rememberMessages((current) =>
+              current.map((message) =>
+                "response" in message && message.id === frame.response.id
+                  ? {
+                      ...message,
+                      response: frame.response,
+                      streaming: false,
+                    }
+                  : message,
+              ),
+            );
+          }
+        }
+        if (done) break;
+      }
+      if (!completed)
+        throw new Error(
+          "Die Antwort wurde unterbrochen. Es wurde keine Aktion freigeschaltet.",
+        );
       if (
         controller.signal.aborted ||
         submittedContextEpoch !== contextEpoch.current
       )
         return;
-      const lines = response.openUi.split("\n");
-      const progressiveResponse = {
-        ...response,
-        openUi: lines[0] ?? "",
-      };
-      rememberMessages((current) => [
-        ...current,
-        {
-          kind: "turn",
-          id: response.id,
-          prompt: submitted,
-          response: progressiveResponse,
-          streaming: lines.length > 1,
-        },
-      ]);
-      for (let index = 1; index < lines.length; index += 1) {
-        await new Promise((resolve) => window.setTimeout(resolve, 24));
-        if (
-          controller.signal.aborted ||
-          submittedContextEpoch !== contextEpoch.current
-        )
-          return;
-        rememberMessages((current) =>
-          current.map((message) =>
-            "response" in message && message.id === response.id
-              ? {
-                  ...message,
-                  response: {
-                    ...response,
-                    openUi: lines.slice(0, index + 1).join("\n"),
-                  },
-                  streaming: index < lines.length - 1,
-                }
-              : message,
-          ),
-        );
-      }
       setPrompt("");
       setVoiceReview(null);
     } catch (failure) {
@@ -741,20 +787,29 @@ export function AssistantSurface({
     : ["Übergabe", "Meine offenen Aufgaben", "Was ist heute wichtig?"];
 
   return (
-    <section className="conversation" aria-label="Pflegehelfer Gespräch">
+    <section
+      id="conversation"
+      tabIndex={-1}
+      className="conversation"
+      aria-label="Pflegehelfer Gespräch"
+    >
       <div className="conversation-feed">
         <div
-          className="assistant-message context-projection-turn"
-          data-genui-component="ClinicalContextProjection"
+          className="assistant-message workflow-opening-turn"
+          data-genui-component="WorkflowOpening"
         >
           <div className="assistant-avatar" aria-hidden="true">
             P
           </div>
           <div className="assistant-message-body">
-            <div className="assistant-model-status">
-              Live-Kontext · deterministische Medplum-Projektion
-            </div>
-            {contextProjection}
+            <div className="assistant-model-status">{opening.eyebrow}</div>
+            <article className="assistant-card workflow-opening-card">
+              <header>
+                <span>{opening.progress}</span>
+                <h2>{opening.title}</h2>
+              </header>
+              <p>{opening.summary}</p>
+            </article>
           </div>
         </div>
         {messages.map((message, index) => {
@@ -939,21 +994,27 @@ export function AssistantSurface({
         {messages.length > 0 && (
           <button
             className="conversation-history-control"
+            disabled={busy}
             onClick={() => {
               void post<{ cleared: boolean }>(
                 "/api/v1/assistant/conversation/clear",
                 userId,
                 {},
-              ).catch(() =>
-                setError("Der Schichtverlauf konnte nicht gelöscht werden."),
-              );
-              setMessages([]);
-              setPrompt("");
-              setVoiceReview(null);
-              setPendingAction(null);
+              )
+                .then(() => {
+                  setMessages([]);
+                  setPrompt("");
+                  setVoiceReview(null);
+                  setPendingAction(null);
+                })
+                .catch(() =>
+                  setError(
+                    "Der neue Gesprächsabschnitt konnte nicht begonnen werden.",
+                  ),
+                );
             }}
           >
-            Kontextverlauf löschen
+            Neuen Gesprächsabschnitt beginnen
           </button>
         )}
         <div className="quick-prompts" aria-label="Schnellzugriffe">

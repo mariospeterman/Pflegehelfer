@@ -838,6 +838,12 @@ export class PflegehelferService {
         "Der Entwurf wurde zwischenzeitlich geändert.",
         409,
       );
+    if (record.basedOnVersion !== patient.source.version)
+      throw new DomainError(
+        "VERSION_CONFLICT",
+        "Der Patientenkontext hat sich seit dem Entwurf geändert. Bitte Änderung erneut prüfen.",
+        409,
+      );
     if (
       patient.mrn !== input.patientMrn ||
       patient.birthDate !== input.patientBirthDate

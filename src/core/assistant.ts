@@ -67,6 +67,25 @@ export const assistantComponentSchema = z.discriminatedUnion("type", [
     .strict(),
   z
     .object({
+      type: z.literal("TeamInbox"),
+      title: z.string().trim().min(1).max(120),
+      summary: boundedText,
+      count: z.number().int().min(0).max(100),
+      sourceLabel: z.string().trim().min(1).max(180),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("SyncSummary"),
+      title: z.string().trim().min(1).max(120),
+      summary: boundedText,
+      pending: z.number().int().min(0).max(1000),
+      conflicts: z.number().int().min(0).max(1000),
+      sourceLabel: z.string().trim().min(1).max(180),
+    })
+    .strict(),
+  z
+    .object({
       type: z.literal("DraftAction"),
       kind: z.enum([
         "nursing-note",
@@ -195,6 +214,15 @@ export class OpaqueIntentBroker {
       expiresAt: Date.now() + (input.ttlMs ?? 120_000),
     });
     return token;
+  }
+
+  revoke(token: string): void {
+    this.intents.delete(token);
+  }
+
+  revokeActor(actorId: string): void {
+    for (const [token, record] of this.intents)
+      if (record.actorId === actorId) this.intents.delete(token);
   }
 
   consume(

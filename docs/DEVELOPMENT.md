@@ -1,10 +1,10 @@
 # Development guide
 
-Node 24 and pnpm 11 are pinned by `package.json`. Docker supplies Medplum 5.1.37, PostgreSQL 16 and Redis 7. Create ignored local configuration with `pnpm demo:env`, start infrastructure with `pnpm dev:infra`, then use `pnpm dev`.
+Node 24 and pnpm 11 are pinned by `package.json`. Docker supplies Medplum 5.1.37, Redis 7, Medplum's PostgreSQL database and a separate PostgreSQL 16 operational database for workflow sessions, assistant threads, audit, events and provider synchronization state. Create ignored local configuration with `pnpm demo:env`, start infrastructure with `pnpm dev:infra`, then use `pnpm dev`.
 
 The normal runtime is integrated. `demo:test-memory` and `dev:api:test-memory` exist only as deterministic automated-test servers; do not use them as product demonstrations or persistence evidence.
 
-Architecture dependencies point inward: PWA/BFF → domain services and ports; Medplum, model, ASR and providers are adapters. OpenUI programs contain only references to registered components. Every generated action is an opaque intent resolved and re-authorised by the server. Clinical mutations are serialized, checkpointed and rolled back if the FHIR transaction fails.
+Architecture dependencies point inward: PWA/BFF → domain services and ports; Medplum, PostgreSQL, model, ASR and providers are adapters. OpenUI programs contain only references to registered components. Every generated action is an opaque intent resolved and re-authorised by the server. PostgreSQL owns resumable workflow and conversation state; Medplum owns canonical FHIR clinical resources. Clinical mutations are serialized and rolled back if the FHIR transaction fails.
 
 Targeted loop:
 

@@ -2,42 +2,45 @@
 
 Last updated: 2026-09-06
 
-## Product invariant
+## Direction
 
-Pflegehelfer is GenUI/chat/voice-first. One shift conversation is the primary workspace; patient summaries, tasks, vitals, documentation, handover, rounds, communication and synchronization appear as bounded interactive components. Fixed UI is limited to identity, patient/role context, history, safety, offline/sync state and deterministic approvals. Medplum remains the detailed FHIR workspace, not a second competing daily UI.
+The controlling invariant is one persistent GenUI/chat/voice clinical coworker. `docs/ARCHITECTURE.md`, `PRODUCT_EXPERIENCE.md` and `WORKFLOWS.md` are the single coherent target. Old focus dashboards, module tabs, projection registries, client-simulated streaming and Medplum conversation Binary storage are removed rather than maintained in parallel.
 
-## Implemented vertical slices
+## Completed in this refactor
 
-- explicit patient selection and a continuous actor-bound shift conversation;
-- purpose-built OpenUI patient/task/vital/handover/medication/policy and action-review components;
-- deterministic Clinical Query and Action Gateway with RBAC/ABAC, version binding, one-use intents, audit and idempotency;
-- safe compound care updates whose model output cannot author executable fields;
-- note/vital draft approval, tasks, team communication, handover, rounds, intake and reconciliation;
-- self-hosted Medplum projection, restart checkpoint, command receipts and executable pinned FHIR validation;
-- local AI/ASR adapters with explicit data boundaries, synthetic provider simulators and per-operation vendor gates;
-- PHI-free SSE invalidation, read-only offline behavior and responsive synthetic end-to-end journeys.
+1. Consolidated the duplicated architecture and repository instruction into one target; added product-experience/workflow contracts and superseded the checkpoint ADR.
+2. Replaced the four-focus PWA with a conversation-dominant shell, desktop context/history sidebar, mobile drawer, explicit permanent patient safety context, role-specific opening, synthetic disclaimer, responsive system dark/light palette and original Edelweiss/cross mark.
+3. Added real NDJSON response transport. Partial frames contain no executable component; only the durable final frame activates review. Removed the frontend timer that imitated model streaming.
+4. Added a separate model-facing composition grammar containing only `ClinicalStack`, `Candidate` and opaque candidate handles. The server hydrates clinical facts/actions from its authorized typed candidate set; malformed or extra model output falls back deterministically.
+5. Added schema-validated role workflows, immutable version seeds and `WorkingSession`/thread/context models.
+6. Added the separate PostgreSQL operational service and idempotent migration with organization/department, workflow template/version/session/step, assistant thread/message, safety authority, domain events, receipts, inbox/outbox/cursor/receipt/conflict, audit and bounded analytics tables.
+7. Moved assistant conversation persistence and patient context revisions to the operational store. Added deterministic in-memory test double and actual PostgreSQL smoke coverage.
+8. Kept all undocumented real provider operations gated while retaining simulator/contract coverage.
+9. Closed review-found demo safety defects: body/session patient mismatch is rejected for query, voice and execution; context switches revoke actor intents; partial stream programs contain no executable tokens; stale-source approvals fail; versionless provider inbox dedupe is normalized; operational PostgreSQL participates in readiness.
 
-## Next internal slices, in order
+## Remaining implementation sequence
 
-1. Replace the monolithic in-process checkpoint with PostgreSQL operational repositories and migrations; reconstruct clinical views from FHIR plus explicit operational tables. Bound/partition audit storage and remove full-checkpoint rewrites.
-2. Add a durable event/outbox worker with leases, retry/dead-letter semantics and multi-replica replay. Move provider outbound delivery off the manual request path.
-3. Implement the provider inbound worker: durable provider cursor, inbox/idempotency, mapping/version provenance, policy application and conflict/reconciliation creation. Keep production capabilities gated until real contracts pass conformance fixtures.
-4. Move shift conversation state to versioned/CAS operational storage with explicit shift/session identity, size limits and transactional audit coupling. Add an expiry sweeper.
-5. Add true server transport streaming for OpenUI. Permit model composition only as selection/arrangement of already authorized component references; validate the complete program and hydrate all facts from trusted results.
-6. Expand voice safety with per-segment evidence, edited-span tracking, governed entity dictionaries and end-to-end receipt tests against an approved local ASR runtime.
-7. Remove synthetic-only metadata assumptions from production projection cleanup and complete institution profile/terminology fixtures.
+These are internal release requirements, not external gates:
 
-## Release loop
+1. Move opaque intent and voice receipt issuance/consumption from process maps into `safety_authority`, with hash-only tokens and one transaction binding command, approval, workflow step, audit, domain event and outbox.
+2. Move the remaining monolithic clinical service checkpoint authority to resource-scoped Medplum repositories; remove checkpoint Binary and whole-state rewrite after reconstruction parity tests.
+3. Move existing provider outbound items into `provider_outbox`; add leased automatic worker, retry/dead/manual states and receipts. Add durable authenticated inbound polling/event worker with cursor/dedupe/quarantine/conflict handling.
+4. Replace process-local invalidation revision with audience-scoped `domain_events` replay across restart/replicas and proactive thread insertion.
+5. Implement Workflow Studio CRUD/publish/activation and deterministic step progression for all reference role workflows, not only role-aware session start.
+6. Expand server-hydrated GenUI components for actionable tasks, team replies/acknowledgements, workflow progress, documentation diffs, rounds, provider receipt/conflict and editable bounded forms.
+7. Complete operational RLS/least-privilege roles, expiry sweepers, audit-chain migration, analytics small-cell suppression and backup/PITR restore automation.
+8. Complete the browser journeys for the full nursing/physician loops and validate with approved production local model/ASR packs.
 
-For each slice: implement a complete workflow, run targeted tests, run full verification, launch the Medplum-backed PWA, inspect mobile/tablet/desktop/offline/permissions/logs, repeat architecture/security/clinical/frontend review, fix valid findings, then perform the clean-checkout audit from `AGENTS.md`.
+## External gates
 
-## External deployment gates
-
-- institution OIDC/MFA/passkey, managed-device claims, AccessPolicy and break-glass approval;
+- institution OIDC/MFA/device claims, Medplum AccessPolicy and break-glass approval;
 - private WiCare/careCoach/SAP/device/nurse-call contracts, credentials and sandboxes;
-- licensed terminology and institution-approved CH Core/CH EMED profile set;
-- signed production LLM/ASR artifacts, Swiss clinical evaluation and clinical-owner approval;
-- production HA, backup/PITR restore, WORM audit, monitoring, capacity and disaster-recovery evidence;
-- institutional DPIA, accessibility, security, regulatory and clinical-safety sign-off.
+- licensed terminology/institution profile approval;
+- signed model/ASR artifacts and Swiss clinical evaluation;
+- target-environment HA, WORM audit, monitoring, capacity, DR, DPIA, accessibility, security/regulatory and clinical-owner sign-off.
 
-These are not substitutes for the internal work above and must not be marked complete by a simulator.
+Simulators and repository documentation never satisfy these gates.
+
+## Loop
+
+Each remaining slice must update the status, implement one end-to-end capability, run focused and regression tests, launch the PostgreSQL/Medplum-backed PWA, inspect responsive/accessibility/offline/reconnect/log/sync behaviour, obtain independent architecture/security/clinical/frontend review, fix valid findings and rerun the clean-checkout audit in `agent.md`.

@@ -5,6 +5,10 @@ import {
   createSyntheticProviderRegistry,
 } from "../core/provider-integration/index.js";
 import { clinicalWorkspaceFromEnvironment } from "../infrastructure/medplum-workspace.js";
+import {
+  InMemoryOperationalStore,
+  PostgresOperationalStore,
+} from "../infrastructure/operational-store.js";
 
 const port = Number.parseInt(process.env.PORT ?? "4173", 10);
 const host = process.env.HOST ?? "127.0.0.1";
@@ -17,10 +21,17 @@ const service = new PflegehelferService(
   demoMode ? "synthetic-simulator" : "production",
 );
 const workspace = clinicalWorkspaceFromEnvironment();
+const operationalUrl = process.env.PFH_OPERATIONAL_DATABASE_URL;
+if (!operationalUrl && !demoMode)
+  throw new Error("Production requires PFH_OPERATIONAL_DATABASE_URL.");
+const operationalStore = operationalUrl
+  ? new PostgresOperationalStore(operationalUrl)
+  : new InMemoryOperationalStore();
+await operationalStore.initialize();
 const checkpoint = await workspace.loadCheckpoint();
 if (checkpoint) service.restoreCheckpoint(checkpoint);
 await workspace.initialize(service.fhirResources(), service.checkpoint());
-const app = buildApp(service, { workspace });
+const app = buildApp(service, { workspace, operationalStore });
 
 const close = async (signal: string) => {
   app.log.info({ signal }, "graceful shutdown");

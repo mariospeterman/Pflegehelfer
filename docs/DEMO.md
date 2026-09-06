@@ -17,9 +17,9 @@ Wait until <http://127.0.0.1:3000/ready> reports `status: ready`, then open <htt
 2. Select **Anna Beispiel**. Verify the two identifiers, risks and simple sync status. Ask for latest vitals, open tasks and the medication-discrepancy policy; expand source evidence. Accept “Blutdruck kontrollieren”, start it and complete it with evidence directly in the stream.
 3. As **Pflegefachperson**, enter: “Bin mit Anna fertig. Mobilisiert, Blutdruck 151 zu 88, etwas Schwindel. Arzt informieren und Kontrolle in 30 Minuten.” Review and select each of the four proposed actions, then confirm the exact selection. The note and `Observation` remain drafts for normal clinical approval; the explicitly selected team message and follow-up task enter their visible workflow states. Medication or dose instructions are intentionally refused by this free-text compiler.
 4. Use the contextual **Dokumentieren**, **Vitalwert**, **Aufgabe** or **@ Team** chips to enter a deterministic form when speaking is inconvenient. The available actions are projected from the active role. The form remains an in-conversation sheet; it does not send the user to another module.
-5. Open **Team**. Address a question or comment to `@Arzt`/a named synthetic colleague, then switch roles to exercise acknowledgement, response, resulting task and closure.
-6. Sign the afternoon delta handover as the outgoing nurse and acknowledge it as the incoming nurse in **Meine Schicht**.
-7. Switch to **IT → Synchronisation**. Inspect production integration gates, then run delay/down/reject/conflict simulator cases. Return to an authorised clinician to compare versions and reconcile; no last-write-wins path exists.
+5. Ask “Zeige Team-Nachrichten” and address a question or comment to `@Arzt`/a named synthetic colleague. Switch roles to exercise acknowledgement, response, resulting task and closure without leaving the stream.
+6. Ask for the handover, sign the afternoon delta as the outgoing nurse and acknowledge it as the incoming nurse in the rendered handover component.
+7. As IT, ask for synchronization status. Inspect production integration gates, run delay/down/reject/conflict simulator cases, then return to an authorised clinician to compare versions and reconcile; no last-write-wins path exists.
 8. Open Medplum only as the detailed operational workspace and inspect Patient, Encounter, Task, Observation, Communication, Provenance and AuditEvent resources.
 9. Use browser offline mode. Pflegehelfer must display read-only state, discard unapproved intents and disable clinical mutations.
 

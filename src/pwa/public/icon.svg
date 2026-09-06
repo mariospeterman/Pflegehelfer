@@ -1,4 +1,15 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Pflegehelfer">
-  <rect width="128" height="128" rx="28" fill="#0b6358"/>
-  <path d="M55 27h18v27h27v18H73v29H55V72H27V54h28z" fill="#fff"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Pflegehelfer Edelweiss">
+  <rect width="128" height="128" rx="28" fill="#f7f8fb"/>
+  <g fill="#153f75">
+    <path d="M64 9c11 16 11 28 0 40-11-12-11-24 0-40Z"/>
+    <path d="M64 119c-11-16-11-28 0-40 11 12 11 24 0 40Z"/>
+    <path d="M9 64c16-11 28-11 40 0-12 11-24 11-40 0Z"/>
+    <path d="M119 64c-16 11-28 11-40 0 12-11 24-11 40 0Z"/>
+    <path d="M25 25c19 3 29 12 29 29-17 0-26-10-29-29Z"/>
+    <path d="M103 103c-19-3-29-12-29-29 17 0 26 10 29 29Z"/>
+    <path d="M103 25c-3 19-12 29-29 29 0-17 10-26 29-29Z"/>
+    <path d="M25 103c3-19 12-29 29-29 0 17-10 26-29 29Z"/>
+  </g>
+  <circle cx="64" cy="64" r="24" fill="#fff" stroke="#153f75" stroke-width="4"/>
+  <path d="M58 45h12v13h13v12H70v13H58V70H45V58h13Z" fill="#b42318"/>
 </svg>
