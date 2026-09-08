@@ -1,7 +1,7 @@
 # Pflegehelfer production architecture
 
 Status: canonical target architecture
-Last verified: 2026-09-06
+Last verified: 2026-09-08
 
 This is the single architectural source of truth. Product behaviour is in `PRODUCT_EXPERIENCE.md`; configurable journeys are in `WORKFLOWS.md`. ADRs explain decisions but do not override this document.
 
@@ -96,11 +96,11 @@ Processing order:
 
 1. Authenticate; resolve organization, role, session, thread, patient context and purpose.
 2. Read the minimum authorized FHIR/workflow projection and audit disclosure.
-3. Deterministically build typed candidate facts/actions and evidence references.
+3. Build a generic typed `AssistantProposal` containing understood facts, work performed, observations, task changes, communications, workflow actions, ambiguities and evidence. A model may propose meaning, but deterministic code independently validates every executable sub-schema.
 4. Let the configured model compose allowlisted presentation using opaque candidate handles. Local models are the production default; hosted endpoints are synthetic-demo only.
 5. Stream non-executable OpenUI fragments.
 6. Validate the complete program: catalog, bounds, candidate ownership, context revision, evidence/source versions, workflow and policy.
-7. Persist the validated proposal and issue action authority server-side.
+7. Persist the validated internal proposal and issue action authority server-side.
 8. Send the final authoritative frame that can open deterministic review.
 
 Malformed, incomplete, unsupported or disconnected streams create no intent or clinical mutation. The deterministic composer is a first-class fallback, not a pretend LLM. AI-disabled mode preserves critical workflows.
@@ -114,6 +114,12 @@ The model may interpret “Dokumentiere RR 128/76, Mobilisation erledigt und fra
 Every executable intent is one-use, short-lived, stored as a cryptographic hash, and bound to organization, actor, role, purpose, patient/encounter, session/thread, workflow version/step, context revision, proposal hash, policy version and resource versions. Consumption and command acceptance are atomic.
 
 High-risk/irreversible actions use purpose-built review forms. Medication support remains read-only/communication-oriented until separately governed.
+
+The `AssistantProposal` compiler is the language-normalization boundary: **conversational outside, structured inside**. Staff never sees proposal/schema terminology or a form wizard. The assistant responds like a coworker, uses current patient/workflow/session context, asks at most one concise blocking question, then renders only the minimum useful review controls. One utterance may contain several observations, partial work, deferral, communication or an interruption, but only explicitly requested executable changes receive authority. Negated, historical, refused, uncertain and corrected statements remain distinct. The compiler never supplies a default follow-up or silently converts documentation into a performed or billable service. Medication, treatment and diagnostic commands fail closed into separately governed workflows. See ADR-0008.
+
+## Interruptible nursing workday
+
+The nursing conversation begins with an authorized, patient-level incoming handover roster. Every patient context is independently checked before the plan opens. Starting care creates a patient/encounter-bound work episode; an alarm or spontaneous room visit pauses that episode, starts a separate episode, and leaves an explicit return path. Segment timing excludes interruptions. Completion requires what-was-done evidence, and shift transfer is blocked until every active or paused responsibility is resolved. The outgoing handover and provider reconciliation remain separate acknowledgements; neither is implied by local documentation.
 
 ## Command transaction and projection
 

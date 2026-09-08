@@ -6,6 +6,7 @@ import {
 } from "../src/core/assistant.js";
 import { verifyAuditEntries } from "../src/core/audit.js";
 import { createProductionProviderRegistry } from "../src/core/provider-integration/index.js";
+import { siteConfiguration } from "../src/core/site-config.js";
 
 describe("deterministic clinical workflows", () => {
   it("uses the human approval time, not draft time, in provider commands", () => {
@@ -131,13 +132,18 @@ describe("deterministic clinical workflows", () => {
       structuredText: "Wundverband trocken und intakt; keine Rötung sichtbar.",
       approvalPolicy: "sensitive",
     });
+    expect(draft.provider).toBe(
+      siteConfiguration.providerRoutes.careDocumentation,
+    );
     service.approve("u-nurse", "note", draft.id, {
       expectedVersion: 1,
       patientMrn: "SH-260901-001",
       patientBirthDate: "1941-03-18",
       reviewedDiff: true,
     });
-    service.setProviderMode("u-it", "wicare", "down");
+    const documentationProvider =
+      siteConfiguration.providerRoutes.careDocumentation;
+    service.setProviderMode("u-it", documentationProvider, "down");
     expect((await service.flushOutbox("u-it"))[0]).toMatchObject({
       state: "pending",
       attempts: 1,
@@ -146,7 +152,7 @@ describe("deterministic clinical workflows", () => {
     expect(service.snapshot("u-nurse").notes[0]?.status).toBe(
       "pending-provider",
     );
-    service.setProviderMode("u-it", "wicare", "normal");
+    service.setProviderMode("u-it", documentationProvider, "normal");
     const final = (await service.flushOutbox("u-it"))[0];
     expect(final).toMatchObject({ state: "acknowledged", attempts: 2 });
     expect(service.snapshot("u-nurse").notes[0]?.status).toBe("synced");

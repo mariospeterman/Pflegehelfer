@@ -14,9 +14,11 @@ import type { PflegehelferService } from "./service.js";
 import { DomainError, type Purpose } from "./types.js";
 import {
   actionReviewLabel,
-  clinicalActionPlanSchema,
-  type ClinicalAction,
-} from "../ai/clinical-action-plan.js";
+  assistantProposalSchema,
+  explicitlyRefusesDocumentation,
+  requiresDedicatedClinicalWorkflow,
+  type ExecutableAssistantAction,
+} from "../ai/assistant-proposal.js";
 
 export interface AssistantRequest {
   prompt: string;
@@ -24,6 +26,13 @@ export interface AssistantRequest {
   purpose?: Purpose;
   inputModality?: "typed" | "voice";
   voiceTranscriptConfirmed?: boolean;
+  workingContext?: {
+    currentStepId: string;
+    activeEpisodeTitle: string | null;
+    activeEpisodePatientId: string | null;
+    resumableEpisodePatientId: string | null;
+    recentPrompts: string[];
+  };
 }
 
 export interface AssistantResponse {
@@ -68,6 +77,8 @@ export function toOpenUi(components: AssistantComponent[]): string {
   const statements = components.map((component, index) => {
     const name = `item${index}`;
     switch (component.type) {
+      case "AssistantText":
+        return `${name} = AssistantMessage(${q(component.message)})`;
       case "PatientPicker":
         return `${name} = PatientPicker(${q(component.title)}, ${q(component.message)}, ${JSON.stringify(component.patients)})`;
       case "PatientSummary":
@@ -79,7 +90,7 @@ export function toOpenUi(components: AssistantComponent[]): string {
       case "HandoverChecklist":
         return `${name} = HandoverDeltaCard(${q(component.title)}, ${component.openCount}, ${q(component.summary)}, ${q(component.sourceLabel)})`;
       case "TeamInbox":
-        return `${name} = TeamInboxCard(${q(component.title)}, ${component.count}, ${q(component.summary)}, ${q(component.sourceLabel)})`;
+        return `${name} = TeamInboxCard(${q(component.title)}, ${component.count}, ${q(component.summary)}, ${q(component.sourceLabel)}, ${JSON.stringify(component.items)})`;
       case "SyncSummary":
         return `${name} = SyncSummaryCard(${q(component.title)}, ${component.pending}, ${component.conflicts}, ${q(component.summary)}, ${q(component.sourceLabel)})`;
       case "DraftAction":
@@ -108,6 +119,131 @@ function cleanDraft(prompt: string): string {
     )
     .trim()
     .slice(0, 1200);
+}
+
+function explicitlyRequestsNote(prompt: string): boolean {
+  return /^\s*(?:bitte\s+)?(?:notiz|dokumentiere|schreib(?:e)?(?:\s+auf)?|anamnes(?:e|is))\b/i.test(
+    prompt,
+  );
+}
+
+function explicitlyRequestsTask(prompt: string): boolean {
+  const request =
+    /\b(?:erstelle|eröffne|lege)\b[^.;!?]{0,50}\b(?:aufgabe|task)\b|^\s*(?:aufgabe|task)\s*:/i.exec(
+      prompt,
+    );
+  if (!request || request.index === undefined) return false;
+  const clauseStart = Math.max(
+    prompt.lastIndexOf(".", request.index - 1),
+    prompt.lastIndexOf(";", request.index - 1),
+    prompt.lastIndexOf("!", request.index - 1),
+    prompt.lastIndexOf("?", request.index - 1),
+  );
+  const clauseEndCandidates = [".", ";", "!", "?"]
+    .map((separator) => prompt.indexOf(separator, request.index))
+    .filter((index) => index >= 0);
+  const clauseEnd = clauseEndCandidates.length
+    ? Math.min(...clauseEndCandidates)
+    : prompt.length;
+  const clause = prompt.slice(clauseStart + 1, clauseEnd + 1);
+  return !/\b(?:nicht|nie|keinesfalls|kein(?:e|en|er|es)?|auf\s+keinen\s+fall|vielleicht|möglicherweise|eventuell|unklar)\b|\b(?:sollte|könnte)\s+man\b/i.test(
+    clause,
+  );
+}
+
+function explicitlyRequestsPhysicianMessage(prompt: string): boolean {
+  const requested =
+    /\bfrage\s+an\s+(?:arzt|ärztin|ärztlichen?\s+dienst)\b|\b(?:arzt|ärztin|ärztlichen?\s+dienst)\b[^.;]{0,60}\b(?:informieren|benachrichtigen|fragen)\b|\b(?:informiere|benachrichtige|frage)\b[^.;]{0,60}\b(?:arzt|ärztin|ärztlichen?\s+dienst)\b/i.test(
+      prompt,
+    );
+  const negated =
+    /\b(?:nicht|nie|keinesfalls|kein(?:e|en)?|auf\s+keinen\s+fall)\b[^.;]{0,80}\b(?:arzt|ärztin|informieren|benachrichtigen|fragen)\b|\b(?:arzt|ärztin)\b[^.;]{0,80}\b(?:nicht|nie|keinesfalls|kein(?:e|en)?|auf\s+keinen\s+fall)\b/i.test(
+      prompt,
+    );
+  const historicalOrCompleted =
+    /\b(?:gestern|vorgestern|früher|damals|bereits)\b|\b(?:wurde|war|ist|hat)\b[^.;]{0,60}\b(?:informiert|benachrichtigt|gefragt)\b/i.test(
+      prompt,
+    );
+  const uncertainOrQuestion =
+    /\b(?:vielleicht|möglicherweise|eventuell|unklar)\b|\b(?:sollte|könnte)\s+man\b[^?]{0,100}\?/i.test(
+      prompt,
+    );
+  return (
+    requested && !negated && !historicalOrCompleted && !uncertainOrQuestion
+  );
+}
+
+const organizationTimeZone = "Europe/Zurich";
+
+function zonedParts(instant: Date): Record<string, number> {
+  return Object.fromEntries(
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: organizationTimeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    })
+      .formatToParts(instant)
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, Number(part.value)]),
+  );
+}
+
+function localZurichToInstant(
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number,
+): Date {
+  const localUtc = Date.UTC(year, month - 1, day, hour, minute);
+  let guess = new Date(localUtc);
+  for (let pass = 0; pass < 3; pass += 1) {
+    const parts = zonedParts(guess);
+    const represented = Date.UTC(
+      parts.year!,
+      parts.month! - 1,
+      parts.day,
+      parts.hour,
+      parts.minute,
+    );
+    guess = new Date(guess.getTime() + (localUtc - represented));
+  }
+  return guess;
+}
+
+export function resolveOccurrenceTime(
+  occurrence: string | null,
+  inputTimestamp: string,
+): string | null {
+  if (!occurrence) return inputTimestamp;
+  const explicit =
+    /\b(?:(gestern|heute)\s+)?um\s+(\d{1,2})(?::(\d{2}))?\s*uhr\b/.exec(
+      occurrence.toLocaleLowerCase("de-CH"),
+    );
+  if (!explicit) return null;
+  const input = new Date(inputTimestamp);
+  if (Number.isNaN(input.getTime())) return null;
+  const parts = zonedParts(input);
+  const localDate = new Date(
+    Date.UTC(parts.year!, parts.month! - 1, parts.day),
+  );
+  if (explicit[1] === "gestern")
+    localDate.setUTCDate(localDate.getUTCDate() - 1);
+  const hour = Number(explicit[2]);
+  const minute = Number(explicit[3] ?? "0");
+  if (hour > 23 || minute > 59) return null;
+  return localZurichToInstant(
+    localDate.getUTCFullYear(),
+    localDate.getUTCMonth() + 1,
+    localDate.getUTCDate(),
+    hour,
+    minute,
+  ).toISOString();
 }
 
 function formatOrganizationTime(value: string): string {
@@ -177,7 +313,28 @@ export class AssistantService {
         403,
       );
 
-    const classification = await this.models.classify(prompt);
+    const classified = await this.models.classify(prompt);
+    // Raw-language safety gates are authoritative even when a configured
+    // model chose a broader keyword route.
+    let safeIntent = classified.intent;
+    if (requiresDedicatedClinicalWorkflow(prompt)) {
+      safeIntent = "medication-request";
+    } else if (explicitlyRefusesDocumentation(prompt)) {
+      safeIntent = "care-update";
+    } else if (
+      (safeIntent === "draft-note" && !explicitlyRequestsNote(prompt)) ||
+      (safeIntent === "draft-task" && !explicitlyRequestsTask(prompt)) ||
+      (safeIntent === "draft-physician-question" &&
+        !explicitlyRequestsPhysicianMessage(prompt))
+    ) {
+      // A model may classify/navigation-rank an ambiguous utterance, but only
+      // independently recognizable user language may unlock a mutation UI.
+      safeIntent = "unknown";
+    }
+    const classification: IntentClassification = {
+      ...classified,
+      intent: safeIntent,
+    };
     let runtime: AssistantResponse["runtime"] = {
       route:
         classification.model === "deterministic-clinical-router-v1"
@@ -254,12 +411,46 @@ export class AssistantService {
           version: current.source.version,
           label: `${current.source.provider} · ${formatOrganizationTimestamp(current.source.effectiveAt)}`,
         });
+        const latestObservations = snapshot.observations
+          .filter((item) => item.patientId === current.id)
+          .toSorted((left, right) =>
+            right.effectiveAt.localeCompare(left.effectiveAt),
+          )
+          .slice(0, 3)
+          .map(
+            (item) =>
+              `${item.label} ${item.value}${item.secondaryValue === null ? "" : `/${item.secondaryValue}`} ${item.unit}`,
+          );
+        const protocol = [
+          ...snapshot.notes
+            .filter((item) => item.patientId === current.id)
+            .slice(-3)
+            .map((item) => `#Dokumentation ${item.structuredText}`),
+          ...snapshot.communications
+            .filter((item) => item.patientId === current.id)
+            .slice(-3)
+            .map((item) => `#Team ${item.request} · ${item.state}`),
+        ];
         components.push({
           type: "PatientSummary",
           patientId: current.id,
           title: `${current.room} · ${current.displayName}`,
-          summary: `Risiken: ${current.risks.join(", ") || "keine erfasst"}. Ziele: ${current.careGoals.join("; ") || "keine erfasst"}. Offene Aufgaben: ${snapshot.tasks.filter((task) => task.patientId === current.id && task.state !== "completed").length}.`,
-          sourceLabel: `${current.source.provider} · Version ${current.source.version}`,
+          summary: [
+            `#Situation ${current.diagnoses.join("; ") || "keine Diagnose im freigegebenen Ausschnitt"}`,
+            `#Sicherheit ${
+              [
+                ...(current.allergies.length
+                  ? current.allergies.map((item) => `Allergie: ${item}`)
+                  : []),
+                ...current.risks,
+              ].join(" · ") || "keine Warnhinweise erfasst"
+            }`,
+            `#Ziele ${current.careGoals.join("; ") || "keine erfasst"}`,
+            `#Medikation · nur lesbar ${current.medicationSummary.join("; ") || "kein Ausschnitt verfügbar"}`,
+            `#Heute ${snapshot.tasks.filter((task) => task.patientId === current.id && task.state !== "completed").length} offene Aufgaben${latestObservations.length ? ` · ${latestObservations.join(" · ")}` : ""}`,
+            `#Pflegeprotokoll ${protocol.join("\n") || "Noch keine Einträge in dieser Schicht."}`,
+          ].join("\n"),
+          sourceLabel: `${current.source.provider} · Version ${current.source.version} · rollenberechtigte FHIR-/Workflow-Sicht`,
         });
         break;
       }
@@ -325,7 +516,12 @@ export class AssistantService {
         break;
       }
       case "handover": {
-        const handover = snapshot.handovers.at(-1);
+        const handover = snapshot.handovers
+          .filter((candidate) => candidate.status !== "draft")
+          .toSorted((left, right) =>
+            left.createdAt.localeCompare(right.createdAt),
+          )
+          .at(-1);
         if (!handover) {
           components.push({
             type: "UnknownState",
@@ -373,8 +569,11 @@ export class AssistantService {
         const messages = snapshot.communications.filter(
           (item) =>
             item.state !== "closed" &&
-            (item.recipientId === actor.id ||
-              item.recipientRole === actor.role),
+            (item.senderId === actor.id ||
+              item.recipientId === actor.id ||
+              item.recipientRole === actor.role ||
+              (item.escalatedAt !== null &&
+                item.escalationRecipientRole === actor.role)),
         );
         for (const item of messages.slice(0, 8))
           evidence.push({
@@ -389,11 +588,57 @@ export class AssistantService {
           summary:
             messages
               .slice(0, 6)
-              .map(
-                (item) => `${item.request} · ${item.priority} · ${item.state}`,
-              )
+              .map((item) => {
+                const subject = snapshot.patients.find(
+                  (patient) => patient.id === item.patientId,
+                );
+                const recipient = item.recipientId
+                  ? snapshot.users.find((user) => user.id === item.recipientId)
+                      ?.displayName
+                  : item.recipientRole;
+                return `#${subject?.displayName ?? "Patientenkontext"} @${recipient ?? item.recipientRole} · ${item.request}\n${item.reason} · ${item.priority} · ${item.state}${item.response ? `\n↳ ${item.response}` : ""}`;
+              })
               .join("\n") || "Keine offenen Teamfragen für diese Rolle.",
           sourceLabel: "FHIR Communication · rollenbezogener Posteingang",
+          items: messages.slice(0, 8).map((item) => {
+            const subject = snapshot.patients.find(
+              (patient) => patient.id === item.patientId,
+            );
+            const recipient = item.recipientId
+              ? snapshot.users.find((user) => user.id === item.recipientId)
+                  ?.displayName
+              : item.recipientRole;
+            const addressedToActor =
+              item.recipientId === actor.id ||
+              (item.recipientId === null &&
+                item.recipientRole === actor.role) ||
+              (item.escalatedAt !== null &&
+                item.escalationRecipientRole === actor.role);
+            const mayOwnResponse =
+              addressedToActor &&
+              (item.acknowledgedBy === null ||
+                item.acknowledgedBy === actor.id);
+            return {
+              id: item.id,
+              patientId: item.patientId,
+              patientLabel: subject?.displayName ?? "Patientenkontext",
+              recipientLabel: recipient ?? item.recipientRole,
+              request: item.request,
+              reason: item.reason,
+              priority: item.priority,
+              state: item.state,
+              // OpenUI's value grammar does not represent nullable string props.
+              // Keep the transport schema deterministic and render an empty string
+              // until a real response exists.
+              response: item.response ?? "",
+              canAcknowledge:
+                mayOwnResponse && ["sent", "escalated"].includes(item.state),
+              canAnswer:
+                mayOwnResponse &&
+                ["sent", "acknowledged", "escalated"].includes(item.state),
+              canClose: item.senderId === actor.id && item.state === "answered",
+            };
+          }),
         });
         break;
       }
@@ -422,6 +667,18 @@ export class AssistantService {
         const current = patient;
         if (!current) {
           components.push(patientPicker());
+          break;
+        }
+        if (
+          requiresDedicatedClinicalWorkflow(prompt) ||
+          explicitlyRefusesDocumentation(prompt)
+        ) {
+          components.push({
+            type: "SafetyAlert",
+            severity: "warning",
+            message:
+              "Das klingt nach einer Medikamenten-, Behandlungs- oder ausdrücklichen Nicht-Schreiben-Anweisung. Dafür wird kein Pflegebericht-Entwurf erstellt; bitte den vorgesehenen Fachworkflow verwenden oder die Aussage als bereits erfolgte Beobachtung präzisieren.",
+          });
           break;
         }
         if (!["care-assistant", "registered-nurse"].includes(actor.role)) {
@@ -523,6 +780,51 @@ export class AssistantService {
           components.push(patientPicker());
           break;
         }
+        const explicitContextSwitch =
+          /\b(?:pausieren|pause)\b[^.;]{0,80}\bzimmer\s+\d{1,4}[A-Za-z]?\b/i.test(
+            prompt,
+          );
+        const mentionedOtherPatient = snapshot.patients.find((candidate) => {
+          if (candidate.id === current.id) return false;
+          const nameIdentifiers = [
+            ...candidate.displayName.split(/\s+/),
+            candidate.displayName,
+          ].filter((value) => value.length >= 2);
+          const escapedRoom = candidate.room.replace(
+            /[.*+?^${}()|[\]\\]/g,
+            "\\$&",
+          );
+          const escapedMrn = candidate.mrn.replace(
+            /[.*+?^${}()|[\]\\]/g,
+            "\\$&",
+          );
+          return (
+            nameIdentifiers.some((identifier) =>
+              new RegExp(
+                `(?:^|[^\\p{L}\\d])${identifier.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:$|[^\\p{L}\\d])`,
+                "iu",
+              ).test(prompt),
+            ) ||
+            (!explicitContextSwitch &&
+              new RegExp(`\\bzimmer\\s+${escapedRoom}\\b`, "iu").test(
+                prompt,
+              )) ||
+            new RegExp(
+              `\\b(?:fall|mrn)\\s*[:#-]?\\s*${escapedMrn}\\b`,
+              "iu",
+            ).test(prompt)
+          );
+        });
+        if (mentionedOtherPatient) {
+          components.push(
+            {
+              type: "AssistantText",
+              message: `Du sprichst von ${mentionedOtherPatient.displayName}, geöffnet ist aber ${current.displayName}. Bitte wechsle zuerst bewusst den Patientenkontext; ich habe nichts vorbereitet.`,
+            },
+            patientPicker(),
+          );
+          break;
+        }
         if (!["care-assistant", "registered-nurse"].includes(actor.role)) {
           components.push({
             type: "SafetyAlert",
@@ -533,12 +835,21 @@ export class AssistantService {
           break;
         }
         const planned = await this.models.planCareUpdate(prompt);
-        if (!planned.plan || planned.plan.ambiguities.length > 0)
-          throw new DomainError(
-            "VALIDATION",
-            "Der gebündelte Eintrag ist nicht eindeutig. Bitte Messwert, ausgeführte Arbeit, Empfänger und Zeitpunkt klar nennen.",
-            400,
-          );
+        if (!planned.plan) {
+          components.push({
+            type: "UnknownState",
+            message:
+              "Ich habe daraus keine sichere Änderung erkannt. Sag mir kurz, was erledigt, beobachtet oder im Ablauf geändert werden soll.",
+          });
+          break;
+        }
+        if (planned.plan.ambiguities.length > 0) {
+          components.push({
+            type: "AssistantText",
+            message: planned.plan.ambiguities[0]!,
+          });
+          break;
+        }
         runtime = {
           route:
             planned.model === "deterministic-clinical-planner-v1"
@@ -552,6 +863,17 @@ export class AssistantService {
               : `${planned.mode === "hosted-test" ? "Synthetischer Testdienst" : "Lokales Sprachmodell"} · strukturierter Aktionsplan`,
           degraded: planned.degraded,
         };
+        if (planned.plan.actions.length === 0) {
+          const negated = planned.plan.understoodFacts
+            .filter((fact) => fact.polarity === "negated")
+            .map((fact) => fact.label)
+            .join("; ");
+          components.push({
+            type: "AssistantText",
+            message: `Verstanden${negated ? `: ${negated}` : ""}. Ich löse keine Änderung aus.`,
+          });
+          break;
+        }
         const reviewItems = planned.plan.actions.map((action) => ({
           id: action.id,
           label: actionReviewLabel(action),
@@ -562,22 +884,37 @@ export class AssistantService {
                 ? ("observation" as const)
                 : action.type === "communication-proposal"
                   ? ("communication" as const)
-                  : ("task" as const),
+                  : action.type === "task-proposal"
+                    ? ("task" as const)
+                    : ("workflow" as const),
         }));
         const bundlePreview = reviewItems
           .map((item, index) => `${index + 1}. ${item.label}`)
           .join("\n");
         components.push({
+          type: "AssistantText",
+          message: planned.plan.workPerformed.some(
+            (item) => item.status === "planned-later",
+          )
+            ? "Verstanden. Ich halte erledigte und später geplante Arbeit getrennt und übernehme nichts ohne deine Bestätigung."
+            : planned.plan.workflowActions.length > 0
+              ? "Verstanden. Ich kann die aktuelle Arbeit sicher pausieren und den spontanen Zimmerbesuch starten."
+              : request.workingContext?.activeEpisodePatientId === current.id &&
+                  request.workingContext.activeEpisodeTitle
+                ? `Verstanden für die laufende Arbeit „${request.workingContext.activeEpisodeTitle}“. Prüfe bitte kurz nur die Punkte, die übernommen werden sollen.`
+                : "Verstanden. Prüfe bitte kurz nur die Punkte, die übernommen werden sollen.",
+        });
+        components.push({
           type: "DraftAction",
           kind: "care-update",
-          title: `Gebündelter Pflegeeintrag · ${current.displayName}`,
+          title: `Ich habe Folgendes verstanden · ${current.displayName}`,
           preview: bundlePreview,
-          actionLabel: "Änderungen gemeinsam prüfen",
+          actionLabel: "Auswahl bestätigen",
           intentToken: issue("care-update:draft", {
             plan: JSON.stringify(planned.plan),
             inputModality: request.inputModality ?? "typed",
           }),
-          sourceLabel: `${planned.model} · ${reviewItems.length} getrennte, servervalidierte Vorschläge`,
+          sourceLabel: `${planned.model} · aus deiner Aussage, vor Übernahme geprüft`,
           reviewItems,
         });
         break;
@@ -643,7 +980,16 @@ export class AssistantService {
               "Keine freigegebenen Medikationsinformationen.",
             sourceLabel: `${current.source.provider} · Version ${current.source.version}`,
           },
-          {
+        );
+        const explicitDedicatedHandoff =
+          /\b(?:ändere|ändern|anpassen|absetzen|verordnen|bestätige|bestätigen)\b|\b(?:frage|informiere|benachrichtige|kläre)\b[^.;]{0,80}\b(?:arzt|ärztin|ärztlichen?\s+dienst)\b|\b(?:arzt|ärztin|ärztlichen?\s+dienst)\b[^.;]{0,80}\b(?:fragen|informieren|benachrichtigen|klären)\b/i.test(
+            prompt,
+          ) &&
+          !/\b(?:nicht|kein(?:e|en)?)\b[^.;]{0,40}\b(?:geben|ändern|anpassen|absetzen|informieren)\b/i.test(
+            prompt,
+          );
+        if (explicitDedicatedHandoff)
+          components.push({
             type: "DraftAction",
             kind: "physician-question",
             title: "Medikationsfrage vorbereiten",
@@ -654,8 +1000,7 @@ export class AssistantService {
               reason: "Medikationsfrage; keine Änderung durch Pflegehelfer",
             }),
             sourceLabel: "Nur Kommunikationsentwurf · keine MedicationRequest",
-          },
-        );
+          });
         break;
       }
       case "unknown":
@@ -671,10 +1016,20 @@ export class AssistantService {
     const composition = await this.models.composeOpenUi(
       validated.map((component) => component.type),
     );
-    const composed = composition.order.map((handle) => {
+    const modelComposed = composition.order.map((handle) => {
       const index = Number.parseInt(handle.replace("candidate-", ""), 10) - 1;
       return validated[index]!;
     });
+    // The conversational response is always read before any editable review,
+    // even when a presentation model suggests another safe component order.
+    const composed = [
+      ...modelComposed.filter(
+        (component) => component.type === "AssistantText",
+      ),
+      ...modelComposed.filter(
+        (component) => component.type !== "AssistantText",
+      ),
+    ];
     if (composition.degraded)
       warnings.push(
         "Die Modellkomposition war nicht verfügbar; die sichere deterministische Reihenfolge wurde verwendet.",
@@ -802,13 +1157,12 @@ export class AssistantService {
             kind: "task",
             patientId: intent.patientId,
             title: intent.payload.title ?? "Assistenzaufgabe",
-            reason:
-              "Aus Assistenzvorschlag; fachlich prüfen und konkretisieren",
+            reason: "Im Gespräch erfasst; fachlich prüfen und konkretisieren",
             dueAt: new Date(Date.now() + 60 * 60_000).toISOString(),
           } satisfies AssistantDraftHandoff,
         };
       case "care-update:draft": {
-        const plan = clinicalActionPlanSchema.parse(
+        const plan = assistantProposalSchema.parse(
           JSON.parse(intent.payload.plan ?? "null"),
         );
         const reviewed = new Set(context.reviewedActionIds ?? []);
@@ -826,8 +1180,26 @@ export class AssistantService {
         const selected = plan.actions.filter((action) =>
           reviewed.has(action.id),
         );
+        const workflow = selected.filter(
+          (action) => action.type === "workflow-proposal",
+        );
+        if (workflow.length > 0) {
+          if (workflow.length !== selected.length)
+            throw new DomainError(
+              "VALIDATION",
+              "Ablaufwechsel und klinische Dokumentation müssen getrennt bestätigt werden.",
+              400,
+            );
+          return {
+            workflowActions: workflow.map((action) => ({
+              operation: action.operation,
+              targetRoom: action.targetRoom,
+              reason: action.reason,
+            })),
+          };
+        }
         return this.clinical.runAtomically(() => {
-          const results = selected.map((action: ClinicalAction) => {
+          const results = selected.map((action: ExecutableAssistantAction) => {
             switch (action.type) {
               case "note-proposal":
                 return this.clinical.createNoteDraft(userId, {
@@ -839,16 +1211,42 @@ export class AssistantService {
                   structuredText: action.structuredText,
                   purpose: intent.purpose,
                 });
-              case "observation-proposal":
+              case "observation-proposal": {
+                const effectiveAt = resolveOccurrenceTime(
+                  action.occurrenceText,
+                  plan.inputTimestamp,
+                );
+                if (!effectiveAt)
+                  throw new DomainError(
+                    "VALIDATION",
+                    "Die berichtete Messzeit ist nicht eindeutig. Bitte Datum und Uhrzeit präzisieren.",
+                    400,
+                  );
+                if (
+                  new Date(effectiveAt).getTime() >
+                  new Date(plan.inputTimestamp).getTime() + 5 * 60_000
+                )
+                  throw new DomainError(
+                    "VALIDATION",
+                    "Die Messzeit liegt in der Zukunft. Bitte geplante Messung und bereits erhobenen Wert trennen.",
+                    400,
+                  );
                 return this.clinical.createObservationDraft(userId, {
                   patientId: intent.patientId,
                   code: action.code,
-                  value: action.systolic,
-                  secondaryValue: action.diastolic,
-                  effectiveAt: new Date().toISOString(),
+                  value: action.value,
+                  secondaryValue: action.secondaryValue,
+                  effectiveAt,
                   purpose: intent.purpose,
                 });
+              }
               case "communication-proposal":
+                if (action.dueInMinutes === null)
+                  throw new DomainError(
+                    "VALIDATION",
+                    "Die sichtbare Teamnachricht enthält keine bestätigte Frist.",
+                    400,
+                  );
                 return this.clinical.createCommunication(userId, {
                   patientId: intent.patientId,
                   request: action.request,
@@ -861,6 +1259,12 @@ export class AssistantService {
                   purpose: intent.purpose,
                 });
               case "task-proposal":
+                if (action.dueInMinutes === null)
+                  throw new DomainError(
+                    "VALIDATION",
+                    "Die sichtbare Folgeaufgabe enthält keine bestätigte Frist.",
+                    400,
+                  );
                 return this.clinical.createTask(userId, {
                   patientId: intent.patientId,
                   title: action.title,
@@ -872,6 +1276,12 @@ export class AssistantService {
                   ).toISOString(),
                   purpose: intent.purpose,
                 });
+              case "workflow-proposal":
+                throw new DomainError(
+                  "INVALID_STATE",
+                  "Ablaufaktion wurde nicht getrennt verarbeitet.",
+                  409,
+                );
             }
           });
           this.clinical.audit.append({

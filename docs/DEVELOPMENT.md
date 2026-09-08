@@ -24,3 +24,9 @@ pnpm verify:ops
 ```
 
 Never add vendor URLs, payloads or authentication from inference. Add a capability gate, simulator scenario and contract test until official schemas and a sandbox are supplied.
+
+## Local and hosted synthetic model profiles
+
+`.env.demo` is ignored and generated with mode `0600`. The production-shaped default is an OpenAI-compatible local endpoint (`PFH_AI_MODE=local-openai`, typically Ollama or vLLM). For a synthetic hosted developer run only, set all three modes to `hosted-test`, set `PFH_ALLOW_EXTERNAL_AI=true`, keep `PFH_LLM_DATA_CLASSIFICATION=synthetic-only`, and add `OPENAI_API_KEY` locally. The recommended editable defaults are `gpt-5.6-terra` for the fast router/composer, `gpt-5.6-sol` for the bounded approved-knowledge selector, and `gpt-transcribe` for speech-to-text.
+
+No real patient data may use `hosted-test`. A missing key leaves deterministic clinical workflows active and reports voice/model unavailability honestly. Restart the API after changing the environment; `/api/v1/ai/status` reports the effective profile without exposing secrets.

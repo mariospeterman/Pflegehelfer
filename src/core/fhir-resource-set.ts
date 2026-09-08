@@ -303,9 +303,17 @@ function carePlan(patient: Patient): CarePlan {
 
 function provenance(resource: Resource): Provenance | null {
   if (!resource.id || resource.resourceType === "Provenance") return null;
+  const sourceVersion =
+    resource.meta?.tag?.find(
+      (tag) =>
+        tag.system === "https://pflegehelfer.example.invalid/source-version",
+    )?.code ?? "initial";
   return {
     resourceType: "Provenance",
-    id: fhirResourceId("Provenance", `${resource.resourceType}/${resource.id}`),
+    id: fhirResourceId(
+      "Provenance",
+      `${resource.resourceType}/${resource.id}/version/${sourceVersion}`,
+    ),
     recorded:
       resource.meta?.tag?.find(
         (tag) =>

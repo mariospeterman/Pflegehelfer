@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { ModelGateway } from "../src/ai/model-gateway.js";
 import {
-  deterministicCareUpdatePlan,
-  verifyModelPlanAgainstDeterministicCompiler,
-} from "../src/ai/clinical-action-plan.js";
+  deterministicAssistantProposal,
+  verifyModelProposalAgainstDeterministicCompiler,
+} from "../src/ai/assistant-proposal.js";
 import {
   AssistantService,
   type AssistantResponse,
@@ -13,6 +13,7 @@ import {
   type IntentExecutionContext,
 } from "../src/core/assistant.js";
 import { PflegehelferService } from "../src/core/service.js";
+import { extractCriticalEntities } from "../src/core/critical-entities.js";
 
 function fixture() {
   const clinical = new PflegehelferService();
@@ -57,6 +58,23 @@ function executionContext(
 }
 
 describe("assistant presentation boundary", () => {
+  it("marks ordinary unitless vitals for explicit voice review", () => {
+    expect(
+      extractCriticalEntities("Puls 82 Temperatur 37,2").filter(
+        (item) => item.kind === "measurement",
+      ),
+    ).toHaveLength(2);
+    expect(
+      extractCriticalEntities(
+        "Gestern um 18 Uhr Blutdruck 151 zu 88; Arzt in einer halben Stunde informieren.",
+      ).filter((item) => item.kind === "time"),
+    ).toHaveLength(2);
+    expect(
+      extractCriticalEntities(
+        "Heute um 18 Uhr Blutdruck 151 zu 88; um 19:30 Uhr Puls 82.",
+      ).filter((item) => item.kind === "time"),
+    ).toHaveLength(2);
+  });
   it("rejects unknown OpenUI components and excess executable fields", () => {
     expect(() =>
       validateAssistantComponents([
@@ -95,12 +113,122 @@ describe("assistant presentation boundary", () => {
 });
 
 describe("assistant action gateway", () => {
+  it("answers explicit negation conversationally without issuing authority", async () => {
+    const { assistant } = fixture();
+    const response = await assistant.query("u-nurse", {
+      prompt: "Arzt nicht informieren, keine weitere Kontrolle.",
+      patientId: "p-anna",
+      purpose: "direct-care",
+    });
+    expect(response.classification.intent).toBe("care-update");
+    expect(response.components).toHaveLength(1);
+    expect(response.components[0]?.type).toBe("AssistantText");
+    const reply = response.components[0];
+    if (reply?.type !== "AssistantText") throw new Error("expected reply");
+    expect(reply.message).toContain("keine Änderung");
+    expect(
+      response.components.some((component) => component.type === "DraftAction"),
+    ).toBe(false);
+  });
+
+  it("does not bind a named patient statement to the wrong open chart", async () => {
+    const { assistant } = fixture();
+    const response = await assistant.query("u-nurse", {
+      prompt: "Luca mobilisiert, fast alles gegessen, ca. 200 ml getrunken.",
+      patientId: "p-anna",
+      purpose: "direct-care",
+    });
+    expect(response.components.map((component) => component.type)).toEqual([
+      "AssistantText",
+      "PatientPicker",
+    ]);
+    expect(
+      response.components.some((component) => component.type === "DraftAction"),
+    ).toBe(false);
+  });
+
+  it("recognizes surname, room and MRN references to another patient", async () => {
+    const { assistant } = fixture();
+    for (const prompt of [
+      "Demo mobilisiert.",
+      "Zimmer 207 mobilisiert.",
+      "Fall SH-260902-004 mobilisiert.",
+    ]) {
+      const response = await assistant.query("u-nurse", {
+        prompt,
+        patientId: "p-anna",
+        purpose: "direct-care",
+      });
+      expect(
+        response.components.some(
+          (component) => component.type === "DraftAction",
+        ),
+      ).toBe(false);
+      expect(response.components.map((component) => component.type)).toEqual([
+        "AssistantText",
+        "PatientPicker",
+      ]);
+    }
+  });
+
+  it("never issues authority for explicit no-write language", async () => {
+    const { assistant } = fixture();
+    for (const prompt of [
+      "Nicht dokumentieren: Patient schlief ruhig.",
+      "Keine Nachricht an den Arzt senden.",
+      "Dokumentiere bitte nichts aus dem Gespräch.",
+      "Schreib nichts aus dem Gespräch auf.",
+      "Bitte dokumentiere auf keinen Fall etwas.",
+      "Bitte auf keinen Fall dokumentieren.",
+      "Bitte keinesfalls dokumentieren.",
+      "Bitte keine Angaben festhalten.",
+    ]) {
+      const response = await assistant.query("u-nurse", {
+        prompt,
+        patientId: "p-anna",
+        purpose: "direct-care",
+      });
+      expect(response.classification.intent).toBe("care-update");
+      expect(
+        response.components.some(
+          (component) => component.type === "DraftAction",
+        ),
+      ).toBe(false);
+    }
+  });
+
+  it("does not turn a historical medication report into a handoff", async () => {
+    const { assistant } = fixture();
+    const response = await assistant.query("u-nurse", {
+      prompt: "Die Ärztin hat gestern die Dosis geändert.",
+      patientId: "p-anna",
+      purpose: "direct-care",
+    });
+    expect(
+      response.components.some((component) => component.type === "DraftAction"),
+    ).toBe(false);
+  });
+
+  it("does not infer a communication merely from a negated medication mention", async () => {
+    const { assistant } = fixture();
+    const response = await assistant.query("u-nurse", {
+      prompt: "Medikament nicht geben.",
+      patientId: "p-anna",
+      purpose: "direct-care",
+    });
+    expect(response.classification.intent).toBe("medication-request");
+    expect(response.components.map((component) => component.type)).toEqual([
+      "SafetyAlert",
+      "MedicationReadOnly",
+    ]);
+  });
+
   it("turns one bedside update into a bound, reviewed clinical bundle", async () => {
     const { assistant, clinical } = fixture();
     const before = clinical.snapshot("u-nurse");
     const response = await assistant.query("u-nurse", {
       prompt:
-        "Bin mit Anna fertig. Mobilisiert, Blutdruck 151 zu 88, etwas Schwindel. Arzt informieren und Kontrolle in 30 Minuten.",
+        "Bin mit Anna fertig. Mobilisiert, Blutdruck 151 zu 88, etwas Schwindel. Arzt in 60 Minuten informieren und Kontrolle in 30 Minuten.",
       patientId: "p-anna",
       purpose: "direct-care",
     });
@@ -157,16 +285,256 @@ describe("assistant action gateway", () => {
 
   it("refuses to compile medication or dose instructions from free text", () => {
     expect(
-      deterministicCareUpdatePlan(
+      deterministicAssistantProposal(
         "Blutdruck 151 zu 88. Marcumar sofort geben und Arzt informieren.",
       ),
     ).toBeNull();
   });
 
+  it("routes a medication instruction to the fail-closed path even with a note prefix", async () => {
+    const { assistant } = fixture();
+    const response = await assistant.query("u-nurse", {
+      prompt: "Notiz: Insulin 20 IE sofort geben.",
+      patientId: "p-anna",
+      purpose: "direct-care",
+    });
+    expect(response.classification.intent).toBe("medication-request");
+    expect(
+      response.components.some((component) => component.type === "DraftAction"),
+    ).toBe(false);
+    expect(response.components[0]).toMatchObject({ type: "SafetyAlert" });
+  });
+
+  it("fails closed for generic imperative treatment language", async () => {
+    const { assistant } = fixture();
+    for (const prompt of [
+      "Notiz: Fentanyl 5 ml geben.",
+      "Notiz: Sauerstoff 4 l/min geben.",
+      "Notiz: Oxycodon-Tropfen sofort verabreichen.",
+      "Notiz: Wundbehandlung jetzt durchführen.",
+      "Notiz: Gib Fentanyl.",
+      "Anamnese: Setze Eliquis ab.",
+      "Pflegebericht: Entferne den Katheter.",
+      "Notiz: Wechsle jetzt den Verband.",
+      "Notiz: Lege einen Katheter.",
+      "Notiz: Stoppe Eliquis.",
+      "Notiz: Reduziere Fentanyl.",
+      "Notiz: Erhöhe Sauerstoff auf 4 l/min.",
+      "Notiz: Ändere den Verband.",
+      "Eliquis soll abgesetzt werden.",
+      "Fentanyl 5 ml soll gegeben werden.",
+      "Sauerstoff soll auf 4 l/min erhöht werden.",
+      "Notiz: Sauerstoff auf 2 l/min titrieren.",
+      "Notiz: Senke Sauerstoff auf 2 l/min.",
+      "Notiz: Ersetze den Verband.",
+      "Notiz: Katheter ziehen.",
+      "Notiz: Die Wunde verbinden.",
+      "Notiz: Blase spülen.",
+      "Notiz: Verband erneuern.",
+      "Notiz: Trachealkanüle absaugen.",
+      "Notiz: Drainage leeren.",
+      "Notiz: Stoma versorgen.",
+      "Notiz: Bewohner umlagern.",
+      "Notiz: Trachealkanüle absaugen um 08 Uhr.",
+      "Notiz: Drainage leeren um 08 Uhr.",
+      "Notiz: Bewohner umlagern nach dem Frühstück.",
+      "Notiz: Inhalation durchführen.",
+      "Notiz: Blutzucker messen.",
+      "Notiz: Kompressionsstrümpfe anziehen.",
+      "Notiz: Patient nüchtern lassen.",
+      "Notiz: Injiziere Heparin.",
+      "Notiz: Verteile die Tabletten.",
+      "Notiz: Spüle die PEG-Sonde.",
+      "Notiz: Fixiere den Patienten.",
+      "Notiz: Sedieren Sie den Patienten.",
+      "Notiz: Reanimiere den Patienten.",
+      "Notiz: Gurte den Bewohner an.",
+      "Notiz: Isoliere den Bewohner.",
+      "Notiz: Patient fixieren.",
+      "Notiz: Sedieren Sie Herrn Beispiel.",
+      "Notiz: Den Patienten fixieren.",
+      "Notiz: Herrn Beispiel sedieren.",
+      "Notiz: Bewohnerin ans Bett fesseln.",
+    ]) {
+      const response = await assistant.query("u-nurse", {
+        prompt,
+        patientId: "p-anna",
+        purpose: "direct-care",
+      });
+      expect(response.classification.intent).toBe("medication-request");
+      expect(
+        response.components.some(
+          (component) => component.type === "DraftAction",
+        ),
+      ).toBe(false);
+    }
+  });
+
+  it("does not mistake an explicit read request for a clinical command", async () => {
+    const { assistant } = fixture();
+    const response = await assistant.query("u-nurse", {
+      prompt: "Zeige das Profil.",
+      patientId: "p-anna",
+      purpose: "direct-care",
+    });
+    expect(response.classification.intent).toBe("patient-summary");
+    expect(response.components).toContainEqual(
+      expect.objectContaining({ type: "PatientSummary" }),
+    );
+  });
+
+  it("keeps the handover read command on the read-only route", async () => {
+    const { assistant } = fixture();
+    const response = await assistant.query("u-nurse", {
+      prompt: "Zeige die Übergabe.",
+      patientId: "p-anna",
+      purpose: "direct-care",
+    });
+    expect(response.classification.intent).toBe("handover");
+    expect(
+      response.components.some((component) => component.type === "DraftAction"),
+    ).toBe(false);
+  });
+
+  it.each([
+    "Arzt wurde informiert.",
+    "Gestern Arzt informiert.",
+    "Die Ärztin ist bereits benachrichtigt.",
+    "Arzt keinesfalls in 30 Minuten informieren.",
+  ])(
+    "does not turn historical or negated physician wording into a send action: %s",
+    async (prompt) => {
+      const { assistant } = fixture();
+      const response = await assistant.query("u-nurse", {
+        prompt,
+        patientId: "p-anna",
+        purpose: "direct-care",
+      });
+      expect(
+        response.components.some(
+          (component) =>
+            component.type === "DraftAction" &&
+            component.kind === "physician-question",
+        ),
+      ).toBe(false);
+    },
+  );
+
+  it("does not let model-only intent classification unlock a mutation", async () => {
+    const model = new ModelGateway({ PFH_AI_MODE: "deterministic" });
+    model.classify = () =>
+      Promise.resolve({
+        intent: "draft-task",
+        mode: "hosted-test",
+        model: "untrusted-classifier",
+        degraded: false,
+      });
+    const assistant = new AssistantService(new PflegehelferService(), model);
+    const response = await assistant.query("u-nurse", {
+      prompt: "Guten Morgen.",
+      patientId: "p-anna",
+      purpose: "direct-care",
+    });
+    expect(
+      response.components.some((component) => component.type === "DraftAction"),
+    ).toBe(false);
+  });
+
+  it.each([
+    "Erstelle keine Aufgabe.",
+    "Erstelle keinesfalls eine Aufgabe.",
+    "Vielleicht eine Aufgabe erstellen?",
+  ])(
+    "does not let a model invert a refused or uncertain task request: %s",
+    async (prompt) => {
+      const model = new ModelGateway({ PFH_AI_MODE: "deterministic" });
+      model.classify = () =>
+        Promise.resolve({
+          intent: "draft-task",
+          mode: "hosted-test",
+          model: "untrusted-classifier",
+          degraded: false,
+        });
+      const assistant = new AssistantService(new PflegehelferService(), model);
+      const response = await assistant.query("u-nurse", {
+        prompt,
+        patientId: "p-anna",
+        purpose: "direct-care",
+      });
+      expect(
+        response.components.some(
+          (component) => component.type === "DraftAction",
+        ),
+      ).toBe(false);
+    },
+  );
+
+  it.each([
+    "Vielleicht Arzt informieren.",
+    "Sollte man den Arzt informieren?",
+    "Arzt möglicherweise informieren.",
+  ])("keeps uncertain physician wording non-executable: %s", async (prompt) => {
+    const { assistant } = fixture();
+    const response = await assistant.query("u-nurse", {
+      prompt,
+      patientId: "p-anna",
+      purpose: "direct-care",
+    });
+    expect(
+      response.components.some((component) => component.type === "DraftAction"),
+    ).toBe(false);
+  });
+
+  it.each([
+    "Notiz: Spritze Heparin.",
+    "Notiz: Klemme den Katheter ab.",
+    "Notiz: Sauerstoff auf 4 l/min stellen.",
+    "Notiz: Öffne die Infusion.",
+    "Notiz: Entlüfte die Leitung.",
+  ])(
+    "fails closed for terse treatment or device commands: %s",
+    async (prompt) => {
+      const { assistant } = fixture();
+      const response = await assistant.query("u-nurse", {
+        prompt,
+        patientId: "p-anna",
+        purpose: "direct-care",
+      });
+      expect(response.classification.intent).toBe("medication-request");
+      expect(
+        response.components.some(
+          (component) => component.type === "DraftAction",
+        ),
+      ).toBe(false);
+    },
+  );
+
+  it("keeps ordinary completed and descriptive nursing notes available", async () => {
+    const { assistant } = fixture();
+    for (const prompt of [
+      "Notiz: Patientin klagt über Schmerzen 5 von 10.",
+      "Notiz: Schmerzen unverändert.",
+      "Notiz: Essen vollständig eingenommen.",
+      "Notiz: Die Patientin konnte selbständig gehen.",
+      "Notiz: Haut ohne Läsionen.",
+    ]) {
+      const response = await assistant.query("u-nurse", {
+        prompt,
+        patientId: "p-anna",
+        purpose: "direct-care",
+      });
+      expect(
+        response.components.some(
+          (component) => component.type === "DraftAction",
+        ),
+      ).toBe(true);
+    }
+  });
+
   it("rejects schema-valid model fields that differ from deterministic compilation", () => {
     const prompt =
       "Mobilisiert, Blutdruck 151 zu 88, Arzt informieren und Kontrolle in 30 Minuten.";
-    const compiled = deterministicCareUpdatePlan(prompt);
+    const compiled = deterministicAssistantProposal(prompt);
     if (!compiled) throw new Error("Expected deterministic care plan");
     const invented = structuredClone(compiled);
     const task = invented.actions.find(
@@ -176,8 +544,12 @@ describe("assistant action gateway", () => {
       throw new Error("Expected compiled task");
     task.title = "Insulin 20 IE sofort geben";
     expect(() =>
-      verifyModelPlanAgainstDeterministicCompiler(prompt, invented, compiled),
-    ).toThrow("CLINICAL_PLAN_NOT_SEMANTICALLY_GROUNDED");
+      verifyModelProposalAgainstDeterministicCompiler(
+        prompt,
+        invented,
+        compiled,
+      ),
+    ).toThrow("CLINICAL_PLAN_UNGROUNDED_CLINICAL_CONTENT");
   });
 
   it("burns a token when a caller tries to steal it for another patient", async () => {
@@ -315,7 +687,7 @@ describe("assistant action gateway", () => {
     const { assistant, clinical } = fixture();
     const response = await assistant.query("u-nurse", {
       prompt:
-        "Bin mit Anna fertig. Blutdruck 151 zu 88, Schwindel. Arzt informieren und Kontrolle in 30 Minuten.",
+        "Bin mit Anna fertig. Blutdruck 151 zu 88, Schwindel. Arzt in 60 Minuten informieren und Kontrolle in 30 Minuten.",
       patientId: "p-anna",
       purpose: "direct-care",
     });

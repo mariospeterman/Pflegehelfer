@@ -55,6 +55,7 @@ import type {
 } from "./types.js";
 import { DomainError } from "./types.js";
 import { auditEventToFhirR4, toFhirResourceSet } from "./fhir-resource-set.js";
+import { siteConfiguration } from "./site-config.js";
 
 export interface WorkflowState {
   users: DemoUser[];
@@ -118,6 +119,22 @@ function initialState(): WorkflowState {
     if (["sent", "acknowledged"].includes(communication.state))
       communication.dueAt = new Date(Date.now() + 90 * 60_000).toISOString();
   return state;
+}
+
+export function emptyWorkflowState(): WorkflowState {
+  return {
+    users: [],
+    patients: [],
+    tasks: [],
+    observations: [],
+    notes: [],
+    communications: [],
+    intake: [],
+    handovers: [],
+    roundActions: [],
+    providerHealth: [],
+    outbox: [],
+  };
 }
 
 const deadlineEngineActor: DemoUser = {
@@ -419,8 +436,11 @@ export class PflegehelferService {
             (item) =>
               visibleIds.has(item.patientId) &&
               (item.senderId === user.id ||
-                item.recipientRole === user.role ||
-                ["registered-nurse", "physician"].includes(user.role)),
+                (item.recipientId
+                  ? item.recipientId === user.id
+                  : item.recipientRole === user.role) ||
+                (item.escalatedAt !== null &&
+                  item.escalationRecipientRole === user.role)),
           )
         : [],
       intake: this.state.intake.filter(
@@ -436,9 +456,38 @@ export class PflegehelferService {
           ).allow,
       ),
       handovers: clinical
-        ? this.state.handovers.filter((item) =>
-            item.patientIds.every((id) => visibleIds.has(id)),
-          )
+        ? this.state.handovers
+            .filter((item) => item.patientIds.some((id) => visibleIds.has(id)))
+            .map((item) => ({
+              ...item,
+              patientIds: item.patientIds.filter((id) => visibleIds.has(id)),
+              deltaTaskIds: item.deltaTaskIds.filter((id) =>
+                visibleTasks.some((task) => task.id === id),
+              ),
+              deltaObservationIds: item.deltaObservationIds.filter((id) =>
+                this.state.observations.some(
+                  (observation) =>
+                    observation.id === id &&
+                    visibleIds.has(observation.patientId),
+                ),
+              ),
+              unresolvedCommunicationIds:
+                item.unresolvedCommunicationIds.filter((id) =>
+                  this.state.communications.some(
+                    (communication) =>
+                      communication.id === id &&
+                      visibleIds.has(communication.patientId) &&
+                      (communication.senderId === user.id ||
+                        (communication.recipientId
+                          ? communication.recipientId === user.id
+                          : communication.recipientRole === user.role) ||
+                        (communication.escalatedAt !== null &&
+                          communication.escalationRecipientRole === user.role)),
+                  ),
+                ),
+              narrative:
+                "Patientenbezogene Änderungen werden aus den freigegebenen strukturierten Deltas angezeigt.",
+            }))
         : [],
       roundActions: clinical
         ? this.state.roundActions.filter((item) =>
@@ -785,8 +834,7 @@ export class PflegehelferService {
       approvals: [],
       approvedAt: null,
       provider:
-        input.provider ??
-        (patient.source.provider === "carecoach" ? "carecoach" : "wicare"),
+        input.provider ?? siteConfiguration.providerRoutes.careDocumentation,
       source: this.newSource("pflegehelfer", `ClinicalNote/${randomUUID()}`),
     };
     this.state.notes.push(note);
@@ -961,11 +1009,7 @@ export class PflegehelferService {
         "Die gewählte Person gehört nicht zum adressierten Behandlungsteam.",
         400,
       );
-    if (
-      recipient &&
-      !recipient.patientIds.includes(patient.id) &&
-      !recipient.wardIds.includes(patient.wardId)
-    )
+    if (recipient && !recipient.patientIds.includes(patient.id))
       throw new DomainError(
         "AUTH_DENIED",
         "Die gewählte Person hat keine Behandlungsbeziehung zu diesem Fall.",
@@ -1594,6 +1638,29 @@ export class PflegehelferService {
       }
     }
     return this.state.outbox.map((item) => this.outboxSummary(item));
+  }
+
+  hasPendingProviderWork(): boolean {
+    return this.state.outbox.some((item) =>
+      ["pending", "processing"].includes(item.state),
+    );
+  }
+
+  providerSyncState(
+    patientIds: readonly string[],
+  ): "pending" | "simulated-acknowledged" | "external-gated" {
+    const relevant = this.state.outbox.filter((item) =>
+      patientIds.includes(item.patientId),
+    );
+    if (relevant.some((item) => ["pending", "processing"].includes(item.state)))
+      return "pending";
+    if (
+      relevant.length > 0 &&
+      relevant.every((item) => item.state === "acknowledged") &&
+      this.providerProfile === "synthetic-simulator"
+    )
+      return "simulated-acknowledged";
+    return "external-gated";
   }
 
   reconcileOutbox(

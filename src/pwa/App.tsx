@@ -5,6 +5,7 @@ import {
   type AssistantHandoff,
   type ConversationOpening,
 } from "./assistant/AssistantSurface";
+import type { WorkdayView } from "../core/workday";
 
 const roleLabels: Record<Role, string> = {
   "care-assistant": "Pflegeassistenz",
@@ -70,7 +71,13 @@ async function api<T>(
       ...init?.headers,
     },
   });
-  const result = (await response.json()) as T & { message?: string };
+  const raw = await response.text();
+  let result: T & { message?: string };
+  try {
+    result = JSON.parse(raw) as T & { message?: string };
+  } catch {
+    throw new Error("Der Dienst antwortet nicht im erwarteten Format.");
+  }
   if (!response.ok) throw new Error(result.message ?? "Aktion fehlgeschlagen.");
   return result;
 }
@@ -80,7 +87,6 @@ function formatBirthDate(value: string): string {
 }
 
 function PatientSafetyBar({ patient }: { patient: Patient }) {
-  const warnings = [...patient.allergies, ...patient.risks];
   return (
     <div className="patient-safety-bar" aria-label="Aktiver Patientenkontext">
       <span className="patient-room">{patient.room}</span>
@@ -90,21 +96,34 @@ function PatientSafetyBar({ patient }: { patient: Patient }) {
           Geb. {formatBirthDate(patient.birthDate)} · Fall {patient.mrn}
         </small>
       </span>
-      <span className="patient-warnings">
-        {warnings.length
-          ? warnings.join(" · ")
-          : "Keine bekannten Warnhinweise"}
+      <span className="patient-safety-signals">
+        {patient.allergies.length > 0 && (
+          <strong className="patient-allergy">
+            Allergie: {patient.allergies.join(" · ")}
+          </strong>
+        )}
+        {patient.risks.length > 0 && (
+          <small className="patient-risk">
+            Risiko: {patient.risks.join(" · ")}
+          </small>
+        )}
+        {patient.allergies.length === 0 && patient.risks.length === 0 && (
+          <small>Keine bekannten Warnhinweise</small>
+        )}
       </span>
     </div>
   );
 }
 
-function EdelweissMark() {
+function PflegehelferMark() {
   return (
     <svg viewBox="0 0 40 40" aria-hidden="true" className="brand-mark">
-      <path d="M20 3c3 5 3 8 0 12-3-4-3-7 0-12Zm0 34c-3-5-3-8 0-12 3 4 3 7 0 12ZM3 20c5-3 8-3 12 0-4 3-7 3-12 0Zm34 0c-5 3-8 3-12 0 4-3 7-3 12 0ZM8 8c6 1 8 3 8 8-5 0-7-2-8-8Zm24 24c-6-1-8-3-8-8 5 0 7 2 8 8ZM32 8c-1 6-3 8-8 8 0-5 2-7 8-8ZM8 32c1-6 3-8 8-8 0 5-2 7-8 8Z" />
-      <circle cx="20" cy="20" r="7" />
-      <path className="brand-cross" d="M18 15h4v3h3v4h-3v3h-4v-3h-3v-4h3z" />
+      <rect x="3" y="3" width="34" height="34" rx="12" />
+      <path
+        className="brand-conversation"
+        d="M12 28V12h8.7c5 0 8.1 2.7 8.1 7s-3.1 7-8.1 7H17v2h-5Zm5-7h3.5c2.1 0 3.2-.7 3.2-2s-1.1-2-3.2-2H17v4Z"
+      />
+      <circle className="brand-signal" cx="31" cy="9" r="4" />
     </svg>
   );
 }
@@ -114,12 +133,20 @@ function ContextPanel({
   patient,
   onPatient,
   onPrompt,
+  onUser,
+  modal,
+  theme,
+  onTheme,
   close,
 }: {
   snapshot: AppSnapshot;
   patient: Patient | null;
   onPatient: (id: string | null) => void;
   onPrompt: (text: string) => void;
+  onUser: (id: string) => void;
+  modal: boolean;
+  theme: "system" | "light" | "dark";
+  onTheme: (theme: "system" | "light" | "dark") => void;
   close: () => void;
 }) {
   const actions = [
@@ -129,9 +156,14 @@ function ContextPanel({
     ["Synchronisation", "Was wartet auf Synchronisation?"],
   ] as const;
   return (
-    <aside className="context-panel" aria-label="Kontext und Verlauf">
+    <aside
+      className="context-panel"
+      aria-label="Kontext und Verlauf"
+      role={modal ? "dialog" : "complementary"}
+      aria-modal={modal ? true : undefined}
+    >
       <div className="context-brand">
-        <EdelweissMark />
+        <PflegehelferMark />
         <span>
           <strong>Pflegehelfer</strong>
           <small>Tertianum Kronenhof · Demo</small>
@@ -189,6 +221,32 @@ function ContextPanel({
         ))}
       </section>
       <footer className="context-footer">
+        <label className="drawer-role-switcher">
+          <span>Demo-Rolle</span>
+          <select
+            value={snapshot.currentUser.id}
+            onChange={(event) => onUser(event.target.value)}
+          >
+            {snapshot.users.map((user) => (
+              <option value={user.id} key={user.id}>
+                {user.displayName} · {roleLabels[user.role]}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="theme-select">
+          <span>Darstellung</span>
+          <select
+            value={theme}
+            onChange={(event) =>
+              onTheme(event.target.value as "system" | "light" | "dark")
+            }
+          >
+            <option value="system">System</option>
+            <option value="light">Hell</option>
+            <option value="dark">Dunkel</option>
+          </select>
+        </label>
         <strong>Synthetische Demonstration</strong>
         <span>Alle Personen und klinischen Daten sind frei erfunden.</span>
       </footer>
@@ -213,7 +271,45 @@ function DraftHandoffSheet({
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const dialogRef = useRef<HTMLElement | null>(null);
+  const closeRef = useRef<HTMLButtonElement | null>(null);
   const recipient = users.find((candidate) => candidate.role === "physician");
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    closeRef.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        close();
+        return;
+      }
+      if (event.key !== "Tab" || !dialogRef.current) return;
+      const controls = [
+        ...dialogRef.current.querySelectorAll<HTMLElement>(
+          "button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href]",
+        ),
+      ];
+      if (controls.length === 0) return;
+      const first = controls[0]!;
+      const last = controls.at(-1)!;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      if (previous?.isConnected) previous.focus();
+      else
+        document
+          .querySelector<HTMLElement>(".composer-input textarea")
+          ?.focus();
+    };
+  }, [close]);
   const submit = async () => {
     setBusy(true);
     setError(null);
@@ -243,12 +339,12 @@ function DraftHandoffSheet({
             dueAt: handoff.dueAt,
           }),
         });
+      close();
       await done(
         handoff.kind === "communication"
           ? "Die geprüfte Teamfrage wurde gesendet."
           : "Die geprüfte Aufgabe wurde angelegt.",
       );
-      close();
     } catch (failure) {
       setError(
         failure instanceof Error ? failure.message : "Aktion fehlgeschlagen.",
@@ -264,6 +360,7 @@ function DraftHandoffSheet({
       onMouseDown={(event) => event.target === event.currentTarget && close()}
     >
       <section
+        ref={dialogRef}
         className="action-sheet compact-sheet"
         role="dialog"
         aria-modal="true"
@@ -280,7 +377,11 @@ function DraftHandoffSheet({
                 : "Aufgabe prüfen"}
             </h2>
           </div>
-          <button onClick={close} aria-label="Entwurf schliessen">
+          <button
+            ref={closeRef}
+            onClick={close}
+            aria-label="Entwurf schliessen"
+          >
             ×
           </button>
         </header>
@@ -319,6 +420,7 @@ export function App() {
     () => sessionStorage.getItem("pfh-demo-user") ?? "u-assistant",
   );
   const [snapshot, setSnapshot] = useState<AppSnapshot | null>(null);
+  const [workday, setWorkday] = useState<WorkdayView | null>(null);
   const [selectedPatientId, setSelectedPatientId] = useState<string | null>(
     () => sessionStorage.getItem("pfh-patient-context"),
   );
@@ -332,6 +434,10 @@ export function App() {
   const [handoff, setHandoff] = useState<AssistantHandoff | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [assistantBusy, setAssistantBusy] = useState(false);
+  const [theme, setTheme] = useState<"system" | "light" | "dark">(() => {
+    const stored = localStorage.getItem("pfh-theme");
+    return stored === "light" || stored === "dark" ? stored : "system";
+  });
   const generation = useRef(0);
 
   const load = useCallback(async () => {
@@ -341,8 +447,14 @@ export function App() {
         api<AppSnapshot>("/api/v1/snapshot", userId),
         api<{ patientId: string | null }>("/api/v1/working-session", userId),
       ]);
+      const workdayData = ["care-assistant", "registered-nurse"].includes(
+        data.currentUser.role,
+      )
+        ? await api<WorkdayView>("/api/v1/workday", userId)
+        : null;
       if (current !== generation.current) return;
       setSnapshot(data);
+      setWorkday(workdayData);
       setApiReady(true);
       setSelectedPatientId(
         session.patientId &&
@@ -364,6 +476,54 @@ export function App() {
   useEffect(() => {
     void load();
   }, [load]);
+  useEffect(() => {
+    if (!notice || !apiReady || !snapshot) return;
+    const timer = window.setTimeout(() => setNotice(null), 6000);
+    return () => window.clearTimeout(timer);
+  }, [apiReady, notice, snapshot]);
+  useEffect(() => {
+    if (theme === "system") {
+      document.documentElement.removeAttribute("data-theme");
+      localStorage.removeItem("pfh-theme");
+    } else {
+      document.documentElement.dataset.theme = theme;
+      localStorage.setItem("pfh-theme", theme);
+    }
+  }, [theme]);
+  useEffect(() => {
+    if (!drawerOpen) return;
+    const previous = document.activeElement as HTMLElement | null;
+    const panel = document.querySelector<HTMLElement>(".context-panel");
+    panel?.querySelector<HTMLElement>(".drawer-close")?.focus();
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setDrawerOpen(false);
+        return;
+      }
+      if (event.key !== "Tab" || !panel) return;
+      const focusable = [
+        ...panel.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), select:not([disabled]), a[href], textarea:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      ].filter((element) => element.offsetParent !== null);
+      if (focusable.length === 0) return;
+      const first = focusable[0]!;
+      const last = focusable.at(-1)!;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("keydown", handleKey);
+      previous?.focus();
+    };
+  }, [drawerOpen]);
   useEffect(() => {
     const update = () => setOnline(navigator.onLine);
     window.addEventListener("online", update);
@@ -472,6 +632,7 @@ export function App() {
     sessionStorage.removeItem("pfh-patient-context");
     setSelectedPatientId(null);
     setSnapshot(null);
+    setWorkday(null);
     setNotice(null);
     setUserId(next);
   };
@@ -479,7 +640,7 @@ export function App() {
   if (!snapshot)
     return (
       <main className="safe-loading" role={notice ? "alert" : "status"}>
-        <EdelweissMark />
+        <PflegehelferMark />
         <strong>
           {notice ? "Sicherer Fehlerzustand" : "Pflegehelfer verbindet…"}
         </strong>
@@ -497,9 +658,11 @@ export function App() {
     ? "Offline"
     : snapshot.syncSummary.conflicts
       ? "Konflikt prüfen"
-      : snapshot.syncSummary.unresolved
-        ? `${snapshot.syncSummary.unresolved} ausstehend`
-        : "Synchronisiert";
+      : workday?.providerState === "pending"
+        ? "Übertragung offen"
+        : snapshot.syncSummary.unresolved
+          ? `${snapshot.syncSummary.unresolved} ausstehend`
+          : "Gespeichert · aktuell";
   const opening =
     workflowOpenings[snapshot.currentUser.role] ?? fallbackOpening;
 
@@ -517,9 +680,19 @@ export function App() {
         patient={patient}
         onPatient={(id) => void choosePatient(id)}
         onPrompt={prompt}
+        modal={drawerOpen}
+        onUser={(id) => {
+          setDrawerOpen(false);
+          changeUser(id);
+        }}
+        theme={theme}
+        onTheme={setTheme}
         close={() => setDrawerOpen(false)}
       />
-      <main className="coworker-main">
+      <main
+        className="coworker-main"
+        aria-hidden={drawerOpen ? true : undefined}
+      >
         <header className="coworker-header">
           <button
             className="menu-button"
@@ -534,7 +707,8 @@ export function App() {
           </div>
           <div className="header-state">
             <span
-              className={`connection-state ${connected ? "connected" : "offline"}`}
+              className={`connection-state ${connected ? "connected" : "offline"}${workday?.providerState === "pending" ? " pending" : ""}`}
+              title={syncLabel}
             >
               <i />
               {syncLabel}
@@ -599,6 +773,22 @@ export function App() {
           launchPrompt={launchPrompt}
           onSelectPatient={(id) => void choosePatient(id)}
           onBusyChange={setAssistantBusy}
+          workday={
+            ["care-assistant", "registered-nurse"].includes(
+              snapshot.currentUser.role,
+            )
+              ? workday
+              : null
+          }
+          availablePatients={snapshot.patients}
+          onWorkdayAction={async (command) => {
+            const next = await api<WorkdayView>("/api/v1/workday", userId, {
+              method: "POST",
+              body: JSON.stringify(command),
+            });
+            setWorkday(next);
+            await load();
+          }}
         />
       </main>
       {handoff && patient && (
@@ -607,7 +797,10 @@ export function App() {
           patient={patient}
           userId={userId}
           users={snapshot.users}
-          close={() => setHandoff(null)}
+          close={() => {
+            setHandoff(null);
+            setNotice("Entwurf verworfen. Es wurde nichts gesendet.");
+          }}
           done={async (message) => {
             await load();
             setNotice(message);

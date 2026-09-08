@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { PflegehelferService } from "../src/core/service.js";
+import { nursingPatientIds } from "../src/core/site-config.js";
 
 describe("least-privilege policy", () => {
   it("keeps HR and management outside patient records", () => {
@@ -49,17 +50,23 @@ describe("least-privilege policy", () => {
   it("prevents cross-patient access outside the active relationship", () => {
     const service = new PflegehelferService();
     const snapshot = service.snapshot("u-assistant");
-    expect(snapshot.patients.map((patient) => patient.id)).toEqual([
-      "p-anna",
-      "p-luca",
-    ]);
+    expect(snapshot.patients.map((patient) => patient.id)).toEqual(
+      nursingPatientIds,
+    );
     expect(
       snapshot.patients.find((patient) => patient.id === "p-mei"),
     ).toBeUndefined();
     expect(snapshot.handovers.map((handover) => handover.id)).toEqual([
+      "h-rehab2-morning",
       "h-rehab2-afternoon",
     ]);
-    expect(snapshot.handovers[0]?.patientIds).toEqual(["p-anna", "p-luca"]);
+    const incoming = snapshot.handovers.find(
+      (handover) => handover.id === "h-rehab2-morning",
+    );
+    expect(incoming?.patientIds).toEqual(nursingPatientIds);
+    expect(JSON.stringify(incoming)).not.toContain("p-mei");
+    expect(JSON.stringify(incoming)).not.toContain("Mei Muster");
+    expect(snapshot.handovers[0]?.patientIds).toEqual(nursingPatientIds);
     expect(JSON.stringify(snapshot)).not.toContain("Mei Muster");
   });
 

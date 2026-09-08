@@ -1,4 +1,10 @@
-import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import {
+  createHash,
+  createHmac,
+  randomUUID,
+  timingSafeEqual,
+} from "node:crypto";
+import { gunzipSync, gzipSync } from "node:zlib";
 import { MedplumClient } from "@medplum/core";
 import type {
   Binary,
@@ -13,6 +19,12 @@ import { fhirResourceId } from "../core/fhir-resource-set.js";
 import type { CommandReceipt, ServiceCheckpoint } from "../core/service.js";
 
 const checkpointId = fhirResourceId("Binary", "workflow-control-plane-v1");
+const checkpointContentType =
+  "application/vnd.pflegehelfer.workflow-state+json+gzip";
+const legacyCheckpointContentType =
+  "application/vnd.pflegehelfer.workflow-state+json";
+const checkpointCompressedByteLimit = 8 * 1024 * 1024;
+const checkpointUncompressedByteLimit = 32 * 1024 * 1024;
 const receiptContentType = "application/vnd.pflegehelfer.command-receipt+json";
 const managedClinicalResourceTypes = [
   "Patient",
@@ -139,6 +151,12 @@ export function serializeCheckpoint(
       : {}),
     payload: checkpoint,
   };
+  const envelopeBytes = Buffer.from(JSON.stringify(envelope), "utf8");
+  if (envelopeBytes.byteLength > checkpointUncompressedByteLimit)
+    throw new Error("Medplum workflow checkpoint exceeds the size limit.");
+  const compressed = gzipSync(envelopeBytes, { level: 6 });
+  if (compressed.byteLength > checkpointCompressedByteLimit)
+    throw new Error("Medplum workflow checkpoint exceeds the size limit.");
   return {
     resourceType: "Binary",
     id: checkpointId,
@@ -157,8 +175,8 @@ export function serializeCheckpoint(
         },
       ],
     },
-    contentType: "application/vnd.pflegehelfer.workflow-state+json",
-    data: Buffer.from(JSON.stringify(envelope), "utf8").toString("base64"),
+    contentType: checkpointContentType,
+    data: compressed.toString("base64"),
   };
 }
 
@@ -168,13 +186,24 @@ export function deserializeCheckpoint(
   previousHmacKeys: string[] = [],
 ): ServiceCheckpoint {
   if (
-    binary.contentType !== "application/vnd.pflegehelfer.workflow-state+json" ||
+    ![checkpointContentType, legacyCheckpointContentType].includes(
+      binary.contentType,
+    ) ||
     !binary.data
   )
     throw new Error("Medplum workflow checkpoint has an unexpected format.");
-  const rawEnvelope = JSON.parse(
-    Buffer.from(binary.data, "base64").toString("utf8"),
-  ) as {
+  const encoded = Buffer.from(binary.data, "base64");
+  if (encoded.byteLength > checkpointCompressedByteLimit)
+    throw new Error("Medplum workflow checkpoint exceeds the size limit.");
+  const envelopeBytes =
+    binary.contentType === checkpointContentType
+      ? gunzipSync(encoded, {
+          maxOutputLength: checkpointUncompressedByteLimit,
+        })
+      : encoded;
+  if (envelopeBytes.byteLength > checkpointUncompressedByteLimit)
+    throw new Error("Medplum workflow checkpoint exceeds the size limit.");
+  const rawEnvelope = JSON.parse(envelopeBytes.toString("utf8")) as {
     payload?: unknown;
     sha256?: unknown;
     hmacSha256?: unknown;
@@ -369,6 +398,7 @@ export interface ClinicalWorkspace {
   initialize(
     resources: Resource[],
     checkpoint?: ServiceCheckpoint,
+    options?: { reconcile: boolean },
   ): Promise<void>;
   synchronize(
     resources: Resource[],
@@ -421,6 +451,7 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
     value: ClinicalWorkspaceStatus;
   } | null = null;
   private statusInFlight: Promise<ClinicalWorkspaceStatus> | null = null;
+  private transactionAtomicityVerified = false;
 
   constructor(
     private readonly baseUrl: string,
@@ -464,10 +495,84 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
   async initialize(
     resources: Resource[],
     checkpoint?: ServiceCheckpoint,
+    options: { reconcile: boolean } = { reconcile: true },
   ): Promise<void> {
     await this.connect();
-    await this.synchronize(resources, checkpoint);
+    await this.verifyTransactionAtomicity();
+    // A loaded, authenticated checkpoint already names the committed
+    // projection. Replaying it during a rolling restart could overwrite a
+    // newer replica's FHIR resources before checkpoint CAS detects the race.
+    if (!options.reconcile) return;
+    // Medplum also limits request-body bytes, not only the FHIR Bundle entry
+    // count. A restored checkpoint can grow independently from the current
+    // materialized clinical resources, so never combine it with the boot-time
+    // reconciliation bundle. Small, deterministic batches keep startup below
+    // common reverse-proxy limits while each batch remains atomic.
+    for (let offset = 0; offset < resources.length; offset += 40)
+      await this.synchronize(resources.slice(offset, offset + 40));
+    if (checkpoint) await this.synchronize([], checkpoint);
     await this.removeStaleManagedResources(resources);
+  }
+
+  private async verifyTransactionAtomicity(): Promise<void> {
+    if (this.transactionAtomicityVerified) return;
+    const suffix = fhirResourceId("Patient", `atomicity-${randomUUID()}`);
+    const patientId = `atomicity-${suffix}`.slice(0, 64);
+    const invalidObservationId = `invalid-${suffix}`.slice(0, 64);
+    const deliberatelyFailing: Bundle = {
+      resourceType: "Bundle",
+      type: "transaction",
+      entry: [
+        {
+          resource: {
+            resourceType: "Patient",
+            id: patientId,
+            meta: {
+              tag: [
+                {
+                  system: "https://pflegehelfer.example.invalid/verification",
+                  code: "transaction-atomicity",
+                },
+              ],
+            },
+          },
+          request: { method: "PUT", url: `Patient/${patientId}` },
+        },
+        {
+          resource: {
+            resourceType: "Observation",
+            id: invalidObservationId,
+          } as unknown as Resource,
+          request: {
+            method: "PUT",
+            url: `Observation/${invalidObservationId}`,
+          },
+        },
+      ],
+    };
+    let rejected = false;
+    try {
+      const response = await this.client.executeBatch(deliberatelyFailing);
+      rejected = Boolean(
+        response.entry?.some(
+          (entry) => !/^2\d\d(?:\s|$)/.test(entry.response?.status ?? ""),
+        ),
+      );
+    } catch {
+      rejected = true;
+    }
+    if (!rejected)
+      throw new Error("MEDPLUM_TRANSACTION_FAILURE_WAS_NOT_REJECTED");
+    try {
+      await this.client.readResource("Patient", patientId);
+      await this.client
+        .deleteResource("Patient", patientId)
+        .catch(() => undefined);
+      throw new Error("MEDPLUM_TRANSACTION_PARTIAL_WRITE_DETECTED");
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
+    }
+    this.transactionAtomicityVerified = true;
   }
 
   async synchronize(
@@ -650,8 +755,6 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
         "QuestionnaireResponse",
         "CarePlan",
         "Goal",
-        "Provenance",
-        "AuditEvent",
       ] satisfies ResourceType[];
       const countPairs = await Promise.all(
         resourceTypes.map(async (resourceType) => {
@@ -665,9 +768,11 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
       return {
         mode: this.mode,
         ready: true,
-        serverVersion: capability.software?.version ?? "5.1.37",
+        serverVersion: capability.software?.version ?? null,
         resourceCounts: Object.fromEntries(countPairs),
-        message: "Medplum FHIR R4 erreichbar und synchronisiert",
+        message: this.transactionAtomicityVerified
+          ? "Medplum FHIR R4 erreichbar; Transaktionsatomizität verifiziert"
+          : "Medplum FHIR R4 erreichbar; Transaktionsprüfung noch nicht ausgeführt",
         checkedAt,
       };
     } catch {

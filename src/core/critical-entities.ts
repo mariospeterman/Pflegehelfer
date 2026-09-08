@@ -20,7 +20,7 @@ export interface CriticalEntity {
 const patterns: Array<[CriticalEntityKind, RegExp]> = [
   [
     "measurement",
-    /\b(?:\d{2,3}\s*(?:zu|\/|auf)\s*\d{2,3}(?:\s*mmHg)?|\d+(?:[.,]\d+)?\s*(?:°C|%|kg|mmHg|\/min))\b/gi,
+    /\b(?:\d{2,3}\s*(?:zu|\/|auf)\s*\d{2,3}(?:\s*mmHg)?|\d+(?:[.,]\d+)?\s*(?:°C|%|kg|mmHg|\/min)|(?:puls|temperatur|temp\.?|sättigung|saettigung|spo2|gewicht)\s*(?:war|ist|betrug|:)?\s*\d{2,3}(?:[.,]\d+)?)\b/gi,
   ],
   ["dose", /\b\d+(?:[.,]\d+)?\s*(?:mg|ml|µg|mcg|IE)\b/gi],
   ["unit", /(?:°C|%|kg|mmHg|mg|ml|µg|mcg|IE|\/?min)\b/gi],
@@ -32,7 +32,10 @@ const patterns: Array<[CriticalEntityKind, RegExp]> = [
     "medication",
     /\b(?:Torasemid|Metoprolol|Paracetamol|Insulin|Heparin|Penicillin)\b/gi,
   ],
-  ["time", /\b(?:in|nach)\s+\d{1,3}\s*(?:min(?:uten)?|h|stunden?)\b/gi],
+  [
+    "time",
+    /\b(?:(?:(?:gestern|vorgestern|heute)\s+)?um\s+\d{1,2}(?::\d{2})?\s*uhr|(?:gestern|vorgestern)|(?:in|nach)\s+(?:einer\s+halben|einer|\d{1,3})\s*(?:min(?:uten)?|h|stunden?))\b/gi,
+  ],
   ["side", /\b(?:links|rechts|beidseits)\b/gi],
   ["negation", /\b(?:kein|keine|keinen|nicht|ohne)\b/gi],
   ["patient-identifier", /\b(?:Fall\s+)?[A-Z]{2}-\d{6}-\d{3}\b/g],

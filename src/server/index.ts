@@ -1,5 +1,6 @@
 import { buildApp } from "./app.js";
-import { PflegehelferService } from "../core/service.js";
+import { emptyWorkflowState, PflegehelferService } from "../core/service.js";
+import { InMemoryReferenceStatePort } from "../core/clinical-data-port.js";
 import {
   createProductionProviderRegistry,
   createSyntheticProviderRegistry,
@@ -14,7 +15,7 @@ const port = Number.parseInt(process.env.PORT ?? "4173", 10);
 const host = process.env.HOST ?? "127.0.0.1";
 const demoMode = process.env.PFH_DEMO_MODE === "true";
 const service = new PflegehelferService(
-  undefined,
+  demoMode ? undefined : new InMemoryReferenceStatePort(emptyWorkflowState()),
   demoMode
     ? createSyntheticProviderRegistry()
     : createProductionProviderRegistry(),
@@ -30,7 +31,19 @@ const operationalStore = operationalUrl
 await operationalStore.initialize();
 const checkpoint = await workspace.loadCheckpoint();
 if (checkpoint) service.restoreCheckpoint(checkpoint);
-await workspace.initialize(service.fhirResources(), service.checkpoint());
+// Historical Provenance/AuditEvent resources are already append-only in
+// Medplum and must not be rewritten on every boot. Current clinical resources
+// and the authenticated checkpoint are sufficient for restart reconciliation.
+const startupResources = service
+  .fhirResources()
+  .filter(
+    (resource) =>
+      resource.resourceType !== "AuditEvent" &&
+      resource.resourceType !== "Provenance",
+  );
+await workspace.initialize(startupResources, service.checkpoint(), {
+  reconcile: checkpoint === null,
+});
 const app = buildApp(service, { workspace, operationalStore });
 
 const close = async (signal: string) => {

@@ -48,4 +48,29 @@ describe("constrained OpenUI program", () => {
       expect.objectContaining({ code: "unknown-component" }),
     ]);
   });
+
+  it("round-trips the structured physician team inbox", async () => {
+    const assistant = new AssistantService(
+      new PflegehelferService(),
+      new ModelGateway({ PFH_AI_MODE: "deterministic" }),
+    );
+    const response = await assistant.query("u-physician", {
+      prompt: "Zeige Team und @Fragen",
+      patientId: null,
+      purpose: "direct-care",
+    });
+    const parsed = createParser(clinicalAssistantLibrary.toJSONSchema()).parse(
+      response.openUi,
+    );
+
+    expect(parsed.meta.errors).toEqual([]);
+    expect(parsed.meta.unresolved).toEqual([]);
+    expect(parsed.root?.typeName).toBe("ClinicalStack");
+    expect(response.components).toEqual([
+      expect.objectContaining({
+        type: "TeamInbox",
+        items: [expect.objectContaining({ response: "" })],
+      }),
+    ]);
+  });
 });

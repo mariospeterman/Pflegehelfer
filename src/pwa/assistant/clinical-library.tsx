@@ -11,7 +11,18 @@ const reviewKindLabel = {
   observation: "Messwert",
   communication: "Teamnachricht",
   task: "Folgeaufgabe",
+  workflow: "Arbeitsablauf",
 } as const;
+
+const AssistantMessage = defineComponent({
+  name: "AssistantMessage",
+  description:
+    "Short conversational coworker response shown before review controls.",
+  props: z.object({ message: z.string().max(1200) }).strict(),
+  component: ({ props: { message } }) => (
+    <p className="assistant-coworker-message">{message}</p>
+  ),
+});
 
 const ClinicalCard = defineComponent({
   name: "ClinicalCard",
@@ -119,16 +130,29 @@ const PatientContextCard = defineComponent({
       source: z.string().max(240),
     })
     .strict(),
-  component: ({ props: { title, summary, source } }) => (
-    <article className="assistant-card patient-context-card">
-      <header>
-        <span>Patientenkontext</span>
-        <h3>{title}</h3>
-      </header>
-      <p>{summary}</p>
-      <footer>{source}</footer>
-    </article>
-  ),
+  component: ({ props: { title, summary, source } }) => {
+    const sections = summary.split("\n").filter(Boolean);
+    return (
+      <article className="assistant-card patient-context-card">
+        <header>
+          <span>Patientenkontext</span>
+          <h3>{title}</h3>
+        </header>
+        <div className="patient-summary-sections">
+          {sections.map((line, index) => {
+            const tagged = /^#([^\s]+)(?:\s+(.+))?$/.exec(line);
+            return (
+              <section key={`${index}-${line.slice(0, 24)}`}>
+                {tagged ? <h4>{tagged[1]}</h4> : null}
+                <p>{tagged?.[2] ?? line}</p>
+              </section>
+            );
+          })}
+        </div>
+        <footer>{source}</footer>
+      </article>
+    );
+  },
 });
 
 const TaskListCard = defineComponent({
@@ -289,13 +313,19 @@ const DraftActionCard = defineComponent({
         .array(
           z
             .object({
-              id: z.string().regex(/^action-[1-6]$/),
+              id: z.string().regex(/^action-(?:[1-9]|1[0-2])$/),
               label: z.string().max(1400),
-              kind: z.enum(["note", "observation", "communication", "task"]),
+              kind: z.enum([
+                "note",
+                "observation",
+                "communication",
+                "task",
+                "workflow",
+              ]),
             })
             .strict(),
         )
-        .max(6)
+        .max(12)
         .default([]),
     })
     .strict(),
@@ -317,12 +347,12 @@ const DraftActionCard = defineComponent({
     return (
       <article className="assistant-card assistant-draft">
         <header>
-          <span>Entwurf · nicht freigegeben</span>
+          <span>Bitte kurz prüfen</span>
           <h3>{title}</h3>
         </header>
         {reviewItems.length > 0 ? (
           <fieldset className="assistant-review-items">
-            <legend>Einzeln prüfen und auswählen</legend>
+            <legend>Was soll übernommen werden?</legend>
             {reviewItems.map((item) => (
               <label key={item.id}>
                 <input
@@ -373,18 +403,146 @@ const TeamInboxCard = defineComponent({
       count: z.number().int().min(0).max(100),
       summary: z.string().max(1600),
       source: z.string().max(240),
+      items: z
+        .array(
+          z
+            .object({
+              id: z.string(),
+              patientId: z.string(),
+              patientLabel: z.string(),
+              recipientLabel: z.string(),
+              request: z.string(),
+              reason: z.string(),
+              priority: z.enum(["routine", "elevated", "urgent"]),
+              state: z.enum([
+                "sent",
+                "acknowledged",
+                "answered",
+                "closed",
+                "escalated",
+              ]),
+              response: z.string(),
+              canAcknowledge: z.boolean(),
+              canAnswer: z.boolean(),
+              canClose: z.boolean(),
+            })
+            .strict(),
+        )
+        .max(8),
     })
     .strict(),
-  component: ({ props: { title, count, summary, source } }) => (
-    <article className="assistant-card team-inbox-card">
-      <header>
-        <span>@ Team · {count} offen</span>
-        <h3>{title}</h3>
-      </header>
-      <p>{summary}</p>
-      <footer>{source}</footer>
-    </article>
-  ),
+  component: function TeamInboxComponent({
+    props: { title, count, summary, source, items },
+  }) {
+    const triggerAction = useTriggerAction();
+    const [answers, setAnswers] = useState<Record<string, string>>({});
+    const priorityLabel = {
+      routine: "Normal",
+      elevated: "Erhöht",
+      urgent: "Dringend",
+    } as const;
+    const stateLabel = {
+      sent: "Neu",
+      acknowledged: "Übernommen",
+      answered: "Beantwortet",
+      closed: "Geschlossen",
+      escalated: "Eskaliert",
+    } as const;
+    return (
+      <article className="assistant-card team-inbox-card">
+        <header>
+          <span>@ Team · {count} offen</span>
+          <h3>{title}</h3>
+        </header>
+        {items.length === 0 ? (
+          <p>{summary}</p>
+        ) : (
+          <div className="team-thread-list">
+            {items.map((item) => (
+              <section className="team-thread" key={item.id}>
+                <div className="team-thread-meta">
+                  <strong>{item.patientLabel}</strong>
+                  <span>@{item.recipientLabel}</span>
+                  <span>
+                    {priorityLabel[item.priority]} · {stateLabel[item.state]}
+                  </span>
+                </div>
+                <strong>{item.request}</strong>
+                <p>{item.reason}</p>
+                {item.response && <blockquote>{item.response}</blockquote>}
+                {item.canAnswer && (
+                  <label>
+                    <span className="sr-only">
+                      Antwort für {item.patientLabel}
+                    </span>
+                    <textarea
+                      rows={2}
+                      value={answers[item.id] ?? ""}
+                      placeholder="Kurze Antwort an das Team…"
+                      onChange={(event) =>
+                        setAnswers((current) => ({
+                          ...current,
+                          [item.id]: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                )}
+                <div className="team-thread-actions">
+                  {item.canAcknowledge && (
+                    <button
+                      aria-label={`Teamfrage für ${item.patientLabel} übernehmen`}
+                      onClick={() =>
+                        void triggerAction("Übernehmen", undefined, {
+                          type: "TransitionCommunication",
+                          params: { id: item.id, transition: "acknowledge" },
+                        })
+                      }
+                    >
+                      Übernehmen
+                    </button>
+                  )}
+                  {item.canAnswer && (
+                    <button
+                      className="primary"
+                      aria-label={`Teamfrage für ${item.patientLabel} beantworten`}
+                      disabled={(answers[item.id] ?? "").trim().length < 2}
+                      onClick={() =>
+                        void triggerAction("Antworten", undefined, {
+                          type: "TransitionCommunication",
+                          params: {
+                            id: item.id,
+                            transition: "answer",
+                            response: answers[item.id]?.trim(),
+                          },
+                        })
+                      }
+                    >
+                      Antworten
+                    </button>
+                  )}
+                  {item.canClose && (
+                    <button
+                      aria-label={`Teamfrage für ${item.patientLabel} schliessen`}
+                      onClick={() =>
+                        void triggerAction("Schliessen", undefined, {
+                          type: "TransitionCommunication",
+                          params: { id: item.id, transition: "close" },
+                        })
+                      }
+                    >
+                      Schleife schliessen
+                    </button>
+                  )}
+                </div>
+              </section>
+            ))}
+          </div>
+        )}
+        <footer>{source}</footer>
+      </article>
+    );
+  },
 });
 
 const SyncSummaryCard = defineComponent({
@@ -454,6 +612,7 @@ const ClinicalStack = defineComponent({
 export const clinicalAssistantLibrary = createLibrary({
   components: [
     ClinicalStack,
+    AssistantMessage,
     ClinicalCard,
     VitalCard,
     PatientPicker,

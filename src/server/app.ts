@@ -16,6 +16,9 @@ import { AsrGateway } from "../ai/asr-gateway.js";
 import { ModelGateway } from "../ai/model-gateway.js";
 import { ApprovedKnowledgeService } from "../ai/approved-knowledge.js";
 import { isDomainError, PflegehelferService } from "../core/service.js";
+import { emptyWorkflowState } from "../core/service.js";
+import { siteConfiguration } from "../core/site-config.js";
+import { InMemoryReferenceStatePort } from "../core/clinical-data-port.js";
 import { DomainError } from "../core/types.js";
 import {
   createProductionProviderRegistry,
@@ -169,6 +172,7 @@ const assistantQueryBody = z
         message: "Voice input requires a server-issued transcription receipt.",
       });
   });
+type AssistantQueryBody = z.infer<typeof assistantQueryBody>;
 const assistantIntentBody = z
   .object({
     patientId: z.string(),
@@ -177,8 +181,8 @@ const assistantIntentBody = z
     resourceVersion: z.number().int().nonnegative(),
     explicitlyConfirmed: z.literal(true),
     reviewedActionIds: z
-      .array(z.string().regex(/^action-[1-6]$/))
-      .max(6)
+      .array(z.string().regex(/^action-(?:[1-9]|1[0-2])$/))
+      .max(12)
       .optional(),
   })
   .strict();
@@ -197,7 +201,7 @@ function archiveAssistantResponse(
       type: "SafetyAlert",
       severity: "info",
       message:
-        "Dieser frühere Vorschlag ist nicht mehr ausführbar. Bitte neu formulieren, damit Kontext und Version erneut geprüft werden.",
+        "Diese frühere offene Änderung ist nicht mehr ausführbar. Bitte neu formulieren, damit Kontext und Version erneut geprüft werden.",
     });
   return {
     ...response,
@@ -220,7 +224,9 @@ export function buildApp(
   const service =
     providedService ??
     new PflegehelferService(
-      undefined,
+      demoMode
+        ? undefined
+        : new InMemoryReferenceStatePort(emptyWorkflowState()),
       demoMode
         ? createSyntheticProviderRegistry()
         : createProductionProviderRegistry(),
@@ -233,6 +239,28 @@ export function buildApp(
   const asr = new AsrGateway();
   const knowledge = new ApprovedKnowledgeService();
   const assistant = new AssistantService(service, models, knowledge);
+  const assistantWorkingContext = async (actorId: string) => {
+    const actor = service.user(actorId);
+    const session = await operationalStore.getOrStartSession(
+      actorId,
+      actor.role,
+    );
+    const recentPrompts = (
+      await operationalStore.loadConversation(actorId, actor.role)
+    )
+      .slice(-6)
+      .map((turn) => turn.prompt);
+    const workday = ["care-assistant", "registered-nurse"].includes(actor.role)
+      ? await operationalStore.getWorkday(actorId, actor.role)
+      : null;
+    return {
+      currentStepId: session.currentStepId,
+      activeEpisodeTitle: workday?.activeEpisode?.title ?? null,
+      activeEpisodePatientId: workday?.activeEpisode?.patientId ?? null,
+      resumableEpisodePatientId: workday?.resumableEpisode?.patientId ?? null,
+      recentPrompts,
+    };
+  };
   let durableResources = service.fhirResources();
   let persistenceQueue: Promise<void> = Promise.resolve();
   let eventRevision = 0;
@@ -245,10 +273,48 @@ export function buildApp(
       textHash: string;
       model: string;
       entityIds: string[];
+      sessionId: string;
+      threadId: string;
+      contextRevision: number;
       expiresAt: number;
     }
   >();
+  const revokeVoiceReceipts = (actorId: string) => {
+    for (const [receiptId, receipt] of voiceReceipts)
+      if (receipt.actorId === actorId) voiceReceipts.delete(receiptId);
+  };
+  const consumeVoiceReceipt = (
+    actorId: string,
+    body: AssistantQueryBody,
+    session: { id: string; threadId: string; contextRevision: number },
+  ) => {
+    if (body.inputModality !== "voice") return;
+    const receipt = voiceReceipts.get(body.voiceReceiptId ?? "");
+    if (body.voiceReceiptId) voiceReceipts.delete(body.voiceReceiptId);
+    const purpose = body.purpose ?? "direct-care";
+    const textHash = createHash("sha256").update(body.prompt).digest("hex");
+    const confirmed = [...(body.voiceConfirmedEntityIds ?? [])].sort();
+    const expected = [...(receipt?.entityIds ?? [])].sort();
+    if (
+      !receipt ||
+      receipt.expiresAt < Date.now() ||
+      receipt.actorId !== actorId ||
+      receipt.patientId !== body.patientId ||
+      receipt.purpose !== purpose ||
+      receipt.sessionId !== session.id ||
+      receipt.threadId !== session.threadId ||
+      receipt.contextRevision !== session.contextRevision ||
+      receipt.textHash !== textHash ||
+      JSON.stringify(confirmed) !== JSON.stringify(expected)
+    )
+      throw new DomainError(
+        "AUTH_DENIED",
+        "Sprachtranskript ist abgelaufen, verändert oder nicht an diesen Kontext gebunden.",
+        403,
+      );
+  };
   const eventSubscribers = new Set<(revision: number) => void>();
+  const contextTransitions = new Map<string, Promise<unknown>>();
   const publishInvalidation = () => {
     eventRevision += 1;
     for (const subscriber of eventSubscribers) subscriber(eventRevision);
@@ -327,7 +393,9 @@ export function buildApp(
           );
         });
         const removedReferences = [...previousByReference.keys()].filter(
-          (reference) => !nextReferences.has(reference),
+          (reference) =>
+            !reference.startsWith("Provenance/") &&
+            !nextReferences.has(reference),
         );
         writeAttempted = true;
         await workspace.synchronize(
@@ -525,8 +593,34 @@ export function buildApp(
       });
     }, intervalMs);
     escalationTimer.unref();
+    let providerWorkerRunning = false;
+    const providerWorkerInterval = Math.max(
+      1000,
+      Number(process.env.PFH_PROVIDER_WORKER_INTERVAL_MS ?? "2000"),
+    );
+    const providerWorkerTimer = setInterval(() => {
+      if (providerWorkerRunning || !service.hasPendingProviderWork()) return;
+      providerWorkerRunning = true;
+      void persist(() => service.flushOutbox("u-it"), undefined, 200, true)
+        .catch((error: unknown) => {
+          app.log.error(
+            {
+              errorType:
+                error instanceof Error
+                  ? error.constructor.name
+                  : "UnknownError",
+            },
+            "provider worker sweep failed",
+          );
+        })
+        .finally(() => {
+          providerWorkerRunning = false;
+        });
+    }, providerWorkerInterval);
+    providerWorkerTimer.unref();
     app.addHook("onClose", (_instance, done) => {
       clearInterval(escalationTimer);
+      clearInterval(providerWorkerTimer);
       done();
     });
   }
@@ -792,7 +886,9 @@ export function buildApp(
     );
     return {
       turns: await operationalStore.loadConversation(actorId, actor.role),
-      expiresAt: new Date(Date.now() + 12 * 60 * 60_000).toISOString(),
+      expiresAt: new Date(
+        Date.now() + siteConfiguration.sessionTtlHours * 60 * 60_000,
+      ).toISOString(),
       session,
     };
   });
@@ -802,6 +898,130 @@ export function buildApp(
     const actorId = userId(request);
     const actor = service.user(actorId);
     return operationalStore.getOrStartSession(actorId, actor.role);
+  });
+
+  app.get("/api/v1/workday", async (request) => {
+    await persistenceQueue;
+    const actorId = userId(request);
+    const actor = service.user(actorId);
+    if (!["care-assistant", "registered-nurse"].includes(actor.role))
+      throw new DomainError(
+        "AUTH_DENIED",
+        "Der klinische Arbeitstag ist nur für zugewiesene Pflegerollen verfügbar.",
+        403,
+      );
+    const workday = await operationalStore.getWorkday(actorId, actor.role);
+    return {
+      ...workday,
+      providerState: service.providerSyncState(workday.handover.patientIds),
+    };
+  });
+
+  app.post("/api/v1/workday", async (request) => {
+    await persistenceQueue;
+    const actorId = userId(request);
+    const actor = service.user(actorId);
+    const command = z
+      .discriminatedUnion("type", [
+        z
+          .object({
+            type: z.literal("acknowledge-handover"),
+            patientId: z.string(),
+            version: z.number().int().positive(),
+          })
+          .strict(),
+        z
+          .object({
+            type: z.literal("start-episode"),
+            patientId: z.string(),
+            encounterId: z.string(),
+            kind: z.enum(["planned", "spontaneous", "alarm"]),
+            title: z.string().trim().min(3).max(160),
+          })
+          .strict(),
+        z
+          .object({
+            type: z.literal("pause-episode"),
+            episodeId: z.string().uuid(),
+            reason: z.enum(["pause", "interruption"]),
+          })
+          .strict(),
+        z
+          .object({
+            type: z.literal("interrupt-and-start"),
+            episodeId: z.string().uuid(),
+            patientId: z.string(),
+            encounterId: z.string(),
+            title: z.string().trim().min(3).max(160),
+          })
+          .strict(),
+        z
+          .object({
+            type: z.literal("resume-episode"),
+            episodeId: z.string().uuid(),
+          })
+          .strict(),
+        z
+          .object({
+            type: z.literal("complete-episode"),
+            episodeId: z.string().uuid(),
+            evidence: z.string().trim().min(3).max(1200),
+          })
+          .strict(),
+        z.object({ type: z.literal("close-shift") }).strict(),
+      ])
+      .parse(request.body);
+    if ("patientId" in command) {
+      const allowedPatient = service
+        .snapshot(actorId, actor.defaultPurpose)
+        .patients.find((patient) => patient.id === command.patientId);
+      if (!allowedPatient)
+        throw new DomainError(
+          "AUTH_DENIED",
+          "Arbeitstag-Aktion liegt ausserhalb des freigegebenen Patientenkontexts.",
+          403,
+        );
+      if (
+        ["start-episode", "interrupt-and-start"].includes(command.type) &&
+        "encounterId" in command &&
+        command.encounterId !== allowedPatient.encounterId
+      )
+        throw new DomainError(
+          "VALIDATION",
+          "Der Fallbezug stimmt nicht mit dem freigegebenen Patientenkontext überein.",
+          422,
+        );
+    }
+    return persist(async () => {
+      try {
+        const result = await operationalStore.applyWorkdayCommand(
+          actorId,
+          actor.role,
+          command,
+        );
+        if (
+          ["start-episode", "interrupt-and-start", "resume-episode"].includes(
+            command.type,
+          )
+        ) {
+          assistant.revokeActorIntents(actorId);
+          revokeVoiceReceipts(actorId);
+        }
+        publishInvalidation();
+        return {
+          ...result,
+          providerState: service.providerSyncState(result.handover.patientIds),
+        };
+      } catch (error) {
+        throw new DomainError(
+          "INVALID_STATE",
+          error instanceof Error
+            ? error.message
+            : "Arbeitstag-Aktion fehlgeschlagen.",
+          409,
+        );
+      }
+    }, request);
   });
 
   app.post("/api/v1/assistant/context", async (request) => {
@@ -823,11 +1043,19 @@ export function buildApp(
         );
     }
     assistant.revokeActorIntents(actorId);
-    return operationalStore.changePatientContext(
+    revokeVoiceReceipts(actorId);
+    const transition = operationalStore.changePatientContext(
       actorId,
       actor.role,
       body.patientId,
     );
+    contextTransitions.set(actorId, transition);
+    try {
+      return await transition;
+    } finally {
+      if (contextTransitions.get(actorId) === transition)
+        contextTransitions.delete(actorId);
+    }
   });
 
   app.post("/api/v1/assistant/conversation/clear", async (request) => {
@@ -913,6 +1141,9 @@ export function buildApp(
         entityIds: transcription.criticalEntities.map(
           (entity) => `${entity.kind}:${entity.start}:${entity.end}`,
         ),
+        sessionId: session.id,
+        threadId: session.threadId,
+        contextRevision: session.contextRevision,
         expiresAt: Date.now() + 5 * 60_000,
       });
       return persist(() => {
@@ -935,6 +1166,7 @@ export function buildApp(
     const body = assistantQueryBody.parse(request.body);
     const actorId = userId(request);
     const actor = service.user(actorId);
+    await contextTransitions.get(actorId);
     const session = await operationalStore.getOrStartSession(
       actorId,
       actor.role,
@@ -945,38 +1177,16 @@ export function buildApp(
         "Assistenzanfrage stimmt nicht mit dem bewusst gewählten Patientenkontext überein.",
         403,
       );
-    if (body.inputModality === "voice") {
-      const receipt = voiceReceipts.get(body.voiceReceiptId ?? "");
-      // Receipts are one-use and fail closed, including after a downstream
-      // failure, so a transcript can never be replayed into another context.
-      if (body.voiceReceiptId) voiceReceipts.delete(body.voiceReceiptId);
-      const purpose = body.purpose ?? "direct-care";
-      const textHash = createHash("sha256").update(body.prompt).digest("hex");
-      const confirmedEntityIds = [
-        ...(body.voiceConfirmedEntityIds ?? []),
-      ].sort();
-      const expectedEntityIds = [...(receipt?.entityIds ?? [])].sort();
-      if (
-        !receipt ||
-        receipt.expiresAt < Date.now() ||
-        receipt.actorId !== actorId ||
-        receipt.patientId !== body.patientId ||
-        receipt.purpose !== purpose ||
-        receipt.textHash !== textHash ||
-        JSON.stringify(confirmedEntityIds) !== JSON.stringify(expectedEntityIds)
-      )
-        throw new DomainError(
-          "AUTH_DENIED",
-          "Sprachtranskript ist abgelaufen, verändert oder nicht an diesen Kontext gebunden.",
-          403,
-        );
-    }
+    consumeVoiceReceipt(actorId, body, session);
+    assistant.revokeActorIntents(actorId);
+    const workingContext = await assistantWorkingContext(actorId);
     const response = await persist(() =>
       assistant.query(userId(request), {
         prompt: body.prompt,
         patientId: body.patientId,
         inputModality: body.inputModality,
         voiceTranscriptConfirmed: body.voiceTranscriptConfirmed ?? false,
+        workingContext,
         ...(body.purpose ? { purpose: body.purpose } : {}),
       }),
     );
@@ -994,6 +1204,7 @@ export function buildApp(
     const body = assistantQueryBody.parse(request.body);
     const actorId = userId(request);
     const actor = service.user(actorId);
+    await contextTransitions.get(actorId);
     const session = await operationalStore.getOrStartSession(
       actorId,
       actor.role,
@@ -1004,35 +1215,17 @@ export function buildApp(
         "Assistenzanfrage stimmt nicht mit dem bewusst gewählten Patientenkontext überein.",
         403,
       );
-    if (body.inputModality === "voice") {
-      const receipt = voiceReceipts.get(body.voiceReceiptId ?? "");
-      if (body.voiceReceiptId) voiceReceipts.delete(body.voiceReceiptId);
-      const purpose = body.purpose ?? "direct-care";
-      const textHash = createHash("sha256").update(body.prompt).digest("hex");
-      const confirmed = [...(body.voiceConfirmedEntityIds ?? [])].sort();
-      const expected = [...(receipt?.entityIds ?? [])].sort();
-      if (
-        !receipt ||
-        receipt.expiresAt < Date.now() ||
-        receipt.actorId !== actorId ||
-        receipt.patientId !== body.patientId ||
-        receipt.purpose !== purpose ||
-        receipt.textHash !== textHash ||
-        JSON.stringify(confirmed) !== JSON.stringify(expected)
-      )
-        throw new DomainError(
-          "AUTH_DENIED",
-          "Sprachtranskript ist abgelaufen, verändert oder nicht an diesen Kontext gebunden.",
-          403,
-        );
-    }
+    consumeVoiceReceipt(actorId, body, session);
 
+    assistant.revokeActorIntents(actorId);
+    const workingContext = await assistantWorkingContext(actorId);
     const response = await persist(() =>
       assistant.query(actorId, {
         prompt: body.prompt,
         patientId: body.patientId,
         inputModality: body.inputModality,
         voiceTranscriptConfirmed: body.voiceTranscriptConfirmed ?? false,
+        workingContext,
         ...(body.purpose ? { purpose: body.purpose } : {}),
       }),
     );
@@ -1052,7 +1245,7 @@ export function buildApp(
       response: { ...response, components: [], openUi: "" },
     });
     // Partial presentation never carries executable authority. The complete
-    // frame exposes the live proposal only after its thread record is durable.
+    // frame exposes the live review authority only after its thread record is durable.
     const lines = archiveAssistantResponse(response).openUi.split("\n");
     for (const [index, line] of lines.entries()) {
       write({
@@ -1107,20 +1300,89 @@ export function buildApp(
           403,
         );
       }, request);
-    return persist(
-      () =>
-        assistant.executeIntent(actorId, token, {
-          patientId: execution.patientId,
-          encounterId: execution.encounterId,
-          purpose: execution.purpose,
-          resourceVersion: execution.resourceVersion,
-          explicitlyConfirmed: execution.explicitlyConfirmed,
-          ...(execution.reviewedActionIds
-            ? { reviewedActionIds: execution.reviewedActionIds }
-            : {}),
-        }),
-      request,
-    );
+    return persist(async () => {
+      const result = assistant.executeIntent(actorId, token, {
+        patientId: execution.patientId,
+        encounterId: execution.encounterId,
+        purpose: execution.purpose,
+        resourceVersion: execution.resourceVersion,
+        explicitlyConfirmed: execution.explicitlyConfirmed,
+        ...(execution.reviewedActionIds
+          ? { reviewedActionIds: execution.reviewedActionIds }
+          : {}),
+      });
+      if (
+        !result ||
+        typeof result !== "object" ||
+        !("workflowActions" in result)
+      )
+        return result;
+      const workflowActions = (
+        result as {
+          workflowActions: Array<{
+            operation: "pause-current-and-start-room";
+            targetRoom: string;
+            reason: string;
+          }>;
+        }
+      ).workflowActions;
+      const workflowAction = workflowActions[0];
+      if (
+        workflowActions.length !== 1 ||
+        !workflowAction ||
+        workflowAction.operation !== "pause-current-and-start-room"
+      )
+        throw new DomainError(
+          "VALIDATION",
+          "Der Ablaufwechsel ist nicht eindeutig.",
+          400,
+        );
+      const workday = await operationalStore.getWorkday(actorId, actor.role);
+      const active = workday.activeEpisode;
+      if (
+        !active ||
+        active.patientId !== execution.patientId ||
+        active.encounterId !== execution.encounterId
+      )
+        throw new DomainError(
+          "VERSION_CONFLICT",
+          "Die aktive Arbeit hat sich geändert. Bitte den Wechsel neu formulieren.",
+          409,
+        );
+      const target = service
+        .snapshot(actorId, execution.purpose)
+        .patients.find((patient) => patient.room === workflowAction.targetRoom);
+      if (!target || target.id === active.patientId)
+        throw new DomainError(
+          "VALIDATION",
+          `Zimmer ${workflowAction.targetRoom} ist im freigegebenen Arbeitskontext nicht eindeutig verfügbar.`,
+          400,
+        );
+      const next = await operationalStore.applyWorkdayCommand(
+        actorId,
+        actor.role,
+        {
+          type: "interrupt-and-start",
+          episodeId: active.id,
+          patientId: target.id,
+          encounterId: target.encounterId,
+          title: `Spontaner Besuch · Zimmer ${target.room}`,
+        },
+      );
+      service.audit.append({
+        actor,
+        action: "assistant:workflow-interrupted",
+        patientId: target.id,
+        purpose: execution.purpose,
+        outcome: "success",
+        detail: {
+          pausedEpisodeId: active.id,
+          targetRoom: target.room,
+          requestedByUser: true,
+        },
+      });
+      return { workday: next, workflowChanged: true };
+    }, request);
   });
 
   app.post("/api/v1/tasks", async (request, reply) => {

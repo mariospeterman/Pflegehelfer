@@ -4,6 +4,10 @@ import {
   workflowDefinitionSchema,
   workflowForRole,
 } from "../src/core/workflows.js";
+import {
+  nursingPatientIds,
+  siteConfigurationSchema,
+} from "../src/core/site-config.js";
 import { InMemoryOperationalStore } from "../src/infrastructure/operational-store.js";
 import { buildApp } from "../src/server/app.js";
 
@@ -63,6 +67,23 @@ describe("versioned working session", () => {
     expect(workflowForRole("physician").definition.steps[0]?.id).toBe(
       "questions",
     );
+  });
+
+  it("loads six assignments and rejects executable configuration fields", () => {
+    expect(nursingPatientIds).toHaveLength(6);
+    expect(new Set(nursingPatientIds).size).toBe(6);
+    expect(
+      siteConfigurationSchema.safeParse({
+        schemaVersion: 1,
+        institutionId: "demo",
+        siteId: "ward",
+        displayName: "Demo",
+        roleProfiles: {},
+        workflows: {},
+        nursingAssignments: [],
+        javascript: "grantAll()",
+      }).success,
+    ).toBe(false);
   });
 
   it("exposes server-persisted context and real transport frames", async () => {

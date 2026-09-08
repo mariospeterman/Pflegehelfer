@@ -6,13 +6,15 @@ import {
   type CriticalEntity,
 } from "../core/critical-entities.js";
 
-export type AsrRuntimeMode = "disabled" | "browser-demo" | "local-openai";
+export type AsrRuntimeMode =
+  "disabled" | "browser-demo" | "hosted-test" | "local-openai";
 
 export interface AsrRuntimeStatus {
   mode: AsrRuntimeMode;
   model: string;
   ready: boolean;
-  dataBoundary: "none" | "synthetic-browser" | "local-network";
+  dataBoundary:
+    "none" | "synthetic-browser" | "synthetic-hosted" | "local-network";
   message: string;
 }
 
@@ -50,17 +52,31 @@ export class AsrGateway {
 
   constructor(env: NodeJS.ProcessEnv = process.env) {
     this.mode = z
-      .enum(["disabled", "browser-demo", "local-openai"])
+      .enum(["disabled", "browser-demo", "hosted-test", "local-openai"])
       .catch("disabled")
       .parse(env.PFH_ASR_MODE);
-    this.model = env.PFH_ASR_MODEL ?? "whisper-large-v3-turbo";
+    this.model =
+      env.PFH_ASR_MODEL ??
+      (this.mode === "hosted-test"
+        ? "gpt-transcribe"
+        : "whisper-large-v3-turbo");
     this.baseUrl =
       this.mode === "local-openai"
         ? validateLocalAiEndpoint(env.PFH_ASR_BASE_URL, env)
-        : (env.PFH_ASR_BASE_URL ?? null);
-    this.apiKey = env.PFH_ASR_API_KEY ?? null;
+        : (env.PFH_ASR_BASE_URL ??
+          (this.mode === "hosted-test" ? "https://api.openai.com/v1" : null));
+    this.apiKey = env.PFH_ASR_API_KEY ?? env.OPENAI_API_KEY ?? null;
     if (this.mode === "browser-demo" && env.PFH_DEMO_MODE !== "true")
       throw new Error("Browser ASR is restricted to the synthetic demo.");
+    if (
+      this.mode === "hosted-test" &&
+      (env.PFH_DEMO_MODE !== "true" ||
+        env.PFH_LLM_DATA_CLASSIFICATION !== "synthetic-only" ||
+        env.PFH_ALLOW_EXTERNAL_AI !== "true")
+    )
+      throw new Error(
+        "Hosted ASR requires explicit external-AI consent and synthetic demo data.",
+      );
   }
 
   status(): AsrRuntimeStatus {
@@ -83,6 +99,16 @@ export class AsrGateway {
           ? "Lokaler OpenAI-kompatibler ASR-Endpunkt konfiguriert; Audio wird nicht gespeichert."
           : "PFH_ASR_BASE_URL fehlt.",
       };
+    if (this.mode === "hosted-test")
+      return {
+        mode: this.mode,
+        model: this.model,
+        ready: Boolean(this.baseUrl && this.apiKey),
+        dataBoundary: "synthetic-hosted",
+        message: this.apiKey
+          ? "Synthetischer Entwicklertest: externe Transkription konfiguriert; Audio wird nach der Antwort verworfen."
+          : "OPENAI_API_KEY beziehungsweise PFH_ASR_API_KEY fehlt.",
+      };
     return {
       mode: this.mode,
       model: this.model,
@@ -99,10 +125,14 @@ export class AsrGateway {
     let audioCopy: Uint8Array<ArrayBuffer> | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      if (this.mode !== "local-openai" || !this.baseUrl)
+      if (
+        !["local-openai", "hosted-test"].includes(this.mode) ||
+        !this.baseUrl ||
+        (this.mode === "hosted-test" && !this.apiKey)
+      )
         throw new DomainError(
           "EXTERNAL_VENDOR_GATE",
-          "Lokale Spracherkennung ist für diese Umgebung nicht konfiguriert.",
+          "Spracherkennung ist für diese Umgebung nicht konfiguriert.",
           503,
         );
       if (audio.byteLength === 0 || audio.byteLength > 8 * 1024 * 1024)
@@ -111,17 +141,32 @@ export class AsrGateway {
           "Sprachaufnahme muss zwischen 1 Byte und 8 MiB gross sein.",
           400,
         );
+      const acceptedMimeTypes = new Set([
+        "audio/webm",
+        "audio/wav",
+        "audio/mpeg",
+        "audio/mp4",
+        "audio/x-m4a",
+      ]);
+      const normalizedMime = mimeType.split(";")[0]?.trim().toLowerCase() ?? "";
+      if (!acceptedMimeTypes.has(normalizedMime))
+        throw new DomainError(
+          "VALIDATION",
+          "Nicht unterstütztes Audioformat.",
+          400,
+        );
       const form = new FormData();
       audioCopy = new Uint8Array(new ArrayBuffer(audio.byteLength));
       audioCopy.set(audio);
       form.set(
         "file",
-        new Blob([audioCopy.buffer], { type: mimeType || "audio/webm" }),
+        new Blob([audioCopy.buffer], { type: normalizedMime }),
         "pflegehelfer-utterance.webm",
       );
       form.set("model", this.model);
       form.set("language", "de");
-      form.set("response_format", "verbose_json");
+      if (this.mode === "local-openai")
+        form.set("response_format", "verbose_json");
       const controller = new AbortController();
       timer = setTimeout(() => controller.abort(), 60_000);
       const response = await fetch(
@@ -138,7 +183,7 @@ export class AsrGateway {
       if (!response.ok)
         throw new DomainError(
           "PROVIDER_UNAVAILABLE",
-          `Lokaler ASR-Endpunkt antwortet mit HTTP ${response.status}.`,
+          `ASR-Endpunkt antwortet mit HTTP ${response.status}.`,
           503,
         );
       const parsed = transcriptionResponse.parse(await response.json());
@@ -170,7 +215,7 @@ export class AsrGateway {
       if (error instanceof DomainError) throw error;
       throw new DomainError(
         "PROVIDER_UNAVAILABLE",
-        "Lokale Spracherkennung ist vorübergehend nicht erreichbar.",
+        "Spracherkennung ist vorübergehend nicht erreichbar.",
         503,
       );
     } finally {

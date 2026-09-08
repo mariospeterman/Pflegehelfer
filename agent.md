@@ -1,10 +1,12 @@
 # Pflegehelfer agent contract
 
-This is the repository’s binding implementation/review contract. `docs/ARCHITECTURE.md` is canonical; `docs/PRODUCT_EXPERIENCE.md` and `docs/WORKFLOWS.md` define experience and journeys.
+This is the repository’s binding implementation/review contract. `docs/PRODUCT_CONTRACT.md` defines acceptance, `docs/ARCHITECTURE.md` defines ownership, and `docs/PRODUCT_EXPERIENCE.md` plus `docs/WORKFLOWS.md` define experience and journeys.
 
 ## Product direction
 
 Pflegehelfer is one GenUI/chat/voice-first clinical coworker, not a dashboard with an assistant added. The conversation stream owns daily workflow. Handover, patient context, tasks/alarms, observations, documentation, team questions/mentions, approvals, rounds and synchronization appear as contextual interactive components in one persistent thread. Fixed UI is limited to authentication; identity/role/patient context; history/sidebar/drawer; safety/offline/sync state; deterministic review; and an expert Medplum link.
+
+The invariant is **conversational outside, structured inside**. Staff speaks or types naturally; the assistant uses current patient, workflow, task and session context, responds as a concise coworker, asks at most one necessary clarification, and then shows the smallest editable GenUI review. Never expose `AssistantProposal`, intent or schema language in staff-facing copy and never turn the conversation into a form wizard.
 
 Do not introduce `Focus`, module tabs, separate workflow pages, dashboard projections, per-focus conversation IDs, hidden patient switching or browser-only clinical state. Mobile is one feed plus a drawer. Use **Tertianum Kronenhof · Demo** and state that all people/records are fictional.
 
@@ -26,7 +28,7 @@ The baseline excludes microservices, Flowable, NATS/Kafka, vector databases and 
 
 `WorkflowTemplate` has immutable published versions. `WorkingSession` binds actor/role/organization, template version, assistant thread, step and context revision. Sign-in resumes/starts the active role workflow and places the next safe step in conversation. Workflow data is bounded and cannot execute code, grant policy, weaken approval, enable providers or auto-select patients.
 
-The model never diagnoses, prescribes, approves, signs, invents facts, chooses capabilities or bypasses policy. Every read/action is tenant-, role-, purpose-, relationship-, state- and ownership-checked. One-use intent authority binds actor, organization, patient/encounter, session/thread, workflow and context/source/policy versions; store only a hash. Patient-context change is a server event that invalidates stale intent/voice authority. Raw audio is not persisted. Medication stays read-only/communication-oriented unless separately governed. Do not log clinical content, model output or secrets.
+The model never diagnoses, prescribes, approves, signs, invents facts, chooses capabilities or bypasses policy. Internally it may propose meaning through a generic typed `AssistantProposal` containing understood facts, work performed, observations, task changes, communications, workflow actions, ambiguities and evidence. Specific deterministic sub-schemas alone can execute. Preserve negation, uncertainty, historical reporting, partial/deferred work, interruption, delegation, communication, corrections and occurrence time. Every read/action is tenant-, role-, purpose-, relationship-, state- and ownership-checked. One-use intent authority binds actor, organization, patient/encounter, session/thread, workflow and context/source/policy versions; store only a hash. Patient-context change is a server event that invalidates stale intent/voice authority. Raw audio is not persisted. Medication/treatment/diagnostic commands fail closed into separately governed workflows. Do not log clinical content, model output or secrets.
 
 ## Provider honesty
 

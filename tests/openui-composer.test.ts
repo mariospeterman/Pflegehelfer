@@ -31,6 +31,8 @@ describe("model-facing OpenUI composition boundary", () => {
       PFH_AI_MODE: "hosted-test",
       PFH_DEMO_MODE: "true",
       PFH_LLM_DATA_CLASSIFICATION: "synthetic-only",
+      PFH_ALLOW_EXTERNAL_AI: "true",
+      PFH_LLM_API_KEY: "x",
       PFH_LLM_BASE_URL: "https://synthetic-model.example.invalid/v1",
       PFH_LLM_MODEL: "fixture",
     });
@@ -70,6 +72,8 @@ describe("model-facing OpenUI composition boundary", () => {
       PFH_AI_MODE: "hosted-test",
       PFH_DEMO_MODE: "true",
       PFH_LLM_DATA_CLASSIFICATION: "synthetic-only",
+      PFH_ALLOW_EXTERNAL_AI: "true",
+      PFH_LLM_API_KEY: "x",
       PFH_LLM_BASE_URL: "https://synthetic-model.example.invalid/v1",
     }).composeOpenUi(["PatientSummary", "TaskList"]);
     expect(result).toEqual({
@@ -77,5 +81,22 @@ describe("model-facing OpenUI composition boundary", () => {
       composedByModel: false,
       degraded: true,
     });
+  });
+
+  it("falls back immediately when hosted-test has no key", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    const result = await new ModelGateway({
+      PFH_AI_MODE: "hosted-test",
+      PFH_DEMO_MODE: "true",
+      PFH_LLM_DATA_CLASSIFICATION: "synthetic-only",
+      PFH_ALLOW_EXTERNAL_AI: "true",
+    }).composeOpenUi(["AssistantText", "DraftAction"]);
+    expect(result).toEqual({
+      order: ["candidate-1", "candidate-2"],
+      composedByModel: false,
+      degraded: false,
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

@@ -23,6 +23,31 @@ describe("local ASR privacy boundary", () => {
         }),
     ).toThrow(/LOCAL_AI_ENDPOINT_NOT_ALLOWED/);
   });
+
+  it("configures hosted transcription only for an explicitly consented synthetic demo", () => {
+    expect(
+      () =>
+        new AsrGateway({
+          PFH_ASR_MODE: "hosted-test",
+          PFH_DEMO_MODE: "true",
+          PFH_LLM_DATA_CLASSIFICATION: "synthetic-only",
+        }),
+    ).toThrow(/explicit external-AI consent/);
+    expect(
+      new AsrGateway({
+        PFH_ASR_MODE: "hosted-test",
+        PFH_DEMO_MODE: "true",
+        PFH_LLM_DATA_CLASSIFICATION: "synthetic-only",
+        PFH_ALLOW_EXTERNAL_AI: "true",
+        OPENAI_API_KEY: "x",
+      }).status(),
+    ).toMatchObject({
+      mode: "hosted-test",
+      model: "gpt-transcribe",
+      ready: true,
+      dataBoundary: "synthetic-hosted",
+    });
+  });
   it("fails closed and clears the caller buffer when no local runtime is configured", async () => {
     const bytes = new Uint8Array([1, 2, 3]);
     await expect(

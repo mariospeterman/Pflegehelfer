@@ -1,0 +1,409 @@
+{
+  "schemaVersion": 1,
+  "institutionId": "org-demo",
+  "siteId": "rehab-2",
+  "displayName": "Kronenhof · Rehabilitation 2",
+  "timeZone": "Europe/Zurich",
+  "sessionTtlHours": 12,
+  "department": {
+    "id": "rehab-2",
+    "displayName": "Rehabilitation 2"
+  },
+  "activeShiftId": "early",
+  "shifts": {
+    "early": {
+      "name": "Frühdienst",
+      "startsAt": "06:30",
+      "endsAt": "14:30",
+      "nextResponsibleActorId": "u-nurse-evening"
+    },
+    "late": {
+      "name": "Spätdienst",
+      "startsAt": "14:00",
+      "endsAt": "22:00",
+      "nextResponsibleActorId": "u-nurse"
+    }
+  },
+  "providerRoutes": {
+    "patientRead": "wicare",
+    "careDocumentation": "carecoach",
+    "observations": "device-gateway",
+    "administration": "sap"
+  },
+  "staffAssignments": [
+    {
+      "actorId": "u-assistant",
+      "role": "care-assistant",
+      "shiftId": "early",
+      "patientIds": [
+        "p-anna",
+        "p-luca",
+        "p-ruth",
+        "p-peter",
+        "p-sofia",
+        "p-emil"
+      ]
+    },
+    {
+      "actorId": "u-nurse",
+      "role": "registered-nurse",
+      "shiftId": "early",
+      "patientIds": [
+        "p-anna",
+        "p-luca",
+        "p-ruth",
+        "p-peter",
+        "p-sofia",
+        "p-emil"
+      ]
+    },
+    {
+      "actorId": "u-nurse-evening",
+      "role": "registered-nurse",
+      "shiftId": "late",
+      "patientIds": [
+        "p-anna",
+        "p-luca",
+        "p-ruth",
+        "p-peter",
+        "p-sofia",
+        "p-emil"
+      ]
+    }
+  ],
+  "roleProfiles": {
+    "care-assistant": {
+      "workflowId": "nursing-day",
+      "actions": [
+        "patient:read",
+        "task:read",
+        "task:update",
+        "task:create",
+        "observation:draft",
+        "observation:approve",
+        "note:draft",
+        "note:approve",
+        "communication:read",
+        "communication:create",
+        "communication:respond",
+        "handover:read",
+        "handover:acknowledge",
+        "round:read"
+      ]
+    },
+    "registered-nurse": {
+      "workflowId": "nursing-day",
+      "actions": [
+        "patient:read",
+        "task:read",
+        "task:update",
+        "task:create",
+        "observation:draft",
+        "observation:approve",
+        "note:draft",
+        "note:approve",
+        "communication:read",
+        "communication:create",
+        "communication:respond",
+        "handover:read",
+        "handover:sign",
+        "handover:acknowledge",
+        "round:read",
+        "intake:read",
+        "intake:update"
+      ]
+    },
+    "physician": {
+      "workflowId": "physician-rounds",
+      "actions": [
+        "patient:read",
+        "task:read",
+        "task:update",
+        "task:create",
+        "observation:draft",
+        "observation:approve",
+        "note:draft",
+        "note:approve",
+        "communication:read",
+        "communication:create",
+        "communication:respond",
+        "handover:read",
+        "round:read",
+        "round:decide",
+        "intake:read",
+        "intake:update"
+      ]
+    },
+    "pharmacy": {
+      "workflowId": "support-day",
+      "actions": [
+        "patient:read",
+        "task:read",
+        "task:update",
+        "task:create",
+        "communication:read",
+        "communication:create",
+        "communication:respond",
+        "handover:read",
+        "round:read",
+        "round:decide",
+        "intake:read",
+        "intake:update"
+      ]
+    },
+    "physiotherapy": {
+      "workflowId": "support-day",
+      "actions": [
+        "patient:read",
+        "task:read",
+        "task:update",
+        "task:create",
+        "note:draft",
+        "note:approve",
+        "communication:read",
+        "communication:create",
+        "communication:respond",
+        "handover:read",
+        "round:read",
+        "round:decide"
+      ]
+    },
+    "occupational-therapy": {
+      "workflowId": "support-day",
+      "actions": [
+        "patient:read",
+        "task:read",
+        "task:update",
+        "task:create",
+        "note:draft",
+        "note:approve",
+        "communication:read",
+        "communication:create",
+        "communication:respond",
+        "handover:read",
+        "round:read",
+        "round:decide"
+      ]
+    },
+    "transport": {
+      "workflowId": "support-day",
+      "actions": ["task:read", "task:update"]
+    },
+    "service": {
+      "workflowId": "support-day",
+      "actions": ["task:read", "task:update"]
+    },
+    "administration": {
+      "workflowId": "support-day",
+      "actions": [
+        "patient:administrative-read",
+        "task:read",
+        "task:update",
+        "intake:read",
+        "intake:update"
+      ]
+    },
+    "management": {
+      "workflowId": "support-day",
+      "actions": ["analytics:aggregate"]
+    },
+    "hr": { "workflowId": "support-day", "actions": [] },
+    "it": {
+      "workflowId": "support-day",
+      "actions": ["provider:operate", "audit:verify"]
+    },
+    "quality-safety": {
+      "workflowId": "support-day",
+      "actions": ["audit:verify", "analytics:aggregate"]
+    }
+  },
+  "workflows": {
+    "nursing-day": {
+      "name": "Pflegetag",
+      "eligibleRoles": ["care-assistant", "registered-nurse"],
+      "version": 2,
+      "definition": {
+        "schemaVersion": 1,
+        "steps": [
+          {
+            "id": "handover",
+            "kind": "handover",
+            "title": "Teamübergabe",
+            "prompt": "Übergabe für mein Team"
+          },
+          {
+            "id": "prioritize",
+            "kind": "work-queue",
+            "title": "Mein Tagesplan",
+            "prompt": "Zeig mir meine sechs Patientinnen und Patienten"
+          },
+          {
+            "id": "patient",
+            "kind": "context-selection",
+            "title": "Patient wählen",
+            "prompt": "Mit wem beginne ich?"
+          },
+          {
+            "id": "work",
+            "kind": "work-queue",
+            "title": "Versorgen",
+            "prompt": "Was ist hier geplant und offen?"
+          },
+          {
+            "id": "document",
+            "kind": "documentation",
+            "title": "Im Gespräch dokumentieren",
+            "prompt": "Was wurde gemacht oder beobachtet?"
+          },
+          {
+            "id": "communicate",
+            "kind": "work-queue",
+            "title": "Im Team klären",
+            "prompt": "Welche @Fragen und Kommentare sind offen?"
+          },
+          {
+            "id": "review",
+            "kind": "review",
+            "title": "Kurz prüfen",
+            "prompt": "Welche Änderungen warten auf meine Freigabe?"
+          },
+          {
+            "id": "prepare-handover",
+            "kind": "handover",
+            "title": "Nächste Schicht",
+            "prompt": "Was muss ich übergeben?"
+          },
+          {
+            "id": "reconcile",
+            "kind": "reconciliation",
+            "title": "Abgleich prüfen",
+            "prompt": "Ist alles sicher synchronisiert?"
+          },
+          {
+            "id": "complete",
+            "kind": "completion",
+            "title": "Verantwortung übertragen",
+            "prompt": "Arbeitstag abschliessen"
+          }
+        ]
+      }
+    },
+    "physician-rounds": {
+      "name": "Ärztliche Runde",
+      "eligibleRoles": ["physician"],
+      "version": 1,
+      "definition": {
+        "schemaVersion": 1,
+        "steps": [
+          {
+            "id": "questions",
+            "kind": "work-queue",
+            "title": "Anfragen",
+            "prompt": "Welche Teamfragen sind offen?"
+          },
+          {
+            "id": "patient",
+            "kind": "context-selection",
+            "title": "Patient wählen",
+            "prompt": "Patientenkontext wählen"
+          },
+          {
+            "id": "evidence",
+            "kind": "orientation",
+            "title": "Evidenz prüfen",
+            "prompt": "Patientenprofil und letzte Vitalwerte"
+          },
+          {
+            "id": "decision",
+            "kind": "review",
+            "title": "Antwort oder Folgeauftrag",
+            "prompt": "Antwort vorbereiten"
+          },
+          {
+            "id": "complete",
+            "kind": "completion",
+            "title": "Runde abschliessen",
+            "prompt": "Runde abschliessen"
+          }
+        ]
+      }
+    },
+    "support-day": {
+      "name": "Fachauftrag",
+      "eligibleRoles": [
+        "pharmacy",
+        "physiotherapy",
+        "occupational-therapy",
+        "transport",
+        "service",
+        "administration",
+        "management",
+        "hr",
+        "it",
+        "quality-safety"
+      ],
+      "version": 1,
+      "definition": {
+        "schemaVersion": 1,
+        "steps": [
+          {
+            "id": "orientation",
+            "kind": "orientation",
+            "title": "Orientierung",
+            "prompt": "Was ist heute wichtig?"
+          },
+          {
+            "id": "assigned-work",
+            "kind": "work-queue",
+            "title": "Zugewiesene Arbeit",
+            "prompt": "Meine offenen Aufgaben"
+          },
+          {
+            "id": "complete",
+            "kind": "completion",
+            "title": "Abschliessen",
+            "prompt": "Arbeit abschliessen"
+          }
+        ]
+      }
+    }
+  },
+  "nursingAssignments": [
+    {
+      "patientId": "p-anna",
+      "title": "Morgenpflege · Mobilisation · Blutdruck",
+      "reason": "Therapie um 09:15; erhöhter Morgenwert",
+      "window": "07:30–09:00"
+    },
+    {
+      "patientId": "p-luca",
+      "title": "Körperpflege · Mobilisation · Trinkmenge",
+      "reason": "Frühstücksziel; Radiologie um 11:20",
+      "window": "08:00–10:30"
+    },
+    {
+      "patientId": "p-ruth",
+      "title": "Ankleiden · Gehtraining · Schmerzbeobachtung",
+      "reason": "Erster Tag nach Verbandswechsel",
+      "window": "08:30–10:00"
+    },
+    {
+      "patientId": "p-peter",
+      "title": "Morgenpflege · Gewicht · Ödemkontrolle",
+      "reason": "Tägliche Gewichtskontrolle vor Frühstück",
+      "window": "07:45–09:15"
+    },
+    {
+      "patientId": "p-sofia",
+      "title": "Transfer · Toilettengang · Hautbeobachtung",
+      "reason": "Zweipersonentransfer laut Pflegeplan",
+      "window": "09:15–11:00"
+    },
+    {
+      "patientId": "p-emil",
+      "title": "Dusche · Hörhilfe · Spaziergang",
+      "reason": "Duschtag; Angehörigengespräch um 11:00",
+      "window": "09:30–11:30"
+    }
+  ]
+}

@@ -13,6 +13,12 @@ const recordId = z.string().regex(/^[A-Za-z0-9.-]{1,64}$/);
 export const assistantComponentSchema = z.discriminatedUnion("type", [
   z
     .object({
+      type: z.literal("AssistantText"),
+      message: boundedText,
+    })
+    .strict(),
+  z
+    .object({
       type: z.literal("PatientPicker"),
       title: z.string().trim().min(1).max(120),
       message: boundedText,
@@ -72,6 +78,32 @@ export const assistantComponentSchema = z.discriminatedUnion("type", [
       summary: boundedText,
       count: z.number().int().min(0).max(100),
       sourceLabel: z.string().trim().min(1).max(180),
+      items: z
+        .array(
+          z
+            .object({
+              id: recordId,
+              patientId: recordId,
+              patientLabel: z.string().trim().min(1).max(120),
+              recipientLabel: z.string().trim().min(1).max(120),
+              request: z.string().trim().min(1).max(500),
+              reason: z.string().trim().min(1).max(1000),
+              priority: z.enum(["routine", "elevated", "urgent"]),
+              state: z.enum([
+                "sent",
+                "acknowledged",
+                "answered",
+                "closed",
+                "escalated",
+              ]),
+              response: z.string().trim().max(1000),
+              canAcknowledge: z.boolean(),
+              canAnswer: z.boolean(),
+              canClose: z.boolean(),
+            })
+            .strict(),
+        )
+        .max(8),
     })
     .strict(),
   z
@@ -102,14 +134,20 @@ export const assistantComponentSchema = z.discriminatedUnion("type", [
         .array(
           z
             .object({
-              id: z.string().regex(/^action-[1-6]$/),
+              id: z.string().regex(/^action-(?:[1-9]|1[0-2])$/),
               label: z.string().trim().min(1).max(1400),
-              kind: z.enum(["note", "observation", "communication", "task"]),
+              kind: z.enum([
+                "note",
+                "observation",
+                "communication",
+                "task",
+                "workflow",
+              ]),
             })
             .strict(),
         )
         .min(1)
-        .max(6)
+        .max(12)
         .optional(),
     })
     .strict(),

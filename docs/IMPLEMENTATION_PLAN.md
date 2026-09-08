@@ -1,46 +1,80 @@
 # Implementation plan
 
-Last updated: 2026-09-06
+Last updated: 2026-09-08
+Baseline: `fcd9f782bb0e5052e057854cbcbaccc39aa1630e`
 
-## Direction
+The product contract is `docs/PRODUCT_CONTRACT.md`. Work proceeds in six vertical slices on the existing modular monolith and one PWA. A table, migration or simulator alone does not complete a slice; each gate needs a real endpoint-to-storage-to-UI test.
 
-The controlling invariant is one persistent GenUI/chat/voice clinical coworker. `docs/ARCHITECTURE.md`, `PRODUCT_EXPERIENCE.md` and `WORKFLOWS.md` are the single coherent target. Old focus dashboards, module tabs, projection registries, client-simulated streaming and Medplum conversation Binary storage are removed rather than maintained in parallel.
+## Current implementation checkpoint
 
-## Completed in this refactor
+- Pinned Node 24.19.0 and pnpm 11.19.0.
+- Generic proposal IR, independent model grounding, negation/temporal/partial/correction coverage and dedicated clinical-workflow rejection are implemented and regression tested.
+- The configured early shift supplies six assigned patients; handover acknowledgement, start/pause/interruption/resume/completion and provider-state display run in PostgreSQL and the PWA.
+- Site timezone, shifts, provider routing intent, role permissions, workflows and staff assignment are strictly validated in `config/sites/tertianum-kronenhof.json`.
+- Workday access now fails closed when no exact actor+role assignment exists; older operational databases receive the `context_revision` compatibility upgrade idempotently.
+- The clinical compiler has a conservative generic imperative boundary, preserves scalar uncertainty and `nicht … sondern …` corrections, and keeps ambiguous physician timing in one concise clarification rather than inventing a deadline.
+- The patient profile includes safety, goals, medication read-only data, recent vitals and care protocol. Team questions render as structured patient-bound threads with role-authorized acknowledge/answer/close actions.
+- The remaining work is the production acceptance work listed under Slices C, E and F; it must not be relabelled as an external vendor gate.
 
-1. Consolidated the duplicated architecture and repository instruction into one target; added product-experience/workflow contracts and superseded the checkpoint ADR.
-2. Replaced the four-focus PWA with a conversation-dominant shell, desktop context/history sidebar, mobile drawer, explicit permanent patient safety context, role-specific opening, synthetic disclaimer, responsive system dark/light palette and original Edelweiss/cross mark.
-3. Added real NDJSON response transport. Partial frames contain no executable component; only the durable final frame activates review. Removed the frontend timer that imitated model streaming.
-4. Added a separate model-facing composition grammar containing only `ClinicalStack`, `Candidate` and opaque candidate handles. The server hydrates clinical facts/actions from its authorized typed candidate set; malformed or extra model output falls back deterministically.
-5. Added schema-validated role workflows, immutable version seeds and `WorkingSession`/thread/context models.
-6. Added the separate PostgreSQL operational service and idempotent migration with organization/department, workflow template/version/session/step, assistant thread/message, safety authority, domain events, receipts, inbox/outbox/cursor/receipt/conflict, audit and bounded analytics tables.
-7. Moved assistant conversation persistence and patient context revisions to the operational store. Added deterministic in-memory test double and actual PostgreSQL smoke coverage.
-8. Kept all undocumented real provider operations gated while retaining simulator/contract coverage.
-9. Closed review-found demo safety defects: body/session patient mismatch is rejected for query, voice and execution; context switches revoke actor intents; partial stream programs contain no executable tokens; stale-source approvals fail; versionless provider inbox dedupe is normalized; operational PostgreSQL participates in readiness.
+## Slice A — clinical work compiler
 
-## Remaining implementation sequence
+- Introduce one versioned generic `AssistantProposal` IR: `understoodFacts`, `workPerformed`, `observations`, `taskChanges`, `communications`, `workflowActions`, `ambiguities` and `evidence`, with specific typed execution schemas underneath. Staff never sees this schema terminology.
+- Preserve conversational session context and answer as a coworker first; show only the smallest editable GenUI review needed for the current utterance. Ask at most one concise blocking clarification and never repeat already known patient/task/session context.
+- Parse multiple measurements and care/task/communication statements with bounded configurable counts.
+- Remove unconditional four-action BP defaults and exact equality against the deterministic four-action fixture.
+- Bind review/approval to the normalized internal proposal, selected action IDs and resource-level read set.
+- Regression corpus: all eight mandatory sentences plus held-out paraphrases and absence-of-evidence cases.
 
-These are internal release requirements, not external gates:
+Gate: negated/historical/refused actions never become executed positives; `250 ml` is intake, not medication; three measurements yield three observations; missing facts/actions yield clarification or no-op.
 
-1. Move opaque intent and voice receipt issuance/consumption from process maps into `safety_authority`, with hash-only tokens and one transaction binding command, approval, workflow step, audit, domain event and outbox.
-2. Move the remaining monolithic clinical service checkpoint authority to resource-scoped Medplum repositories; remove checkpoint Binary and whole-state rewrite after reconstruction parity tests.
-3. Move existing provider outbound items into `provider_outbox`; add leased automatic worker, retry/dead/manual states and receipts. Add durable authenticated inbound polling/event worker with cursor/dedupe/quarantine/conflict handling.
-4. Replace process-local invalidation revision with audience-scoped `domain_events` replay across restart/replicas and proactive thread insertion.
-5. Implement Workflow Studio CRUD/publish/activation and deterministic step progression for all reference role workflows, not only role-aware session start.
-6. Expand server-hydrated GenUI components for actionable tasks, team replies/acknowledgements, workflow progress, documentation diffs, rounds, provider receipt/conflict and editable bounded forms.
-7. Complete operational RLS/least-privilege roles, expiry sweepers, audit-chain migration, analytics small-cell suppression and backup/PITR restore automation.
-8. Complete the browser journeys for the full nursing/physician loops and validate with approved production local model/ASR packs.
+## Slice B — interrupted nursing shift
 
-## External gates
+- Persist explicit workflow transitions and versioned handover roster acknowledgments.
+- Add a constraint-explained morning work plan, patient/encounter-bound work episodes, start/pause/resume/complete segments, spontaneous work and mirrored interruption tasks.
+- Preserve deferred draft/context across explicit patient switches and refresh.
+- Build shift reconciliation and a versioned handover snapshot/addendum; next shift acknowledges exact version; no approved event is resubmitted.
+- Materialize roster, plan, episode, interruption/resume and shift-close artifacts in the one conversation.
 
-- institution OIDC/MFA/device claims, Medplum AccessPolicy and break-glass approval;
-- private WiCare/careCoach/SAP/device/nurse-call contracts, credentials and sandboxes;
-- licensed terminology/institution profile approval;
-- signed model/ASR artifacts and Swiss clinical evaluation;
-- target-environment HA, WORM audit, monitoring, capacity, DR, DPIA, accessibility, security/regulatory and clinical-owner sign-off.
+Gate: the synthetic nurse completes the reference day, handles an alarm interruption and resumes the original patient with no wrong-patient action or duplicate note/service evidence.
 
-Simulators and repository documentation never satisfy these gates.
+## Slice C — durable execution and providers
 
-## Loop
+- Move intent and voice authority, proposal revisions, approvals, idempotency receipts, command state, workflow mutation, domain event and provider/FHIR outbox acceptance into PostgreSQL transactions.
+- Implement leased `FOR UPDATE SKIP LOCKED` workers, retry/backoff, poison/manual state, item receipts, lost-ack reconciliation, inbound inbox/dedupe/cursor/conflict and restart recovery.
+- Serve SSE from durable audience-scoped events with cursor reset and reauthorization.
+- Reconstruct runtime clinical state from Medplum resources and operational state; migrate/retire the whole-state checkpoint Binary from live reads.
+- Verify the deployed Medplum project’s `transaction-bundles` feature with a deliberately failing real transaction and no-partial-write assertion.
 
-Each remaining slice must update the status, implement one end-to-end capability, run focused and regression tests, launch the PostgreSQL/Medplum-backed PWA, inspect responsive/accessibility/offline/reconnect/log/sync behaviour, obtain independent architecture/security/clinical/frontend review, fix valid findings and rerun the clean-checkout audit in `agent.md`.
+Gate: restart, duplicate commands, two workers and ambiguous provider/FHIR acknowledgments produce no silent loss or duplicate effective write.
+
+## Slice D — speech, model and adaptive GenUI
+
+- Add one validated configuration schema for production-local and explicit synthetic-development AI. Keep credentials server-only and commit only empty placeholders.
+- Implement OpenAI Responses with `store:false` and structured proposal output, plus local OpenAI-compatible Chat Completions as a separate adapter.
+- Implement bounded microphone file upload to `/v1/audio/transcriptions`, configurable `gpt-transcribe`, and a separately gated realtime model setting. Validate codec, size, duration, cancellation and patient-bound receipt.
+- Default the balanced development route to `gpt-5.6-terra`; allow `gpt-5.6-sol` for quality evaluation. Production-local denies hosted fallback.
+- Add useful roster/work-plan/episode/trend/approval/thread/sync artifacts and fix textarea sizing, keyboard/safe-area layout, chips, icons, resolved picker, scroll preservation and light/dark/system themes.
+
+Gate: text, tap and recorded synthetic audio reach the same editable proposal; external calls require explicit opt-in; the app remains usable with model/ASR unavailable; mobile/landscape/tablet/desktop do not obscure controls.
+
+## Slice E — role, site and collaboration configuration
+
+- Configure organizations, sites, wards, shifts, directories, provider instances and distinct SRK/AGS/FaGe/RN/physician/pharmacy/support/therapy/transport/service/admin/billing/management/HR/IT/quality profiles without source forks.
+- Add bounded Workflow Studio draft/validate/preview/publish/activate flows; published versions are immutable and cannot grant permissions.
+- Persist private assistant, patient-team, department, direct and administrative threads with minimum views.
+- Resolve `@person`/`@role` through authorized directory/coverage; duplicate permitted questions are suggested without leaking restricted threads; click-to-call is available only when configured.
+
+Gate: two fictional houses run different workflow/provider configuration from the same binary; role changes, mention search and event replay disclose no unauthorized patient/thread data.
+
+## Slice F — governed knowledge, evidence and deployment acceptance
+
+- Persist approved knowledge with owner, audience, version, review/expiry and retraction; provide signed offline import and gated Staffbase/Loop connector boundary without scraping.
+- Store service evidence with episode, author, actual/interruption segments, materials, correction and review state. Keep tariff eligibility/coding behind an approved adapter.
+- Project aggregate small-cell-suppressed operational analytics without staff ranking.
+- Add executable installation validation, migration up/down/rollback evidence, representative operational+Medplum backup/restore, secret/model artifact checks and a staff evaluation protocol.
+
+Gate: revoked knowledge disappears, timer segments cannot double-charge, clean checkout reproduces the synthetic reference day, and deployment fails closed when required identity/security/provider evidence is absent.
+
+## Completion audit
+
+Run `pnpm verify`, `pnpm verify:security`, `pnpm verify:ops`, `pnpm verify:airgap` and the full multi-viewport `pnpm verify:e2e`; then perform clean-checkout install, environment generation, double migration, integrated startup, nursing/physician/voice/provider/offline/SSE/restart/restore journeys and secret/PHI/dead-path inspection. Record results against the final SHA in `docs/IMPLEMENTATION_STATUS.md` and the evidence manifest. External model calls run only when the developer supplied credentials and explicit synthetic-data opt-in.

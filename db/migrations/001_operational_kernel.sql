@@ -100,6 +100,19 @@ CREATE TABLE IF NOT EXISTS assistant_messages (
   UNIQUE (organization_id, id),
   FOREIGN KEY (organization_id, thread_id) REFERENCES assistant_threads(organization_id, id)
 );
+
+-- Compatibility upgrades for databases created by an earlier development
+-- build. CREATE TABLE IF NOT EXISTS does not add columns to existing tables.
+ALTER TABLE assistant_threads
+  ADD COLUMN IF NOT EXISTS context_revision integer NOT NULL DEFAULT 0;
+ALTER TABLE assistant_threads
+  ADD COLUMN IF NOT EXISTS patient_id text;
+ALTER TABLE assistant_messages
+  ADD COLUMN IF NOT EXISTS context_revision integer NOT NULL DEFAULT 0;
+ALTER TABLE assistant_messages
+  ADD COLUMN IF NOT EXISTS patient_id text;
+ALTER TABLE assistant_messages
+  ADD COLUMN IF NOT EXISTS input_modality text;
 CREATE TABLE IF NOT EXISTS safety_authority (
   organization_id text NOT NULL REFERENCES organizations(id),
   token_hash text NOT NULL CHECK (token_hash ~ '^[a-f0-9]{64}$'),
@@ -231,9 +244,79 @@ CREATE TABLE IF NOT EXISTS analytics_events (
   occurred_at timestamptz NOT NULL DEFAULT now()
 );
 
-INSERT INTO organizations (id, name) VALUES ('org-demo', 'Tertianum Kronenhof · Demo')
-ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name;
-INSERT INTO departments (organization_id, id, name) VALUES ('org-demo', 'rehab-2', 'Rehabilitation 2')
-ON CONFLICT (organization_id, id) DO UPDATE SET name = EXCLUDED.name;
+CREATE TABLE IF NOT EXISTS handover_snapshots (
+  organization_id text NOT NULL REFERENCES organizations(id),
+  id uuid NOT NULL,
+  department_id text NOT NULL,
+  shift_key text NOT NULL,
+  version integer NOT NULL CHECK (version > 0),
+  patient_ids text[] NOT NULL,
+  cutoff_at timestamptz NOT NULL,
+  source_hash text NOT NULL CHECK (source_hash ~ '^[a-f0-9]{64}$'),
+  status text NOT NULL CHECK (status IN ('open', 'transferred', 'acknowledged')),
+  created_by text NOT NULL,
+  receiving_actor_id text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (organization_id, id),
+  UNIQUE (organization_id, department_id, shift_key, version)
+);
+CREATE TABLE IF NOT EXISTS handover_acknowledgements (
+  organization_id text NOT NULL,
+  handover_id uuid NOT NULL,
+  patient_id text NOT NULL,
+  version integer NOT NULL,
+  actor_id text NOT NULL,
+  status text NOT NULL CHECK (status IN ('acknowledged', 'question', 'later')),
+  acknowledged_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (organization_id, handover_id, patient_id, actor_id),
+  FOREIGN KEY (organization_id, handover_id) REFERENCES handover_snapshots(organization_id, id)
+);
+CREATE TABLE IF NOT EXISTS work_episodes (
+  organization_id text NOT NULL REFERENCES organizations(id),
+  id uuid NOT NULL,
+  session_id uuid NOT NULL,
+  actor_id text NOT NULL,
+  patient_id text NOT NULL,
+  encounter_id text NOT NULL,
+  kind text NOT NULL CHECK (kind IN ('planned', 'spontaneous', 'alarm')),
+  title text NOT NULL,
+  state text NOT NULL CHECK (state IN ('active', 'paused', 'completed', 'deferred')),
+  row_version integer NOT NULL DEFAULT 1,
+  started_at timestamptz NOT NULL DEFAULT now(),
+  completed_at timestamptz,
+  completion_evidence text,
+  PRIMARY KEY (organization_id, id),
+  FOREIGN KEY (organization_id, session_id) REFERENCES working_sessions(organization_id, id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS work_episodes_one_active_actor
+  ON work_episodes (organization_id, actor_id) WHERE state = 'active';
+CREATE TABLE IF NOT EXISTS work_episode_segments (
+  organization_id text NOT NULL,
+  episode_id uuid NOT NULL,
+  ordinal integer NOT NULL CHECK (ordinal > 0),
+  started_at timestamptz NOT NULL,
+  ended_at timestamptz,
+  end_reason text CHECK (end_reason IN ('pause', 'interruption', 'complete', 'correction')),
+  PRIMARY KEY (organization_id, episode_id, ordinal),
+  FOREIGN KEY (organization_id, episode_id) REFERENCES work_episodes(organization_id, id)
+);
+CREATE TABLE IF NOT EXISTS service_evidence (
+  organization_id text NOT NULL REFERENCES organizations(id),
+  id uuid NOT NULL,
+  episode_id uuid NOT NULL,
+  actor_id text NOT NULL,
+  patient_id text NOT NULL,
+  actual_started_at timestamptz NOT NULL,
+  actual_ended_at timestamptz NOT NULL,
+  interruption_seconds integer NOT NULL DEFAULT 0 CHECK (interruption_seconds >= 0),
+  review_status text NOT NULL CHECK (review_status IN ('draft', 'reviewed')),
+  billing_status text NOT NULL DEFAULT 'not-evaluated' CHECK (billing_status = 'not-evaluated'),
+  correction_of uuid,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (organization_id, id),
+  UNIQUE (organization_id, episode_id),
+  FOREIGN KEY (organization_id, episode_id) REFERENCES work_episodes(organization_id, id)
+);
+
 INSERT INTO pfh_schema_migrations (version) VALUES (1) ON CONFLICT DO NOTHING;
 COMMIT;

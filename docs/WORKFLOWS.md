@@ -4,7 +4,9 @@
 
 Allowlisted step kinds are `orientation`, `context-selection`, `work-queue`, `documentation`, `review`, `handover`, `reconciliation`, and `completion`. Predicates are bounded comparisons over server state. Definitions cannot grant permission, skip policy review, contain executable code/URLs/arbitrary OpenUI, auto-select patients or enable providers.
 
-## Nursing day (`nursing-day-v1`)
+The executable demo configuration is the strictly validated `config/sites/tertianum-kronenhof.json`; this Markdown file explains it for humans and is not parsed as executable policy. Configuration may select permissions and workflows but can never grant an action outside the allowlisted policy vocabulary.
+
+## Nursing day (`nursing-day`, version 2)
 
 | Order | Step             | Completion                                             |
 | ----- | ---------------- | ------------------------------------------------------ |
@@ -19,7 +21,11 @@ Allowlisted step kinds are `orientation`, `context-selection`, `work-queue`, `do
 | 9     | Reconcile        | Conflicts assigned; pending provider state visible     |
 | 10    | Complete         | Session summary appended                               |
 
-Steps 3–7 loop for each explicitly selected patient. A nurse-call event may insert priority work but never select the patient or mark work complete.
+The early-shift demo assigns six fictional patients to the care assistant and registered nurse. Every handover patient must be acknowledged before the plan opens. Planned episode metadata is derived server-side from the configured assignment, not trusted from the browser. Steps 3–7 loop for each explicitly selected patient. A nurse-call event may insert priority work but never mark planned responsibility complete. Exact subtask-level defer/delegate/transfer outcomes and acknowledgement by the next responsible shift are still production work.
+
+## Site and role configuration
+
+The site file owns institution/site/department identity, `Europe/Zurich`, session TTL, shift windows and next responsible actor, provider-route intent, role-to-workflow/action profiles, staff-to-shift/patient assignment and six demo responsibilities. Zod validation rejects missing workflow references, unknown actions, duplicate staff or patient assignments and references to unknown shifts/patients. The repository currently loads one selected site at build time; a two-house runtime selector and immutable published configuration store remain incomplete.
 
 ## Physician and other roles
 
@@ -29,6 +35,6 @@ Therapies get assigned intervention/evidence flows. Transport/service see only n
 
 ## Workflow Studio and validation
 
-Authorized administrators list, clone, edit bounded fields, validate, preview with fictional data, publish, activate and inspect history. Rollback activates a published version for new sessions; active sessions stay pinned.
+The target Workflow Studio lets authorized administrators list, clone, edit bounded fields, validate, preview with fictional data, publish, activate and inspect history. Rollback activates a published version for new sessions; active sessions stay pinned. The current repository validates the checked-in site/workflow configuration and pins its version into working sessions; the administrative Studio, immutable configuration store and activation-CAS API are not implemented yet.
 
-Tests cover immutable publishing, activation CAS, session pinning/restart, invalid transitions, concurrent step completion, revocation, alarm insertion without context switch, stale intent invalidation and completion with handover/sync state.
+Current tests cover configuration rejection, session reuse/restart, context revision, alarm interruption/resume, episode evidence, full six-patient completion and visible handover/provider state. Immutable publishing, activation CAS, receiver-side handover acceptance and concurrent workflow mutation remain production acceptance work.

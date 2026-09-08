@@ -40,7 +40,7 @@ test("is one responsive conversation with drawer context and no module dashboard
     page.locator(".header-identity strong").getByText("Pflegehelfer"),
   ).toBeVisible();
   await expect(
-    page.getByText("Guten Morgen — beginnen wir mit der Übergabe."),
+    page.getByRole("heading", { name: "Übergabe patientenweise übernehmen" }),
   ).toBeVisible();
   await expect(
     page.getByText("Alle Personen und klinischen Daten sind frei erfunden."),
@@ -104,23 +104,19 @@ test("one bedside sentence yields granular review and explicit execution", async
   await choosePatient(page);
   await ask(
     page,
-    "Mobilisiert, Blutdruck 151 zu 88, Arzt informieren und Kontrolle in 30 Minuten dokumentieren.",
+    "Mobilisiert, Blutdruck 151 zu 88, Arzt in 10 Minuten informieren und Kontrolle in 30 Minuten dokumentieren.",
   );
   const draft = page.locator(".assistant-draft");
   await expect(draft).toBeVisible();
   await expect(draft.locator("input[type=checkbox]")).toHaveCount(4);
-  await draft
-    .getByRole("button", { name: "Änderungen gemeinsam prüfen" })
-    .click();
-  const review = page.getByLabel("Assistenzvorschlag prüfen");
-  await expect(review).toContainText("Anna Beispiel");
-  await expect(review).toContainText("151/88 mmHg");
-  await review
-    .getByRole("button", { name: "Geprüfte Auswahl anlegen" })
-    .click();
+  await expect(draft).toContainText("Anna Beispiel");
+  await expect(draft).toContainText("151/88 mmHg");
+  await draft.getByRole("button", { name: "Auswahl bestätigen" }).click();
   await expect(page.getByText("Ausgeführt", { exact: true })).toBeVisible();
   await expect(
-    page.getByText(/Klinische Entwürfe warten auf die normale Freigabe/),
+    page.getByText(
+      /klinische Entwürfe angelegt und warten auf die normale Freigabe/i,
+    ),
   ).toBeVisible();
 });
 
@@ -143,7 +139,7 @@ test("patient switch closes executable proposals and keeps a visible context eve
   ).toBeVisible();
   await expect(
     page.getByText(
-      "Dieser frühere Vorschlag wurde beim Kontextwechsel sicher geschlossen.",
+      "Die frühere offene Änderung wurde beim Kontextwechsel sicher geschlossen.",
     ),
   ).toBeVisible();
 });

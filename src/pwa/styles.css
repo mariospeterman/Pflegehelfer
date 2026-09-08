@@ -29,7 +29,7 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --canvas: #0d1119;
     --surface: #151b26;
     --surface-soft: #1c2431;
@@ -48,6 +48,31 @@
     --success-soft: #123426;
     --shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
   }
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --canvas: #0d1119;
+  --surface: #151b26;
+  --surface-soft: #1c2431;
+  --ink: #f5f7fb;
+  --muted: #aab4c4;
+  --line: #303a4a;
+  --line-strong: #465268;
+  --blue: #88b8f0;
+  --blue-strong: #b8d8ff;
+  --blue-soft: #182b43;
+  --danger: #ff9b91;
+  --danger-soft: #391d20;
+  --warning: #ffc56d;
+  --warning-soft: #392a16;
+  --success: #7be0ae;
+  --success-soft: #123426;
+  --shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
 }
 
 * {
@@ -143,13 +168,17 @@ input:focus-visible {
   flex: 0 0 auto;
   fill: var(--blue);
 }
-.brand-mark circle {
-  fill: var(--surface);
-  stroke: var(--blue);
-  stroke-width: 1.4;
+.brand-mark .brand-conversation {
+  fill: white;
 }
-.brand-mark .brand-cross {
-  fill: var(--danger);
+.brand-mark .brand-signal {
+  fill: var(--success);
+  stroke: var(--surface);
+  stroke-width: 1.5;
+}
+.patient-context-card p,
+.team-inbox-card p {
+  white-space: pre-line;
 }
 .context-brand > span {
   display: grid;
@@ -256,6 +285,26 @@ input:focus-visible {
   font-size: 11px;
   color: var(--muted);
 }
+.theme-select,
+.drawer-role-switcher {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 9px;
+}
+.theme-select select,
+.drawer-role-switcher select {
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  padding: 0 7px;
+}
+.drawer-role-switcher {
+  margin-bottom: 6px;
+}
 .context-footer strong {
   color: var(--ink);
 }
@@ -325,6 +374,9 @@ input:focus-visible {
 .connection-state.offline i {
   background: var(--danger);
 }
+.connection-state.pending i {
+  background: #d78b18;
+}
 .role-switcher select {
   max-width: 220px;
   min-height: 34px;
@@ -363,14 +415,22 @@ input:focus-visible {
 .patient-safety-bar small {
   color: var(--muted);
 }
-.patient-warnings {
+.patient-safety-signals {
   margin-left: auto;
   max-width: 45%;
+  display: grid;
+  justify-items: end;
+  gap: 3px;
+  font-size: 11px;
+}
+.patient-allergy {
   color: var(--danger);
   background: var(--danger-soft);
   border-radius: 9px;
-  padding: 7px 10px;
-  font-size: 11px;
+  padding: 6px 9px;
+}
+.patient-risk {
+  color: var(--warning);
   font-weight: 700;
 }
 .no-patient-context {
@@ -393,13 +453,11 @@ input:focus-visible {
   cursor: pointer;
 }
 .global-notice {
-  position: fixed;
-  top: 76px;
-  left: 50%;
-  transform: translateX(-34%);
+  position: relative;
   z-index: 80;
   min-height: 44px;
   max-width: min(540px, calc(100vw - 32px));
+  margin: 10px auto 0;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -411,6 +469,8 @@ input:focus-visible {
   font-size: 12px;
 }
 .global-notice button {
+  min-width: 44px;
+  min-height: 44px;
   border: 0;
   background: transparent;
   font-size: 20px;
@@ -430,12 +490,18 @@ input:focus-visible {
   display: grid;
   gap: 28px;
 }
+.episode-controls {
+  scroll-margin-top: 132px;
+  scroll-margin-bottom: 240px;
+}
 .workflow-opening-turn {
   align-items: flex-start;
 }
 .assistant-message {
   display: flex;
   gap: 12px;
+  scroll-margin-top: 152px;
+  scroll-margin-bottom: 190px;
 }
 .assistant-avatar {
   width: 30px;
@@ -454,6 +520,72 @@ input:focus-visible {
   width: 100%;
   display: grid;
   gap: 9px;
+}
+.team-thread-list {
+  display: grid;
+  gap: 12px;
+}
+.team-thread {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-soft);
+}
+.team-thread p,
+.team-thread blockquote {
+  margin: 0;
+  white-space: pre-wrap;
+}
+.team-thread blockquote {
+  padding: 9px 11px;
+  border-left: 3px solid var(--green);
+  background: var(--surface);
+}
+.team-thread-meta,
+.team-thread-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+}
+.team-thread-meta span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.team-thread textarea {
+  width: 100%;
+  resize: vertical;
+}
+.team-thread-actions button {
+  min-height: 44px;
+  padding-inline: 14px;
+}
+.patient-summary-sections {
+  display: grid;
+  gap: 10px;
+}
+.patient-summary-sections section {
+  display: grid;
+  grid-template-columns: minmax(88px, 0.28fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--line);
+}
+.patient-summary-sections section:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+.patient-summary-sections h4,
+.patient-summary-sections p {
+  margin: 0;
+}
+.patient-summary-sections h4 {
+  color: var(--blue);
+  font-size: 11px;
+  letter-spacing: 0.03em;
 }
 .assistant-model-status {
   color: var(--muted);
@@ -504,6 +636,15 @@ input:focus-visible {
   box-shadow: 0 5px 18px rgba(15, 23, 42, 0.035);
   overflow: hidden;
 }
+
+.assistant-coworker-message {
+  max-width: 42rem;
+  margin: 0.2rem 0 0.35rem;
+  color: var(--text);
+  font-size: 0.98rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
 .assistant-card header {
   display: grid;
   gap: 3px;
@@ -544,6 +685,95 @@ input:focus-visible {
   background: linear-gradient(145deg, var(--surface), var(--blue-soft));
   border-color: color-mix(in srgb, var(--blue) 23%, var(--line));
   padding: 21px;
+}
+.workday-card {
+  border-color: color-mix(in srgb, var(--blue) 23%, var(--line));
+  padding: 20px;
+}
+.workday-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+.workday-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+.workday-patient {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  padding: 4px 0;
+  cursor: pointer;
+}
+.workday-patient span,
+.workday-patient small,
+.episode-controls > span {
+  color: var(--muted);
+  font-size: 11px;
+}
+.status-button {
+  min-height: 44px;
+  border: 1px solid var(--blue);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--blue);
+  padding: 0 11px;
+  font-size: 11px;
+  font-weight: 780;
+  cursor: pointer;
+}
+.status-button.done {
+  border-color: var(--line);
+  color: var(--success);
+}
+.episode-state {
+  font-size: 11px;
+  font-weight: 750;
+  color: var(--muted);
+}
+.episode-state.active {
+  color: var(--success);
+}
+.episode-state.paused {
+  color: var(--warning);
+}
+.episode-controls,
+.episode-resume,
+.shift-close {
+  display: grid;
+  gap: 9px;
+  margin-top: 14px;
+  padding: 14px;
+  border-radius: 12px;
+  background: var(--blue-soft);
+}
+.episode-controls label {
+  display: grid;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 700;
+}
+.episode-controls textarea {
+  min-height: 64px;
+  resize: vertical;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--ink);
+  padding: 9px;
+}
+.episode-resume .primary,
+.shift-close .primary {
+  justify-self: start;
 }
 .task-list-card {
   border-left: 4px solid var(--blue);
@@ -614,6 +844,10 @@ button:disabled {
   padding: 0 15px;
   font-weight: 730;
   cursor: pointer;
+}
+.alarm-button {
+  border-color: var(--danger);
+  color: var(--danger);
 }
 .assistant-review-items {
   border: 0;
@@ -766,8 +1000,7 @@ button:disabled {
   padding: 3px 1px 8px;
   scrollbar-width: none;
 }
-.quick-prompts button,
-.conversation-history-control {
+.quick-prompts button {
   min-height: 44px;
   white-space: nowrap;
   border: 1px solid var(--line);
@@ -776,11 +1009,6 @@ button:disabled {
   padding: 0 11px;
   font-size: 11px;
   cursor: pointer;
-}
-.conversation-history-control {
-  float: right;
-  margin-bottom: 6px;
-  color: var(--muted);
 }
 .assistant-composer {
   min-height: 62px;
@@ -798,7 +1026,7 @@ button:disabled {
   width: 100%;
   min-height: 44px;
   max-height: 150px;
-  resize: vertical;
+  resize: none;
   border: 0;
   outline: 0;
   color: var(--ink);
@@ -833,7 +1061,8 @@ button:disabled {
 .composer-meta {
   display: block;
   color: var(--muted);
-  font-size: 9px;
+  font-size: 10px;
+  line-height: 1.3;
   text-align: center;
   padding: 7px 12px 0;
 }
@@ -1008,7 +1237,7 @@ button:disabled {
     min-height: 60px;
     padding: 7px 12px;
   }
-  .patient-warnings {
+  .patient-safety-signals {
     max-width: 44%;
     white-space: normal;
     overflow: visible;
@@ -1016,10 +1245,7 @@ button:disabled {
   }
   .composer-dock {
     left: 0;
-    padding: 16px 12px 10px;
-  }
-  .global-notice {
-    transform: translateX(-50%);
+    padding: 16px 12px calc(10px + env(safe-area-inset-bottom));
   }
 }
 
@@ -1032,7 +1258,7 @@ button:disabled {
   }
   .connection-state {
     font-size: 10px;
-    max-width: 126px;
+    max-width: 154px;
     overflow: hidden;
     white-space: nowrap;
   }
@@ -1049,7 +1275,7 @@ button:disabled {
   .patient-safety-bar small {
     font-size: 9px;
   }
-  .patient-warnings {
+  .patient-safety-signals {
     font-size: 11px;
     padding: 6px;
   }
@@ -1083,11 +1309,21 @@ button:disabled {
     padding: 14px;
   }
   .composer-meta {
-    max-height: 26px;
-    overflow: hidden;
+    padding-inline: 4px;
   }
   .quick-prompts {
     margin-right: -12px;
+  }
+  .workday-card {
+    padding: 14px;
+  }
+  .workday-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .status-button,
+  .episode-state {
+    justify-self: stretch;
+    text-align: center;
   }
   .button-row > button,
   .sheet-actions > button {

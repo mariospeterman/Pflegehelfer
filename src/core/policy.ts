@@ -1,138 +1,18 @@
+import { siteConfiguration, type Action } from "./site-config.js";
 import type { DemoUser, Patient, Purpose, Role } from "./types.js";
 
-export type Action =
-  | "patient:read"
-  | "patient:administrative-read"
-  | "task:read"
-  | "task:update"
-  | "task:create"
-  | "observation:draft"
-  | "observation:approve"
-  | "note:draft"
-  | "note:approve"
-  | "communication:read"
-  | "communication:create"
-  | "communication:respond"
-  | "handover:read"
-  | "handover:sign"
-  | "handover:acknowledge"
-  | "round:read"
-  | "round:decide"
-  | "intake:read"
-  | "intake:update"
-  | "provider:operate"
-  | "audit:verify"
-  | "analytics:aggregate";
+export type { Action } from "./site-config.js";
 
-const roleActions: Record<Role, ReadonlySet<Action>> = {
-  "care-assistant": new Set([
-    "patient:read",
-    "task:read",
-    "task:update",
-    "task:create",
-    "observation:draft",
-    "observation:approve",
-    "note:draft",
-    "note:approve",
-    "communication:read",
-    "communication:create",
-    "handover:read",
-    "handover:acknowledge",
-    "round:read",
+const roleActions: Record<Role, ReadonlySet<Action>> = Object.fromEntries(
+  Object.entries(siteConfiguration.roleProfiles).map(([role, profile]) => [
+    role,
+    new Set(profile.actions),
   ]),
-  "registered-nurse": new Set([
-    "patient:read",
-    "task:read",
-    "task:update",
-    "task:create",
-    "observation:draft",
-    "observation:approve",
-    "note:draft",
-    "note:approve",
-    "communication:read",
-    "communication:create",
-    "communication:respond",
-    "handover:read",
-    "handover:sign",
-    "handover:acknowledge",
-    "round:read",
-    "intake:read",
-    "intake:update",
-  ]),
-  physician: new Set([
-    "patient:read",
-    "task:read",
-    "task:update",
-    "task:create",
-    "observation:draft",
-    "observation:approve",
-    "note:draft",
-    "note:approve",
-    "communication:read",
-    "communication:create",
-    "communication:respond",
-    "handover:read",
-    "round:read",
-    "round:decide",
-    "intake:read",
-    "intake:update",
-  ]),
-  pharmacy: new Set([
-    "patient:read",
-    "task:read",
-    "task:update",
-    "task:create",
-    "communication:read",
-    "communication:create",
-    "communication:respond",
-    "handover:read",
-    "round:read",
-    "round:decide",
-    "intake:read",
-    "intake:update",
-  ]),
-  physiotherapy: new Set([
-    "patient:read",
-    "task:read",
-    "task:update",
-    "task:create",
-    "note:draft",
-    "note:approve",
-    "communication:read",
-    "communication:create",
-    "communication:respond",
-    "handover:read",
-    "round:read",
-    "round:decide",
-  ]),
-  "occupational-therapy": new Set([
-    "patient:read",
-    "task:read",
-    "task:update",
-    "task:create",
-    "note:draft",
-    "note:approve",
-    "communication:read",
-    "communication:create",
-    "communication:respond",
-    "handover:read",
-    "round:read",
-    "round:decide",
-  ]),
-  transport: new Set(["task:read", "task:update"]),
-  service: new Set(["task:read", "task:update"]),
-  administration: new Set([
-    "patient:administrative-read",
-    "task:read",
-    "task:update",
-    "intake:read",
-    "intake:update",
-  ]),
-  management: new Set(["analytics:aggregate"]),
-  hr: new Set([]),
-  it: new Set(["provider:operate", "audit:verify"]),
-  "quality-safety": new Set(["audit:verify", "analytics:aggregate"]),
-};
+) as unknown as Record<Role, ReadonlySet<Action>>;
+
+// Permissions are published in config/sites and validated at startup. The
+// compiled Action vocabulary and the patient/purpose checks below remain the
+// hard authorization boundary.
 
 export interface PolicyDecision {
   allow: boolean;

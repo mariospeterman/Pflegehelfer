@@ -145,13 +145,22 @@ export class ApprovedKnowledgeService {
     this.model =
       env.PFH_DEEP_LLM_MODEL ??
       env.PFH_LLM_MODEL ??
-      "deterministic-approved-knowledge-v1";
-    const configuredBaseUrl = env.PFH_DEEP_LLM_BASE_URL ?? env.PFH_LLM_BASE_URL;
+      (this.mode === "hosted-test"
+        ? "gpt-5.6-sol"
+        : "deterministic-approved-knowledge-v1");
+    const configuredBaseUrl =
+      env.PFH_DEEP_LLM_BASE_URL ??
+      env.PFH_LLM_BASE_URL ??
+      (this.mode === "hosted-test" ? "https://api.openai.com/v1" : undefined);
     this.baseUrl =
       this.mode === "local-openai"
         ? validateLocalAiEndpoint(configuredBaseUrl, env)
         : (configuredBaseUrl ?? null);
-    this.apiKey = env.PFH_DEEP_LLM_API_KEY ?? env.PFH_LLM_API_KEY ?? null;
+    this.apiKey =
+      env.PFH_DEEP_LLM_API_KEY ??
+      env.PFH_LLM_API_KEY ??
+      env.OPENAI_API_KEY ??
+      null;
     this.timeoutMs = Math.min(
       60_000,
       Math.max(2_000, Number(env.PFH_DEEP_LLM_TIMEOUT_MS ?? 15_000)),
@@ -159,10 +168,11 @@ export class ApprovedKnowledgeService {
     if (
       this.mode === "hosted-test" &&
       (env.PFH_DEMO_MODE !== "true" ||
-        env.PFH_LLM_DATA_CLASSIFICATION !== "synthetic-only")
+        env.PFH_LLM_DATA_CLASSIFICATION !== "synthetic-only" ||
+        env.PFH_ALLOW_EXTERNAL_AI !== "true")
     )
       throw new Error(
-        "Hosted deep-model mode is restricted to the synthetic demo.",
+        "Hosted deep-model mode requires explicit external-AI consent and synthetic demo data.",
       );
   }
 
@@ -170,14 +180,20 @@ export class ApprovedKnowledgeService {
     return {
       mode: this.mode,
       model: this.model,
-      ready: this.mode === "deterministic" || Boolean(this.baseUrl),
+      ready:
+        this.mode === "deterministic" ||
+        Boolean(this.baseUrl && (this.mode !== "hosted-test" || this.apiKey)),
       documentCount: this.documents.length,
       message:
         this.mode === "deterministic"
           ? "Versionierte lokale Wissenssuche aktiv."
-          : this.baseUrl
-            ? "Getrennter Deep-LLM-Pfad mit lokaler, freigegebener Wissensbasis konfiguriert."
-            : "Deep-LLM-Basis-URL fehlt; extraktiver Fallback bleibt aktiv.",
+          : this.baseUrl && (this.mode !== "hosted-test" || this.apiKey)
+            ? this.mode === "hosted-test"
+              ? "Synthetischer Entwicklertest: externer Auswahlpfad über freigegebene Wissensquellen konfiguriert."
+              : "Getrennter Deep-LLM-Pfad mit lokaler, freigegebener Wissensbasis konfiguriert."
+            : this.mode === "hosted-test"
+              ? "OPENAI_API_KEY beziehungsweise PFH_DEEP_LLM_API_KEY fehlt; extraktiver Fallback bleibt aktiv."
+              : "Deep-LLM-Basis-URL fehlt; extraktiver Fallback bleibt aktiv.",
     };
   }
 
@@ -220,7 +236,12 @@ export class ApprovedKnowledgeService {
       mode: "deterministic-retrieval",
       degraded: this.mode !== "deterministic",
     });
-    if (this.mode === "deterministic" || !this.baseUrl) return fallback();
+    if (
+      this.mode === "deterministic" ||
+      !this.baseUrl ||
+      (this.mode === "hosted-test" && !this.apiKey)
+    )
+      return fallback();
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
