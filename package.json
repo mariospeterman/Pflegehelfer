@@ -17,7 +17,7 @@
     "demo:env": "node scripts/create-demo-env.mjs",
     "dev:infra": "pnpm demo:env && docker compose --env-file .env.demo up -d pflegehelfer-postgres medplum-postgres medplum-redis medplum-server medplum-app",
     "dev:infra:down": "docker compose --env-file .env.demo down",
-    "demo:seed": "node --env-file=.env.demo --import tsx tools/seed-medplum.ts",
+    "demo:seed": "PFH_DEMO_MODE=true PFH_STORAGE_MODE=medplum node --env-file=.env.demo --import tsx tools/seed-medplum.ts",
     "build": "node scripts/clean-dist.mjs && pnpm build:pwa && pnpm build:api",
     "build:pwa": "tsc --noEmit && vite build",
     "build:api": "tsc -p tsconfig.server.json && node scripts/copy-runtime-config.mjs",

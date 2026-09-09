@@ -22,6 +22,9 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    // Development showcase tunnel only. The production build is served by
+    // the BFF/reverse proxy and does not trust forwarded hosts through Vite.
+    allowedHosts: [".ngrok-free.app"],
     proxy: {
       "/api": "http://127.0.0.1:3000",
       "/health": "http://127.0.0.1:3000",
