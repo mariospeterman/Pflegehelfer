@@ -1079,7 +1079,7 @@ export class AssistantService {
                 }
               : {}),
           }),
-          sourceLabel: `${planned.model} · aus deiner Aussage, vor Übernahme geprüft`,
+          sourceLabel: "Aus deiner Aussage · vor Übernahme sicher geprüft",
           reviewItems,
         });
         break;
