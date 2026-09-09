@@ -3,9 +3,14 @@
 The Compose profile is the complete fictional showcase. It runs an application operational PostgreSQL database separately from Medplum's own database. The Helm chart is an application baseline, not a claim that a healthcare production platform is configured.
 
 An empty Medplum database builds the R4 structure definitions, value sets and
-search parameters before its first healthy response. The Compose healthcheck
-therefore has a 12-minute startup grace while retaining the normal 20-second
-interval and bounded retries. A successful probe ends the grace immediately.
+search parameters before its first response. The Compose probe uses the FHIR
+server root as a liveness check because the pinned Medplum 5.1.37
+`/healthcheck` can retain a failed one-shot PostgreSQL client after startup even
+while authenticated FHIR reads and transactions succeed. This is not used as
+clinical readiness: Pflegehelfer `/ready` separately proves OAuth access, FHIR
+search, resource counts, audit integrity and a deliberately failing atomic
+transaction. Compose retains a 12-minute first-start grace; a successful probe
+ends it immediately.
 Operators should observe migration progress and wait for `/ready`; subsequent
 boots reuse the built indexes and are substantially faster.
 

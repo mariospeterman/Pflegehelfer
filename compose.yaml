@@ -117,13 +117,18 @@ services:
           "CMD",
           "node",
           "-e",
-          'fetch("http://localhost:8103/healthcheck").then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))',
+          'fetch("http://localhost:8103/").then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))',
         ]
       interval: 20s
       timeout: 10s
       retries: 20
+      # Medplum 5.1.37's /healthcheck can retain a failed one-shot PostgreSQL
+      # client after startup although authenticated FHIR transactions work.
+      # This container probe is therefore liveness-only; Pflegehelfer /ready
+      # performs the stronger OAuth, FHIR search and transaction-atomicity
+      # checks before clinical writes are enabled.
       # A truly empty Medplum database builds the complete R4 structure,
-      # value-set and search-parameter indexes before serving health checks.
+      # value-set and search-parameter indexes before serving the FHIR root.
       # Slower developer disks can need more than eight minutes on first boot.
       # Failures during this grace period are ignored; any successful probe
       # still marks the service healthy immediately.
