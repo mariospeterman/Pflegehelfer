@@ -459,6 +459,16 @@ export function buildApp(
         );
         const changedResources = nextResources.filter((resource) => {
           const reference = `${resource.resourceType}/${resource.id}`;
+          // AuditEvent and Provenance are append-only evidence. A reset can
+          // legitimately change the current data-classification projection
+          // (for example after repairing a legacy demo checkpoint), but it
+          // must never rewrite evidence that Medplum already accepted.
+          if (
+            (resource.resourceType === "AuditEvent" ||
+              resource.resourceType === "Provenance") &&
+            previousByReference.has(reference)
+          )
+            return false;
           return (
             previousByReference.get(reference) !== JSON.stringify(resource)
           );
