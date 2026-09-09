@@ -16,12 +16,7 @@ class ResetRecordingWorkspace implements ClinicalWorkspace {
     return Promise.resolve();
   }
 
-  synchronize(
-    resources: Resource[],
-    _checkpoint?: ServiceCheckpoint,
-    _removedReferences?: string[],
-    _commandReceipt?: CommandReceipt,
-  ): Promise<void> {
+  synchronize(resources: Resource[]): Promise<void> {
     this.synchronizedResources = resources;
     if (resources.length > 500)
       return Promise.reject(
