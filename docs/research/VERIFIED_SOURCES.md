@@ -1,6 +1,6 @@
 # Verified sources
 
-Access date for all sources: 2026-09-08. Only primary or project-authoritative sources are used for architecture decisions.
+Access date for all sources: 2026-09-09. Only primary or project-authoritative sources are used for architecture decisions. React/Vite/OpenAI/Medplum version-sensitive assumptions were rechecked on this date; package pins remain deliberate and do not auto-upgrade.
 
 | Source / version                              | Official URL                                                                                                       | Verified implication                                                                                                                                                                                                                                                                               |
 | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

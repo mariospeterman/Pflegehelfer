@@ -34,8 +34,8 @@ const managedClinicalResourceTypes = [
   "Communication",
   "QuestionnaireResponse",
 ] satisfies ResourceType[];
-const managedTag =
-  "https://pflegehelfer.example.invalid/data-classification|synthetic";
+const dataClassificationSystem =
+  "https://pflegehelfer.example.invalid/data-classification";
 function isNotFoundError(error: unknown): boolean {
   return (
     (typeof error === "object" &&
@@ -92,6 +92,7 @@ const checkpointSchema = z
     payload: z
       .object({
         formatVersion: z.literal(1),
+        dataClass: z.enum(["synthetic-demo", "institution-local"]).optional(),
         state: z
           .object({
             users: z.array(identifiedRecord),
@@ -103,7 +104,9 @@ const checkpointSchema = z
             notes: z.array(patientBoundRecord),
             communications: z.array(patientBoundRecord),
             intake: z.array(patientBoundRecord),
-            handovers: z.array(identifiedRecord),
+            // Read only for migration of checkpoints written before the
+            // operational workday became the sole handover authority.
+            handovers: z.array(identifiedRecord).optional(),
             roundActions: z.array(patientBoundRecord),
             providerHealth: z.array(
               z.object({ provider: z.string().min(1).max(80) }).passthrough(),
@@ -173,6 +176,10 @@ export function serializeCheckpoint(
           system: "https://pflegehelfer.example.invalid/control-plane",
           code: "workflow-checkpoint-v1",
         },
+        {
+          system: "https://pflegehelfer.example.invalid/data-classification",
+          code: checkpoint.dataClass,
+        },
       ],
     },
     contentType: checkpointContentType,
@@ -224,7 +231,17 @@ export function deserializeCheckpoint(
       "Medplum workflow checkpoint failed authenticity validation.",
     );
   const envelope = checkpointSchema.parse(rawEnvelope);
-  const checkpoint = envelope.payload as unknown as ServiceCheckpoint;
+  const legacyCheckpoint = envelope.payload as unknown as ServiceCheckpoint & {
+    state: ServiceCheckpoint["state"] & { handovers?: Array<{ id: string }> };
+  };
+  const { handovers: retiredHandovers, ...currentState } =
+    legacyCheckpoint.state;
+  void retiredHandovers;
+  const checkpoint: ServiceCheckpoint = {
+    ...legacyCheckpoint,
+    dataClass: legacyCheckpoint.dataClass ?? "institution-local",
+    state: currentState,
+  };
   const assertUnique = (label: string, records: Array<{ id: string }>) => {
     if (new Set(records.map((record) => record.id)).size !== records.length)
       throw new Error(
@@ -239,7 +256,6 @@ export function deserializeCheckpoint(
     note: checkpoint.state.notes,
     communication: checkpoint.state.communications,
     intake: checkpoint.state.intake,
-    handover: checkpoint.state.handovers,
     roundAction: checkpoint.state.roundActions,
     outbox: checkpoint.state.outbox,
   }))
@@ -652,19 +668,31 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
         .filter((resource) => resource.id)
         .map((resource) => `${resource.resourceType}/${resource.id}`),
     );
+    const managedTags = new Set(
+      resources.flatMap((resource) =>
+        (resource.meta?.tag ?? [])
+          .filter(
+            (tag) =>
+              tag.system === dataClassificationSystem && Boolean(tag.code),
+          )
+          .map((tag) => `${dataClassificationSystem}|${tag.code}`),
+      ),
+    );
     const stale: Resource[] = [];
     for (const resourceType of managedClinicalResourceTypes) {
-      const existing = await this.client.searchResources(
-        resourceType,
-        `_tag=${encodeURIComponent(managedTag)}&_count=1000`,
-      );
-      stale.push(
-        ...existing.filter(
-          (resource) =>
-            resource.id &&
-            !expected.has(`${resource.resourceType}/${resource.id}`),
-        ),
-      );
+      for (const managedTag of managedTags) {
+        const existing = await this.client.searchResources(
+          resourceType,
+          `_tag=${encodeURIComponent(managedTag)}&_count=1000`,
+        );
+        stale.push(
+          ...existing.filter(
+            (resource) =>
+              resource.id &&
+              !expected.has(`${resource.resourceType}/${resource.id}`),
+          ),
+        );
+      }
     }
     for (let offset = 0; offset < stale.length; offset += 40) {
       const chunk = stale.slice(offset, offset + 40);

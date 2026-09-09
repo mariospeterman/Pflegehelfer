@@ -55,10 +55,27 @@ export interface ClinicalPlanResult {
   degraded: boolean;
 }
 
-export interface OpenUiCompositionResult {
-  order: string[];
-  composedByModel: boolean;
-  degraded: boolean;
+export interface AuthorizedModelContext {
+  organizationLabel: string;
+  actorRole: string;
+  workflowStep: string;
+  activeEpisodeTitle: string | null;
+  recentPrompts: string[];
+  dataClass: "synthetic-demo" | "institution-local";
+}
+
+function boundedContext(context?: AuthorizedModelContext): string | null {
+  if (!context) return null;
+  return JSON.stringify({
+    organization: context.organizationLabel.slice(0, 120),
+    role: context.actorRole.slice(0, 80),
+    workflowStep: context.workflowStep.slice(0, 80),
+    activeEpisode: context.activeEpisodeTitle?.slice(0, 160) ?? null,
+    recentConversation: context.recentPrompts
+      .slice(-6)
+      .map((prompt) => prompt.slice(0, 400)),
+    dataClass: context.dataClass,
+  });
 }
 
 function deterministicIntent(prompt: string): AssistantIntent {
@@ -71,6 +88,16 @@ function deterministicIntent(prompt: string): AssistantIntent {
   // Explicit refusals always pass through the grounded care compiler. They
   // must never be turned into a draft merely because a route keyword occurs.
   if (explicitlyRefusesDocumentation(text)) return "care-update";
+  // An explicitly addressed message remains communication even when its body
+  // contains bedside-work vocabulary. Recipient resolution and permissions
+  // are checked later; this only preserves the user's stated conversational
+  // intent instead of swallowing it as a generic care update.
+  if (
+    /\b(?:frag|frage|nachricht|informier|sag|schreib|send)\p{L}*\s+@\p{L}[\p{L}-]*/iu.test(
+      text,
+    )
+  )
+    return "draft-physician-question";
   // Governance questions may mention a medicine, treatment or diagnosis.
   // They remain read-only knowledge queries; imperative clinical language is
   // routed into the dedicated fail-closed workflow before any note prefix can
@@ -79,10 +106,11 @@ function deterministicIntent(prompt: string): AssistantIntent {
     return "knowledge-query";
   if (
     requiresDedicatedClinicalWorkflow(text) ||
-    /\b(?:torasemid|insulin|antibiotik|medikament|medikation|dosis|dosierung|therapie|behandlung|diagnos|verordn|verschreib)\b/.test(
-      text,
-    ) ||
-    /\b\d+(?:[,.]\d+)?\s*(?:mg|ie|i\.e\.)\b/.test(text) ||
+    (!completedClinicalReport &&
+      (/\b(?:torasemid|insulin|antibiotik|medikament|medikation|dosis|dosierung|therapie|behandlung|diagnos|verordn|verschreib)\b/.test(
+        text,
+      ) ||
+        /\b\d+(?:[,.]\d+)?\s*(?:mg|ie|i\.e\.)\b/.test(text))) ||
     (!completedClinicalReport &&
       /^\s*(?:bitte\s+)?(?:notiz|dokumentiere|schreib(?:e)?(?:\s+auf)?|anamnes(?:e|is)|pflegebericht)\b/.test(
         text,
@@ -116,6 +144,9 @@ function deterministicIntent(prompt: string): AssistantIntent {
     /\b(?:arzt|ärztin|ärztlichen?\s+dienst)\b[^.;]{0,60}\b(?:nicht|kein(?:e|en)?)\b/.test(
       text,
     ) ||
+    /\b(?:arzt|ärztin)\b[^.;!?]{0,60}\b(?:keineswegs|keinesfalls|mitnichten)\b|\b(?:arzt|ärztin)[^.;!?]{0,35}\b(?:informieren|benachrichtigen|fragen)\b\s*\?\s*nein\b/.test(
+      text,
+    ) ||
     /\b(?:keine?|nicht)\b[^.;]{0,30}\b(?:folgekontrolle|kontrolle|nachmessen)\b/.test(
       text,
     )
@@ -141,6 +172,15 @@ function deterministicIntent(prompt: string): AssistantIntent {
     return "sync-status";
   if (/teamfrage|teamfragen|@|erwähnung|mention/.test(text))
     return "team-inbox";
+  if (
+    /\b(?:blutdruck|rr|temperatur|temp\.?|sättigung|saettigung|spo2|puls|gewicht)\b[^.;!?]{0,30}\d/i.test(
+      text,
+    ) &&
+    !/\b(?:zeige|zeig|was|wie|welche|letzte|aktuelle|nachschauen|lookup)\b|\?/.test(
+      text,
+    )
+  )
+    return "care-update";
   if (/blutdruck|vital|temperatur|sättigung|saettigung|puls|gewicht/.test(text))
     return "latest-vitals";
   if (/offen|aufgabe|task|zu tun|todo/.test(text)) return "open-tasks";
@@ -249,6 +289,7 @@ export class ModelGateway {
             ? { headers: { authorization: `Bearer ${this.apiKey}` } }
             : {}),
           signal: controller.signal,
+          redirect: "error",
         },
       );
       return {
@@ -276,7 +317,10 @@ export class ModelGateway {
     }
   }
 
-  async classify(prompt: string): Promise<IntentClassification> {
+  async classify(
+    prompt: string,
+    context?: AuthorizedModelContext,
+  ): Promise<IntentClassification> {
     const fallback = deterministicIntent(prompt);
     if (this.mode === "disabled" || this.mode === "deterministic")
       return {
@@ -295,7 +339,10 @@ export class ModelGateway {
         model: "deterministic-clinical-router-v1",
         degraded: false,
       };
-    if (!this.canCallConfiguredModel)
+    if (
+      !this.canCallConfiguredModel ||
+      (this.mode === "hosted-test" && context?.dataClass !== "synthetic-demo")
+    )
       return {
         intent: fallback,
         mode: this.mode,
@@ -325,10 +372,19 @@ export class ModelGateway {
                 content:
                   'Classify the user\'s German clinical workflow request. Reply with exactly one JSON object in the exact shape {"intent":"patient-summary"}. The object must contain only the intent key. Replace the example value with exactly one of: patient-summary, open-tasks, latest-vitals, handover, team-inbox, sync-status, draft-note, draft-physician-question, draft-task, care-update, knowledge-query, medication-request, unknown. No explanation, no other keys, no arrays. Never diagnose, prescribe, approve, or invent patient facts.',
               },
+              ...(boundedContext(context)
+                ? [
+                    {
+                      role: "system",
+                      content: `Authorized bounded working context: ${boundedContext(context)}`,
+                    },
+                  ]
+                : []),
               { role: "user", content: prompt.slice(0, 1200) },
             ],
           }),
           signal: controller.signal,
+          redirect: "error",
         },
       );
       if (!response.ok) throw new Error(`model-http-${response.status}`);
@@ -362,118 +418,17 @@ export class ModelGateway {
     }
   }
 
-  async composeOpenUi(
-    candidateTypes: string[],
-  ): Promise<OpenUiCompositionResult> {
-    const handles = candidateTypes.map(
-      (_type, index) => `candidate-${index + 1}`,
-    );
-    const fallback = {
-      order: handles,
-      composedByModel: false,
-      degraded: false,
-    };
-    if (
-      this.mode === "disabled" ||
-      this.mode === "deterministic" ||
-      !this.canCallConfiguredModel ||
-      handles.length < 2
-    )
-      return fallback;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
-    try {
-      const response = await fetch(
-        `${this.baseUrl!.replace(/\/$/, "")}/chat/completions`,
-        {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            ...(this.apiKey ? { authorization: `Bearer ${this.apiKey}` } : {}),
-          },
-          body: JSON.stringify({
-            model: this.model,
-            temperature: 0,
-            max_tokens: 180,
-            messages: [
-              {
-                role: "system",
-                content: [
-                  "Compose a bounded OpenUI presentation using only opaque candidate handles.",
-                  "Available components: ClinicalStack(children: Candidate[]), Candidate(handle: string).",
-                  "Return exactly an OpenUI Lang program: root = ClinicalStack([item1, ...]) followed by one item line for each candidate.",
-                  "Every supplied handle must occur exactly once. Do not add properties, text, facts, actions, URLs, code or handles.",
-                ].join(" "),
-              },
-              {
-                role: "user",
-                content: handles
-                  .map((handle, index) => `${handle}: ${candidateTypes[index]}`)
-                  .join("\n"),
-              },
-            ],
-          }),
-          signal: controller.signal,
-        },
-      );
-      if (!response.ok) throw new Error("composition-http");
-      const body = (await response.json()) as {
-        choices?: { message?: { content?: string } }[];
-      };
-      const content = body.choices?.[0]?.message?.content ?? "";
-      const programLines = content
-        .trim()
-        .split("\n")
-        .map((line) => line.trim())
-        .filter(Boolean);
-      const declarations = new Map(
-        programLines.slice(1).map((line) => {
-          const match = /^(item\d+) = Candidate\("(candidate-\d+)"\)$/.exec(
-            line,
-          );
-          return [match?.[1] ?? "", match?.[2] ?? ""] as const;
-        }),
-      );
-      const rootItems =
-        /^root = ClinicalStack\(\[(.+)\]\)$/
-          .exec(programLines[0] ?? "")?.[1]
-          ?.split(",")
-          .map((item) => item.trim()) ?? [];
-      const declared = rootItems.map((item) => declarations.get(item) ?? "");
-      if (
-        programLines.length !== handles.length + 1 ||
-        !/^root = ClinicalStack\(\[item\d+(, item\d+)*\]\)$/.test(
-          programLines[0] ?? "",
-        ) ||
-        programLines
-          .slice(1)
-          .some(
-            (line) => !/^item\d+ = Candidate\("candidate-\d+"\)$/.test(line),
-          ) ||
-        declared.length !== handles.length ||
-        new Set(declared).size !== handles.length ||
-        declared.some((handle) => !handles.includes(handle)) ||
-        handles.some((handle) => !declared.includes(handle)) ||
-        /<|>|https?:|javascript:|intentToken|patientId|sourceVersion/.test(
-          content,
-        )
-      )
-        throw new Error("composition-schema");
-      return { order: declared, composedByModel: true, degraded: false };
-    } catch {
-      return { ...fallback, degraded: true };
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-
-  async planCareUpdate(prompt: string): Promise<ClinicalPlanResult> {
+  async planCareUpdate(
+    prompt: string,
+    context?: AuthorizedModelContext,
+  ): Promise<ClinicalPlanResult> {
     const inputTimestamp = new Date().toISOString();
     const fallback = deterministicAssistantProposal(prompt, { inputTimestamp });
     if (
       this.mode === "disabled" ||
       this.mode === "deterministic" ||
-      !this.canCallConfiguredModel
+      !this.canCallConfiguredModel ||
+      (this.mode === "hosted-test" && context?.dataClass !== "synthetic-demo")
     )
       return {
         plan: fallback,
@@ -511,10 +466,19 @@ export class ModelGateway {
                 content:
                   "Act as a careful clinical coworker. Extract meaning, never invent it, into the supplied AssistantProposal schema. Keep natural work, observations, task changes, communications, workflow actions, ambiguities, and evidence separate. Copy note structuredText verbatim from its exact source span. Use exact zero-based source spans into the user text. Medication, treatment, and diagnostic commands are forbidden. Never convert mere mentions of doctor, control, medication, or task into actions; negation must remain negation. Do not add patient identity, provider targets, FHIR, diagnoses, prescriptions, URLs, approvals, or default actions. Return only schema-valid JSON.",
               },
+              ...(boundedContext(context)
+                ? [
+                    {
+                      role: "system",
+                      content: `Authorized bounded working context: ${boundedContext(context)}`,
+                    },
+                  ]
+                : []),
               { role: "user", content: prompt.slice(0, 1200) },
             ],
           }),
           signal: controller.signal,
+          redirect: "error",
         },
       );
       if (!response.ok) throw new Error(`model-http-${response.status}`);

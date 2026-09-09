@@ -1,5 +1,6 @@
 import { z } from "zod";
-import siteConfigurationJson from "../../config/sites/tertianum-kronenhof.json" with { type: "json" };
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import type { Role } from "./types.js";
 
 export const actionSchema = z.enum([
@@ -16,7 +17,6 @@ export const actionSchema = z.enum([
   "communication:create",
   "communication:respond",
   "handover:read",
-  "handover:sign",
   "handover:acknowledge",
   "round:read",
   "round:decide",
@@ -103,7 +103,7 @@ export const siteConfigurationSchema = z
     institutionId: z.string().regex(/^[a-z0-9-]+$/),
     siteId: z.string().regex(/^[a-z0-9-]+$/),
     displayName: z.string().trim().min(1).max(120),
-    timeZone: z.literal("Europe/Zurich"),
+    timeZone: z.string().regex(/^Europe\/[A-Za-z_-]+$/),
     sessionTtlHours: z.number().int().min(1).max(24),
     department: z
       .object({
@@ -119,7 +119,7 @@ export const siteConfigurationSchema = z
           name: z.string().trim().min(1).max(80),
           startsAt: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/),
           endsAt: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/),
-          nextResponsibleActorId: z.string().regex(/^u-[a-z0-9-]+$/),
+          nextResponsibleActorId: z.string().regex(/^[a-z0-9-]+$/),
         })
         .strict(),
     ),
@@ -127,17 +127,25 @@ export const siteConfigurationSchema = z
       .object({
         patientRead: z.enum(["wicare", "carecoach"]),
         careDocumentation: z.enum(["wicare", "carecoach"]),
-        observations: z.literal("device-gateway"),
-        administration: z.literal("sap"),
+        observations: z.enum([
+          "wicare",
+          "carecoach",
+          "sap-vitals",
+          "device-gateway",
+        ]),
+        administration: z.enum(["wicare", "carecoach", "sap"]),
       })
       .strict(),
     staffAssignments: z.array(
       z
         .object({
-          actorId: z.string().regex(/^u-[a-z0-9-]+$/),
+          actorId: z.string().regex(/^[a-z0-9-]+$/),
           role: roleSchema,
           shiftId: z.string().regex(/^[a-z0-9-]+$/),
-          patientIds: z.array(z.string().regex(/^p-[a-z0-9-]+$/)).min(1),
+          patientIds: z
+            .array(z.string().regex(/^[a-z0-9-]+$/))
+            .min(1)
+            .max(40),
         })
         .strict(),
     ),
@@ -155,14 +163,15 @@ export const siteConfigurationSchema = z
       .array(
         z
           .object({
-            patientId: z.string().regex(/^p-[a-z0-9-]+$/),
+            patientId: z.string().regex(/^[a-z0-9-]+$/),
             title: z.string().trim().min(3).max(160),
             reason: z.string().trim().min(3).max(240),
             window: z.string().trim().min(3).max(40),
           })
           .strict(),
       )
-      .length(6),
+      .min(1)
+      .max(100),
   })
   .strict()
   .superRefine((configuration, context) => {
@@ -233,8 +242,17 @@ export const siteConfigurationSchema = z
   });
 
 export type SiteConfiguration = z.infer<typeof siteConfigurationSchema>;
-export const siteConfiguration = siteConfigurationSchema.parse(
-  siteConfigurationJson,
+export function parseSiteConfiguration(input: unknown): SiteConfiguration {
+  return siteConfigurationSchema.parse(input);
+}
+
+const defaultSitePackPath = fileURLToPath(
+  new URL("../../config/sites/tertianum-kronenhof.json", import.meta.url),
+);
+export const activeSitePackPath =
+  process.env.PFH_SITE_PACK_PATH ?? defaultSitePackPath;
+export const siteConfiguration = parseSiteConfiguration(
+  JSON.parse(readFileSync(activeSitePackPath, "utf8")) as unknown,
 );
 export const nursingPatientIds = siteConfiguration.nursingAssignments.map(
   (assignment) => assignment.patientId,

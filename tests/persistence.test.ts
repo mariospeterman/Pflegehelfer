@@ -13,6 +13,7 @@ import {
   type ClinicalWorkspaceStatus,
 } from "../src/infrastructure/medplum-workspace.js";
 import { buildApp } from "../src/server/app.js";
+import { InMemoryOperationalStore } from "../src/infrastructure/operational-store.js";
 
 class RecordingWorkspace implements ClinicalWorkspace {
   readonly mode = "medplum" as const;
@@ -550,5 +551,84 @@ describe("durable workflow checkpoint", () => {
         .tasks.filter((task) => task.title === request.payload.title),
     ).toHaveLength(1);
     await app.close();
+  });
+
+  it("restores a still-valid one-use assistant intent after an API restart", async () => {
+    const service = new PflegehelferService();
+    const operationalStore = new InMemoryOperationalStore();
+    const first = buildApp(service, { demoMode: true, operationalStore });
+    await first.inject({
+      method: "POST",
+      url: "/api/v1/assistant/context",
+      headers: {
+        "x-demo-user": "u-nurse",
+        "x-command-id": "00000000-0000-4000-8000-000000000108",
+      },
+      payload: { patientId: "p-anna" },
+    });
+    const query = await first.inject({
+      method: "POST",
+      url: "/api/v1/assistant/query",
+      headers: { "x-demo-user": "u-nurse" },
+      payload: {
+        patientId: "p-anna",
+        prompt:
+          "Notiz: Transfer mit Rollator und Hilfestellung sicher durchgeführt.",
+        inputModality: "typed",
+      },
+    });
+    const response = query.json<{
+      patientContext: {
+        patientId: string;
+        encounterId: string;
+        resourceVersion: number;
+      };
+      components: Array<{ type: string; intentToken?: string }>;
+    }>();
+    const token = response.components.find(
+      (component) => component.type === "DraftAction",
+    )?.intentToken;
+    expect(token).toBeTruthy();
+    await first.close();
+
+    const restarted = buildApp(service, { demoMode: true, operationalStore });
+    const patientContext = response.patientContext;
+    const execution = await restarted.inject({
+      method: "POST",
+      url: `/api/v1/assistant/intents/${token}/execute`,
+      headers: {
+        "x-demo-user": "u-nurse",
+        "x-command-id": "00000000-0000-4000-8000-000000000109",
+      },
+      payload: {
+        patientId: patientContext.patientId,
+        encounterId: patientContext.encounterId,
+        resourceVersion: patientContext.resourceVersion,
+        purpose: "direct-care",
+        explicitlyConfirmed: true,
+      },
+    });
+    expect(execution.statusCode, execution.body).toBe(200);
+    expect(execution.json()).toMatchObject({
+      patientId: "p-anna",
+      status: "pending-provider",
+    });
+    const replay = await restarted.inject({
+      method: "POST",
+      url: `/api/v1/assistant/intents/${token}/execute`,
+      headers: {
+        "x-demo-user": "u-nurse",
+        "x-command-id": "00000000-0000-4000-8000-000000000110",
+      },
+      payload: {
+        patientId: patientContext.patientId,
+        encounterId: patientContext.encounterId,
+        resourceVersion: patientContext.resourceVersion,
+        purpose: "direct-care",
+        explicitlyConfirmed: true,
+      },
+    });
+    expect(replay.statusCode).toBe(403);
+    await restarted.close();
   });
 });

@@ -2,12 +2,16 @@ import { createHash, randomUUID } from "node:crypto";
 import type { Resource } from "@medplum/fhirtypes";
 import { AuditChain } from "./audit.js";
 import {
+  completionEvidenceIsIncomplete,
+  observationNeedsHighAssurance,
+  requiresDedicatedTaskWorkflow,
+} from "../ai/assistant-proposal.js";
+import {
   InMemoryReferenceStatePort,
   type ReferenceStatePort,
 } from "./clinical-data-port.js";
 import {
   communications as seedCommunications,
-  handovers as seedHandovers,
   intake as seedIntake,
   notes as seedNotes,
   observations as seedObservations,
@@ -22,6 +26,7 @@ import {
   type CanonicalClinicalCommand,
   type ProviderRegistry,
   type ProviderProfile,
+  type ProviderOperation,
   type ProviderSimulatorMode,
 } from "./provider-integration/index.js";
 import {
@@ -39,7 +44,6 @@ import type {
   Communication,
   DemoUser,
   DomainError as DomainErrorType,
-  Handover,
   IntakeItem,
   Observation,
   OutboxItem,
@@ -65,7 +69,6 @@ export interface WorkflowState {
   notes: ClinicalNote[];
   communications: Communication[];
   intake: IntakeItem[];
-  handovers: Handover[];
   roundActions: RoundAction[];
   providerHealth: ProviderHealth[];
   outbox: OutboxItem[];
@@ -73,6 +76,7 @@ export interface WorkflowState {
 
 export interface ServiceCheckpoint {
   formatVersion: 1;
+  dataClass: "synthetic-demo" | "institution-local";
   state: WorkflowState;
   audit: AuditEntry[];
   commandReceipts?: CommandReceipt[];
@@ -110,7 +114,6 @@ function initialState(): WorkflowState {
     notes: seedNotes,
     communications: seedCommunications,
     intake: seedIntake,
-    handovers: seedHandovers,
     roundActions: seedRoundActions,
     providerHealth: seedProviderHealth,
     outbox: [],
@@ -130,7 +133,6 @@ export function emptyWorkflowState(): WorkflowState {
     notes: [],
     communications: [],
     intake: [],
-    handovers: [],
     roundActions: [],
     providerHealth: [],
     outbox: [],
@@ -211,6 +213,7 @@ export class PflegehelferService {
   readonly providerProfile: ProviderProfile;
   private readonly commandReceipts = new Map<string, CommandReceipt>();
   readonly aiEnabled = (process.env.PFH_AI_MODE ?? "disabled") !== "disabled";
+  private currentDataClass: "synthetic-demo" | "institution-local";
 
   constructor(
     clinicalData: ReferenceStatePort<WorkflowState> = new InMemoryReferenceStatePort(
@@ -222,6 +225,10 @@ export class PflegehelferService {
     this.clinicalData = clinicalData;
     this.providerRegistry = providerRegistry;
     this.providerProfile = providerProfile;
+    this.currentDataClass =
+      providerProfile === "synthetic-simulator"
+        ? "synthetic-demo"
+        : "institution-local";
   }
 
   private get state(): WorkflowState {
@@ -231,6 +238,10 @@ export class PflegehelferService {
   reset(options: { resetAudit?: boolean; actor?: DemoUser } = {}): void {
     this.clinicalData.replace(initialState());
     this.commandReceipts.clear();
+    this.currentDataClass =
+      this.providerProfile === "synthetic-simulator"
+        ? "synthetic-demo"
+        : "institution-local";
     // The ephemeral in-memory demo/test workspace represents a new synthetic
     // centre after reset. Durable Medplum environments retain their audit
     // history and append the reset event to the existing chain.
@@ -251,6 +262,7 @@ export class PflegehelferService {
   checkpoint(): ServiceCheckpoint {
     return {
       formatVersion: 1,
+      dataClass: this.currentDataClass,
       state: clone(this.state),
       audit: this.audit.snapshot(),
       commandReceipts: [...this.commandReceipts.values()].map(clone),
@@ -260,11 +272,16 @@ export class PflegehelferService {
   restoreCheckpoint(checkpoint: ServiceCheckpoint): void {
     if (checkpoint.formatVersion !== 1)
       throw new Error("Unsupported Pflegehelfer workflow checkpoint version.");
+    this.currentDataClass = checkpoint.dataClass;
     this.audit.restore(checkpoint.audit);
     this.clinicalData.replace(clone(checkpoint.state));
     this.commandReceipts.clear();
     for (const receipt of checkpoint.commandReceipts ?? [])
       this.recordCommandReceipt(receipt);
+  }
+
+  dataClass(): "synthetic-demo" | "institution-local" {
+    return this.currentDataClass;
   }
 
   runAtomically<T>(operation: () => T): T {
@@ -306,12 +323,18 @@ export class PflegehelferService {
 
   /** Full canonical projection for the trusted clinical workspace adapter. */
   fhirResources(): Resource[] {
-    return toFhirResourceSet(this.state, this.audit.snapshot());
+    return toFhirResourceSet(
+      this.state,
+      this.audit.snapshot(),
+      this.currentDataClass,
+    );
   }
 
   /** Incremental access-audit projection for read-only request commits. */
   fhirAuditResourcesSince(index: number): Resource[] {
-    return this.audit.slice(index).map(auditEventToFhirR4);
+    return this.audit
+      .slice(index)
+      .map((entry) => auditEventToFhirR4(entry, this.currentDataClass));
   }
 
   user(userId: string): DemoUser {
@@ -415,6 +438,12 @@ export class PflegehelferService {
         detail: { view: "role-minimized-snapshot" },
       });
     return clone({
+      organization: {
+        institutionId: siteConfiguration.institutionId,
+        siteId: siteConfiguration.siteId,
+        displayName: siteConfiguration.displayName,
+        dataClass: this.currentDataClass,
+      },
       currentUser: user,
       users: this.state.users.map((candidate) => ({
         ...candidate,
@@ -432,15 +461,8 @@ export class PflegehelferService {
         ? this.state.notes.filter((item) => visibleIds.has(item.patientId))
         : [],
       communications: clinical
-        ? this.state.communications.filter(
-            (item) =>
-              visibleIds.has(item.patientId) &&
-              (item.senderId === user.id ||
-                (item.recipientId
-                  ? item.recipientId === user.id
-                  : item.recipientRole === user.role) ||
-                (item.escalatedAt !== null &&
-                  item.escalationRecipientRole === user.role)),
+        ? this.state.communications.filter((item) =>
+            visibleIds.has(item.patientId),
           )
         : [],
       intake: this.state.intake.filter(
@@ -455,40 +477,6 @@ export class PflegehelferService {
             this.patient(item.patientId),
           ).allow,
       ),
-      handovers: clinical
-        ? this.state.handovers
-            .filter((item) => item.patientIds.some((id) => visibleIds.has(id)))
-            .map((item) => ({
-              ...item,
-              patientIds: item.patientIds.filter((id) => visibleIds.has(id)),
-              deltaTaskIds: item.deltaTaskIds.filter((id) =>
-                visibleTasks.some((task) => task.id === id),
-              ),
-              deltaObservationIds: item.deltaObservationIds.filter((id) =>
-                this.state.observations.some(
-                  (observation) =>
-                    observation.id === id &&
-                    visibleIds.has(observation.patientId),
-                ),
-              ),
-              unresolvedCommunicationIds:
-                item.unresolvedCommunicationIds.filter((id) =>
-                  this.state.communications.some(
-                    (communication) =>
-                      communication.id === id &&
-                      visibleIds.has(communication.patientId) &&
-                      (communication.senderId === user.id ||
-                        (communication.recipientId
-                          ? communication.recipientId === user.id
-                          : communication.recipientRole === user.role) ||
-                        (communication.escalatedAt !== null &&
-                          communication.escalationRecipientRole === user.role)),
-                  ),
-                ),
-              narrative:
-                "Patientenbezogene Änderungen werden aus den freigegebenen strukturierten Deltas angezeigt.",
-            }))
-        : [],
       roundActions: clinical
         ? this.state.roundActions.filter((item) =>
             visibleIds.has(item.patientId),
@@ -657,6 +645,12 @@ export class PflegehelferService {
           "Abschlussnachweis ist erforderlich.",
           400,
         );
+      if (completionEvidenceIsIncomplete(input.evidence))
+        throw new DomainError(
+          "VALIDATION",
+          "Der Nachweis beschreibt offene oder nicht durchgeführte Arbeit und kann diese Aufgabe nicht abschliessen.",
+          422,
+        );
       task.state = "completed";
       task.completionEvidence = input.evidence.trim();
       const roundAction = this.state.roundActions.find(
@@ -672,6 +666,8 @@ export class PflegehelferService {
       task.acknowledgedAt = null;
     }
     task.source.version += 1;
+    if (task.patientId && task.source.provider === "pflegehelfer")
+      this.enqueue("task", task);
     this.audit.append({
       actor: user,
       action: `task:${next}`,
@@ -693,6 +689,7 @@ export class PflegehelferService {
       priority: ClinicalTask["priority"];
       dueAt: string;
       purpose?: Purpose | undefined;
+      governedClinicalWorkflow?: "physician-rounds" | undefined;
     },
   ): ClinicalTask {
     const user = this.user(userId);
@@ -715,6 +712,15 @@ export class PflegehelferService {
         "Patientengebundene Aufgaben dürfen nicht an nichtklinische Rollen adressiert werden.",
         400,
       );
+    if (
+      !input.governedClinicalWorkflow &&
+      requiresDedicatedTaskWorkflow(`${input.title}. ${input.reason}`)
+    )
+      throw new DomainError(
+        "VALIDATION",
+        "Medikations-, Behandlungs- und Diagnostikaufträge müssen im dafür freigegebenen Fachworkflow angelegt werden.",
+        422,
+      );
     const task: ClinicalTask = {
       id: `t-${randomUUID()}`,
       patientId: input.patientId ?? null,
@@ -734,6 +740,7 @@ export class PflegehelferService {
       escalation: "Nach Ablauf an zuständige Teamleitung",
       source: this.newSource("pflegehelfer", `Task/${randomUUID()}`),
     };
+    this.enqueue("task", task);
     this.state.tasks.push(task);
     this.audit.append({
       actor: user,
@@ -767,6 +774,21 @@ export class PflegehelferService {
       input.value,
       input.secondaryValue ?? null,
     );
+    const effectiveTime = Date.parse(input.effectiveAt);
+    if (
+      !Number.isFinite(effectiveTime) ||
+      effectiveTime > Date.now() + 5 * 60_000
+    )
+      throw new DomainError(
+        "VALIDATION",
+        "Die Messzeit liegt in der Zukunft. Bitte geplante Messung und bereits erhobenen Wert trennen.",
+        422,
+      );
+    const doubtful = observationNeedsHighAssurance({
+      code: input.code,
+      value: input.value,
+      secondaryValue: input.secondaryValue ?? null,
+    });
     const observation: Observation = {
       id: `o-${randomUUID()}`,
       patientId: patient.id,
@@ -781,7 +803,12 @@ export class PflegehelferService {
       status: "draft",
       version: 1,
       basedOnVersion: patient.source.version,
-      approvalPolicy: input.approvalPolicy ?? "standard",
+      approvalPolicy:
+        doubtful &&
+        (input.approvalPolicy === undefined ||
+          input.approvalPolicy === "standard")
+          ? "high-assurance"
+          : (input.approvalPolicy ?? "standard"),
       approvals: [],
       approvedAt: null,
       source: this.newSource("pflegehelfer", `Observation/${randomUUID()}`),
@@ -1034,6 +1061,7 @@ export class PflegehelferService {
       resultingTaskId: null,
       source: this.newSource("pflegehelfer", `Communication/${randomUUID()}`),
     };
+    this.enqueue("communication", communication);
     this.state.communications.push(communication);
     this.audit.append({
       actor: user,
@@ -1080,10 +1108,14 @@ export class PflegehelferService {
         "Nur die adressierte Person oder das adressierte Team darf antworten.",
         403,
       );
-    if (next === "close" && user.id !== item.senderId)
+    if (
+      next === "close" &&
+      user.id !== item.senderId &&
+      user.id !== item.answeredBy
+    )
       throw new DomainError(
         "AUTH_DENIED",
-        "Nur die anfragende Person darf die Schleife schliessen.",
+        "Nur die anfragende oder antwortende Person darf die Schleife schliessen.",
         403,
       );
     if (next === "acknowledge") {
@@ -1137,6 +1169,8 @@ export class PflegehelferService {
       item.state = "closed";
     }
     item.source.version += 1;
+    if (item.source.provider === "pflegehelfer")
+      this.enqueue("communication", item);
     this.audit.append({
       actor: user,
       action: `communication:${next}`,
@@ -1146,89 +1180,6 @@ export class PflegehelferService {
       detail: { communicationId: item.id, state: item.state },
     });
     return clone(item);
-  }
-
-  acknowledgeHandover(userId: string, id: string, purpose?: Purpose): Handover {
-    const user = this.user(userId);
-    const activePurpose = purpose ?? user.defaultPurpose;
-    const handover = this.state.handovers.find((item) => item.id === id);
-    if (!handover)
-      throw new DomainError("NOT_FOUND", "Übergabe nicht gefunden.", 404);
-    this.authorize(user, "handover:acknowledge", activePurpose);
-    if (handover.status !== "signed")
-      throw new DomainError(
-        "INVALID_STATE",
-        "Nur signierte Übergaben können übernommen werden.",
-        409,
-      );
-    if (handover.signedBy === user.id)
-      throw new DomainError(
-        "AUTH_DENIED",
-        "Signatur und Übernahme benötigen unabhängige Identitäten.",
-        403,
-      );
-    if (
-      !handover.patientIds.every(
-        (patientId) =>
-          decide(user, "patient:read", activePurpose, this.patient(patientId))
-            .allow,
-      )
-    )
-      throw new DomainError(
-        "AUTH_DENIED",
-        "Übergabe enthält Patienten ausserhalb der Behandlungsbeziehung.",
-        403,
-      );
-    handover.acknowledgedBy = user.id;
-    handover.status = "acknowledged";
-    this.audit.append({
-      actor: user,
-      action: "handover:acknowledge",
-      patientId: null,
-      purpose: activePurpose,
-      outcome: "success",
-      detail: { handoverId: id },
-    });
-    return clone(handover);
-  }
-
-  signHandover(userId: string, id: string, purpose?: Purpose): Handover {
-    const user = this.user(userId);
-    const activePurpose = purpose ?? user.defaultPurpose;
-    const handover = this.state.handovers.find((item) => item.id === id);
-    if (!handover)
-      throw new DomainError("NOT_FOUND", "Übergabe nicht gefunden.", 404);
-    this.authorize(user, "handover:sign", activePurpose);
-    if (handover.status !== "draft")
-      throw new DomainError(
-        "INVALID_STATE",
-        "Nur ein Entwurf kann signiert werden.",
-        409,
-      );
-    if (
-      !handover.patientIds.every(
-        (patientId) =>
-          decide(user, "patient:read", activePurpose, this.patient(patientId))
-            .allow,
-      )
-    ) {
-      throw new DomainError(
-        "AUTH_DENIED",
-        "Übergabe enthält Patienten ausserhalb der Behandlungsbeziehung.",
-        403,
-      );
-    }
-    handover.signedBy = user.id;
-    handover.status = "signed";
-    this.audit.append({
-      actor: user,
-      action: "handover:sign",
-      patientId: null,
-      purpose: activePurpose,
-      outcome: "success",
-      detail: { handoverId: id },
-    });
-    return clone(handover);
   }
 
   reviewIntakeItem(
@@ -1358,6 +1309,7 @@ export class PflegehelferService {
       priority: "routine",
       dueAt: input.deadline,
       purpose,
+      governedClinicalWorkflow: "physician-rounds",
     });
     const action: RoundAction = {
       id: `r-${randomUUID()}`,
@@ -1788,54 +1740,70 @@ export class PflegehelferService {
   }
 
   private enqueue(
-    type: "observation" | "note",
-    record: Observation | ClinicalNote,
+    type: "observation" | "note" | "task" | "communication",
+    record: Observation | ClinicalNote | ClinicalTask | Communication,
   ): void {
+    if (record.patientId === null) return;
+    const patientId = record.patientId;
     const provider =
       type === "observation"
-        ? "device-gateway"
-        : (record as ClinicalNote).provider;
-    const operation =
-      type === "observation" ? "Observation.write" : "NursingNote.write";
+        ? siteConfiguration.providerRoutes.observations
+        : type === "note"
+          ? (record as ClinicalNote).provider
+          : siteConfiguration.providerRoutes.careDocumentation;
+    const operation = {
+      observation: "Observation.write",
+      note: "NursingNote.write",
+      task: "Task.write",
+      communication: "Communication.write",
+    }[type] as ProviderOperation;
     const capability = this.providerRegistry
       .manifest(provider, this.providerProfile)
       ?.capabilities.find((item) => item.operation === operation)?.support;
-    if (capability !== "supported" && capability !== "conditional")
-      throw new DomainError(
-        "EXTERNAL_VENDOR_GATE",
-        `${provider}: ${operation} ist ohne verifizierten Vendor-Vertrag gesperrt.`,
-        409,
-      );
-    const key = idempotency(type, record.id, record.version);
+    const providerWriteAvailable =
+      capability === "supported" || capability === "conditional";
+    if (!providerWriteAvailable && (type === "observation" || type === "note"))
+      (record as Observation | ClinicalNote).status = "external-gated";
+    const version =
+      "version" in record ? record.version : record.source.version;
+    const key = idempotency(type, record.id, version);
     if (this.state.outbox.some((item) => item.idempotencyKey === key)) return;
     this.state.outbox.push({
       id: `out-${randomUUID()}`,
       aggregateType: type,
       aggregateId: record.id,
-      patientId: record.patientId,
+      patientId,
       provider,
       idempotencyKey: key,
       expectedProviderVersion: null,
       canonicalCommand: {
         kind:
-          type === "observation" ? "observation.upsert" : "nursing-note.upsert",
+          type === "observation"
+            ? "observation.upsert"
+            : type === "note"
+              ? "nursing-note.upsert"
+              : type === "task"
+                ? "task.upsert"
+                : "communication.upsert",
         resource: clone(record),
       },
       correlationId: randomUUID(),
-      causationId: `${type}:${record.id}:approval:${record.version}`,
+      causationId: `${type}:${record.id}:approval:${version}`,
       attempts: 0,
-      state: "pending",
+      state: providerWriteAvailable ? "pending" : "external-gated",
       createdAt: new Date().toISOString(),
       lastAttemptAt: null,
       receiptId: null,
       providerVersion: null,
-      errorCode: null,
+      errorCode: providerWriteAvailable ? null : "EXTERNAL_VENDOR_GATE",
       errorClassification: null,
       conflictSnapshot: null,
     });
   }
 
   private updateAggregateSync(item: OutboxItem, state: SyncState): void {
+    if (item.aggregateType === "task" || item.aggregateType === "communication")
+      return;
     const collection =
       item.aggregateType === "observation"
         ? this.state.observations
@@ -1857,13 +1825,21 @@ export class PflegehelferService {
       operation:
         item.aggregateType === "observation"
           ? "Observation.write"
-          : "NursingNote.write",
+          : item.aggregateType === "note"
+            ? "NursingNote.write"
+            : item.aggregateType === "task"
+              ? "Task.write"
+              : "Communication.write",
       patientReference: `Patient/${item.patientId}`,
       resource: {
         resourceType:
           item.aggregateType === "observation"
             ? "Observation"
-            : "QuestionnaireResponse",
+            : item.aggregateType === "note"
+              ? "QuestionnaireResponse"
+              : item.aggregateType === "task"
+                ? "Task"
+                : "Communication",
         id: item.aggregateId,
         body: clone(resource) as unknown as Readonly<Record<string, unknown>>,
       },
@@ -1872,7 +1848,10 @@ export class PflegehelferService {
       correlationId: item.correlationId,
       causationId: item.causationId,
       idempotencyKey: item.idempotencyKey,
-      approvedAt: resource.approvedAt ?? item.createdAt,
+      approvedAt:
+        "approvedAt" in resource && resource.approvedAt
+          ? resource.approvedAt
+          : item.createdAt,
     };
   }
 
@@ -1889,7 +1868,10 @@ export class PflegehelferService {
       createdAt: item.createdAt,
       expectedProviderVersion: item.expectedProviderVersion,
       providerVersion: item.providerVersion,
-      localVersion: item.canonicalCommand.resource.version,
+      localVersion:
+        "version" in item.canonicalCommand.resource
+          ? item.canonicalCommand.resource.version
+          : item.canonicalCommand.resource.source.version,
       localHash: createHash("sha256")
         .update(JSON.stringify(item.canonicalCommand.resource))
         .digest("hex"),
@@ -1909,7 +1891,11 @@ export class PflegehelferService {
       localSummary:
         "label" in resource
           ? `${resource.label}: ${resource.value}${resource.secondaryValue !== null ? `/${resource.secondaryValue}` : ""} ${resource.unit}`
-          : resource.structuredText,
+          : "structuredText" in resource
+            ? resource.structuredText
+            : "title" in resource
+              ? resource.title
+              : resource.request,
       conflictSnapshot: item.conflictSnapshot
         ? { ...item.conflictSnapshot }
         : null,
@@ -1924,11 +1910,11 @@ export class PflegehelferService {
     if (!Number.isFinite(value))
       throw new DomainError("VALIDATION", "Messwert muss endlich sein.", 400);
     const ranges: Record<Observation["code"], [number, number]> = {
-      "blood-pressure": [30, 300],
-      temperature: [25, 45],
-      "oxygen-saturation": [40, 100],
-      pulse: [20, 300],
-      weight: [1, 500],
+      "blood-pressure": [1, 500],
+      temperature: [-20, 60],
+      "oxygen-saturation": [0, 100],
+      pulse: [0, 500],
+      weight: [0, 1000],
     };
     const [min, max] = ranges[code];
     if (value < min || value > max)
@@ -1939,10 +1925,7 @@ export class PflegehelferService {
       );
     if (
       code === "blood-pressure" &&
-      (secondaryValue === null ||
-        secondaryValue < 20 ||
-        secondaryValue > 200 ||
-        secondaryValue >= value)
+      (secondaryValue === null || secondaryValue < 0 || secondaryValue > 500)
     )
       throw new DomainError(
         "VALIDATION",

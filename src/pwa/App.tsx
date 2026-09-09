@@ -115,6 +115,104 @@ function PatientSafetyBar({ patient }: { patient: Patient }) {
   );
 }
 
+function CountersignaturePanel({
+  snapshot,
+  userId,
+  activePatientId,
+  done,
+}: {
+  snapshot: AppSnapshot;
+  userId: string;
+  activePatientId: string | null;
+  done: (message: string) => Promise<void>;
+}) {
+  const reviewed = snapshot.observations.filter(
+    (item) => item.status === "reviewed" && item.patientId === activePatientId,
+  );
+  const [busyId, setBusyId] = useState<string | null>(null);
+  if (reviewed.length === 0) return null;
+  return (
+    <section
+      className="countersignature-panel"
+      aria-label="Unabhängige Zweitfreigaben"
+    >
+      <strong>Ungewöhnliche Messwerte · unabhängige Zweitfreigabe</strong>
+      {reviewed.map((item) => {
+        const patient = snapshot.patients.find(
+          (candidate) => candidate.id === item.patientId,
+        );
+        const ownReview = item.approvals.includes(userId);
+        return (
+          <div key={item.id}>
+            <span>
+              {patient?.room ?? "–"} · {patient?.displayName ?? "Patient"} ·{" "}
+              {item.label} {item.value}
+              {item.secondaryValue === null
+                ? ""
+                : `/${item.secondaryValue}`}{" "}
+              {item.unit}
+              {patient && (
+                <small>
+                  Geb. {patient.birthDate} · Fall {patient.mrn} · gemessen{" "}
+                  {new Date(item.effectiveAt).toLocaleString("de-CH", {
+                    timeZone: "Europe/Zurich",
+                  })}{" "}
+                  · Quelle {item.source.provider}
+                  {item.deviceId ? ` / ${item.deviceId}` : ""} · Erstprüfung{" "}
+                  {item.approvals
+                    .map(
+                      (id) =>
+                        snapshot.users.find((candidate) => candidate.id === id)
+                          ?.displayName ?? id,
+                    )
+                    .join(", ")}
+                </small>
+              )}
+            </span>
+            <button
+              className="primary"
+              aria-label={`Identität und Wert bestätigen: ${patient?.displayName ?? item.patientId}, ${item.label} ${item.value}${item.secondaryValue === null ? "" : `/${item.secondaryValue}`} ${item.unit}`}
+              disabled={busyId !== null || ownReview || !patient}
+              onClick={() => {
+                if (!patient) return;
+                setBusyId(item.id);
+                void api(`/api/v1/observation/${item.id}/approve`, userId, {
+                  method: "POST",
+                  body: JSON.stringify({
+                    expectedVersion: item.version,
+                    patientMrn: patient.mrn,
+                    patientBirthDate: patient.birthDate,
+                    reviewedDiff: true,
+                  }),
+                })
+                  .then(() =>
+                    done(
+                      "Unabhängige Zweitfreigabe erfasst; Anbieterabgleich bleibt sichtbar.",
+                    ),
+                  )
+                  .catch((failure: unknown) =>
+                    done(
+                      failure instanceof Error
+                        ? failure.message
+                        : "Zweitfreigabe fehlgeschlagen.",
+                    ),
+                  )
+                  .finally(() => setBusyId(null));
+              }}
+            >
+              {ownReview
+                ? "Andere Fachperson erforderlich"
+                : busyId === item.id
+                  ? "Wird geprüft…"
+                  : "Identität & Wert bestätigen"}
+            </button>
+          </div>
+        );
+      })}
+    </section>
+  );
+}
+
 function PflegehelferMark() {
   return (
     <svg viewBox="0 0 40 40" aria-hidden="true" className="brand-mark">
@@ -137,16 +235,18 @@ function ContextPanel({
   modal,
   theme,
   onTheme,
+  busy,
   close,
 }: {
   snapshot: AppSnapshot;
   patient: Patient | null;
-  onPatient: (id: string | null) => void;
+  onPatient: (id: string | null) => Promise<boolean>;
   onPrompt: (text: string) => void;
   onUser: (id: string) => void;
   modal: boolean;
   theme: "system" | "light" | "dark";
   onTheme: (theme: "system" | "light" | "dark") => void;
+  busy: boolean;
   close: () => void;
 }) {
   const actions = [
@@ -166,7 +266,7 @@ function ContextPanel({
         <PflegehelferMark />
         <span>
           <strong>Pflegehelfer</strong>
-          <small>Tertianum Kronenhof · Demo</small>
+          <small>{snapshot.organization.displayName}</small>
         </span>
         <button
           className="drawer-close"
@@ -178,11 +278,14 @@ function ContextPanel({
       </div>
       <button
         className="new-context-button"
-        onClick={() => {
-          onPatient(null);
-          onPrompt("Übergabe");
-          close();
-        }}
+        disabled={busy}
+        onClick={() =>
+          void onPatient(null).then((changed) => {
+            if (!changed) return;
+            onPrompt("Übergabe");
+            close();
+          })
+        }
       >
         <span aria-hidden="true">＋</span> Aktuellen Arbeitstag öffnen
       </button>
@@ -190,6 +293,7 @@ function ContextPanel({
         {actions.map(([label, prompt]) => (
           <button
             key={label}
+            disabled={busy}
             onClick={() => {
               onPrompt(prompt);
               close();
@@ -206,11 +310,13 @@ function ContextPanel({
         {snapshot.patients.map((item) => (
           <button
             key={item.id}
+            disabled={busy}
             className={patient?.id === item.id ? "active" : ""}
-            onClick={() => {
-              onPatient(item.id);
-              close();
-            }}
+            onClick={() =>
+              void onPatient(item.id).then((changed) => {
+                if (changed) close();
+              })
+            }
           >
             <span className="room-dot">{item.room}</span>
             <span>
@@ -225,6 +331,7 @@ function ContextPanel({
           <span>Demo-Rolle</span>
           <select
             value={snapshot.currentUser.id}
+            disabled={busy}
             onChange={(event) => onUser(event.target.value)}
           >
             {snapshot.users.map((user) => (
@@ -247,8 +354,19 @@ function ContextPanel({
             <option value="dark">Dunkel</option>
           </select>
         </label>
-        <strong>Synthetische Demonstration</strong>
-        <span>Alle Personen und klinischen Daten sind frei erfunden.</span>
+        {snapshot.organization.dataClass === "synthetic-demo" ? (
+          <>
+            <strong>Synthetische Demonstration</strong>
+            <span>Alle Personen und klinischen Daten sind frei erfunden.</span>
+          </>
+        ) : (
+          <>
+            <strong>Institutioneller Arbeitsbereich</strong>
+            <span>
+              Es gelten die freigegebenen Datenschutz- und Betriebsregeln.
+            </span>
+          </>
+        )}
       </footer>
     </aside>
   );
@@ -258,14 +376,12 @@ function DraftHandoffSheet({
   handoff,
   patient,
   userId,
-  users,
   close,
   done,
 }: {
   handoff: AssistantHandoff;
   patient: Patient;
   userId: string;
-  users: AppSnapshot["users"];
   close: () => void;
   done: (message: string) => Promise<void>;
 }) {
@@ -273,7 +389,6 @@ function DraftHandoffSheet({
   const [error, setError] = useState<string | null>(null);
   const dialogRef = useRef<HTMLElement | null>(null);
   const closeRef = useRef<HTMLButtonElement | null>(null);
-  const recipient = users.find((candidate) => candidate.role === "physician");
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
     closeRef.current?.focus();
@@ -322,7 +437,7 @@ function DraftHandoffSheet({
             request: handoff.title,
             reason: handoff.reason,
             recipientRole: handoff.recipientRole ?? "physician",
-            recipientId: recipient?.id ?? null,
+            recipientId: handoff.recipientId ?? null,
             priority: "routine",
             dueAt: handoff.dueAt,
           }),
@@ -389,6 +504,9 @@ function DraftHandoffSheet({
           <strong>{handoff.title}</strong>
           <p>{handoff.reason}</p>
           <small>
+            {handoff.kind === "communication"
+              ? "Empfänger: Ärztlicher Dienst (keine Person automatisch gewählt). "
+              : ""}
             Patient, Empfänger und Inhalt werden beim Senden serverseitig erneut
             geprüft.
           </small>
@@ -434,6 +552,7 @@ export function App() {
   const [handoff, setHandoff] = useState<AssistantHandoff | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [assistantBusy, setAssistantBusy] = useState(false);
+  const [contextBusy, setContextBusy] = useState(false);
   const [theme, setTheme] = useState<"system" | "light" | "dark">(() => {
     const stored = localStorage.getItem("pfh-theme");
     return stored === "light" || stored === "dark" ? stored : "system";
@@ -490,6 +609,10 @@ export function App() {
       localStorage.setItem("pfh-theme", theme);
     }
   }, [theme]);
+  useEffect(() => {
+    if (snapshot)
+      document.title = `Pflegehelfer · ${snapshot.organization.displayName}`;
+  }, [snapshot]);
   useEffect(() => {
     if (!drawerOpen) return;
     const previous = document.activeElement as HTMLElement | null;
@@ -616,18 +739,41 @@ export function App() {
       })
     : "loading";
 
-  const choosePatient = async (id: string | null) => {
-    await api("/api/v1/assistant/context", userId, {
-      method: "POST",
-      body: JSON.stringify({ patientId: id }),
-    });
-    setSelectedPatientId(id);
-    if (id) sessionStorage.setItem("pfh-patient-context", id);
-    else sessionStorage.removeItem("pfh-patient-context");
+  const choosePatient = async (id: string | null): Promise<boolean> => {
+    if (assistantBusy || contextBusy) return false;
+    const requestGeneration = generation.current;
+    const requestUserId = userId;
+    setContextBusy(true);
+    setNotice(null);
+    try {
+      await api("/api/v1/assistant/context", userId, {
+        method: "POST",
+        body: JSON.stringify({ patientId: id }),
+      });
+      if (requestGeneration !== generation.current || requestUserId !== userId)
+        return false;
+      setSelectedPatientId(id);
+      if (id) sessionStorage.setItem("pfh-patient-context", id);
+      else sessionStorage.removeItem("pfh-patient-context");
+      return true;
+    } catch (failure) {
+      if (requestGeneration !== generation.current || requestUserId !== userId)
+        return false;
+      setNotice(
+        failure instanceof Error
+          ? failure.message
+          : "Patientenkontext konnte nicht sicher gewechselt werden.",
+      );
+      return false;
+    } finally {
+      if (requestGeneration === generation.current && requestUserId === userId)
+        setContextBusy(false);
+    }
   };
   const prompt = (text: string) => setLaunchPrompt({ id: Date.now(), text });
   const changeUser = (next: string) => {
     generation.current += 1;
+    setContextBusy(false);
     sessionStorage.setItem("pfh-demo-user", next);
     sessionStorage.removeItem("pfh-patient-context");
     setSelectedPatientId(null);
@@ -644,7 +790,7 @@ export function App() {
         <strong>
           {notice ? "Sicherer Fehlerzustand" : "Pflegehelfer verbindet…"}
         </strong>
-        <p>{notice ?? "Tertianum Kronenhof · Demo"}</p>
+        <p>{notice ?? "Pflegehelfer wird sicher geladen."}</p>
         {notice && online && (
           <button className="primary" onClick={() => void load()}>
             Erneut verbinden
@@ -678,7 +824,7 @@ export function App() {
       <ContextPanel
         snapshot={snapshot}
         patient={patient}
-        onPatient={(id) => void choosePatient(id)}
+        onPatient={choosePatient}
         onPrompt={prompt}
         modal={drawerOpen}
         onUser={(id) => {
@@ -687,6 +833,7 @@ export function App() {
         }}
         theme={theme}
         onTheme={setTheme}
+        busy={contextBusy || assistantBusy}
         close={() => setDrawerOpen(false)}
       />
       <main
@@ -703,7 +850,7 @@ export function App() {
           </button>
           <div className="header-identity">
             <strong>Pflegehelfer</strong>
-            <span>Tertianum Kronenhof · Demo</span>
+            <span>{snapshot.organization.displayName}</span>
           </div>
           <div className="header-state">
             <span
@@ -727,7 +874,7 @@ export function App() {
               <select
                 value={userId}
                 onChange={(event) => changeUser(event.target.value)}
-                disabled={assistantBusy}
+                disabled={assistantBusy || contextBusy}
               >
                 {snapshot.users.map((user) => (
                   <option value={user.id} key={user.id}>
@@ -759,6 +906,15 @@ export function App() {
             </button>
           </div>
         )}
+        <CountersignaturePanel
+          snapshot={snapshot}
+          userId={userId}
+          activePatientId={selectedPatientId}
+          done={async (message) => {
+            await load();
+            setNotice(message);
+          }}
+        />
         <AssistantSurface
           patient={patient}
           userId={userId}
@@ -772,6 +928,7 @@ export function App() {
           opening={opening}
           launchPrompt={launchPrompt}
           onSelectPatient={(id) => void choosePatient(id)}
+          externallyBusy={contextBusy}
           onBusyChange={setAssistantBusy}
           workday={
             ["care-assistant", "registered-nurse"].includes(
@@ -787,6 +944,11 @@ export function App() {
               body: JSON.stringify(command),
             });
             setWorkday(next);
+            const activePatientId = next.activeEpisode?.patientId ?? null;
+            if (activePatientId) {
+              setSelectedPatientId(activePatientId);
+              sessionStorage.setItem("pfh-patient-context", activePatientId);
+            }
             await load();
           }}
         />
@@ -796,7 +958,6 @@ export function App() {
           handoff={handoff}
           patient={patient}
           userId={userId}
-          users={snapshot.users}
           close={() => {
             setHandoff(null);
             setNotice("Entwurf verworfen. Es wurde nichts gesendet.");

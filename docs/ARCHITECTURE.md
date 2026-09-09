@@ -1,7 +1,7 @@
 # Pflegehelfer production architecture
 
 Status: canonical target architecture
-Last verified: 2026-09-08
+Last verified: 2026-09-09
 
 This is the single architectural source of truth. Product behaviour is in `PRODUCT_EXPERIENCE.md`; configurable journeys are in `WORKFLOWS.md`. ADRs explain decisions but do not override this document.
 
@@ -53,6 +53,8 @@ The deployable baseline is one modular TypeScript backend, one PWA, PostgreSQL, 
 | Live state | PostgreSQL event log | Replayable audience-filtered events; notifications only wake readers |
 | AI | Never an authority | May interpret and compose presentation; cannot authorize, approve or invent facts |
 
+The operational workday is the sole live handover and responsibility authority. It owns patient-by-patient acknowledgement, active/paused episodes, defer decisions and receiving-shift receipts. Imported FHIR/provider documents may be cited as evidence, but they never provide a second mutable or fallback responsibility state.
+
 PostgreSQL must not become a duplicate patient record. It stores operational references, normalized action proposals, minimal replay receipts and projection state. Medplum must not store opaque whole-application checkpoints or actor-owned chat binaries.
 
 ## Working sessions and workflows
@@ -71,7 +73,7 @@ Reference journeys:
 
 ## One conversation and explicit context
 
-An assistant thread contains immutable sequenced messages. Patient changes are server commands that append `ContextChanged` and increment `context_revision`. Outstanding intents and voice receipts for the old revision become unusable. No hidden model memory crosses patients.
+An assistant thread contains immutable sequenced messages. Patient changes are server commands that append `ContextChanged` and increment `context_revision`. Each response is stored with the patient and revision captured when its request began, even if a slower request completes after a context switch. Recent model context is filtered to the active authorized patient. Outstanding intents and voice receipts for the old revision become unusable. No hidden model memory crosses patients.
 
 Sidebar/mobile-drawer entries are context/history controls:
 
@@ -97,7 +99,7 @@ Processing order:
 1. Authenticate; resolve organization, role, session, thread, patient context and purpose.
 2. Read the minimum authorized FHIR/workflow projection and audit disclosure.
 3. Build a generic typed `AssistantProposal` containing understood facts, work performed, observations, task changes, communications, workflow actions, ambiguities and evidence. A model may propose meaning, but deterministic code independently validates every executable sub-schema.
-4. Let the configured model compose allowlisted presentation using opaque candidate handles. Local models are the production default; hosted endpoints are synthetic-demo only.
+4. Render the validated candidates through the allowlisted deterministic composer. A configured model may later compose bounded presentation using opaque candidate handles, but that path is not claimed complete until it passes the same catalog/grounding tests. Local models are the production default; hosted endpoints are synthetic-demo only.
 5. Stream non-executable OpenUI fragments.
 6. Validate the complete program: catalog, bounds, candidate ownership, context revision, evidence/source versions, workflow and policy.
 7. Persist the validated internal proposal and issue action authority server-side.
@@ -113,13 +115,17 @@ The model may interpret “Dokumentiere RR 128/76, Mobilisation erledigt und fra
 
 Every executable intent is one-use, short-lived, stored as a cryptographic hash, and bound to organization, actor, role, purpose, patient/encounter, session/thread, workflow version/step, context revision, proposal hash, policy version and resource versions. Consumption and command acceptance are atomic.
 
+Normal note/measurement review produces a locally approved record whose external acknowledgement remains visible. A clinically doubtful measurement uses `high-assurance`: the first review only creates a reviewed record, current-vitals queries exclude it, and a reachable independent countersignature is required before provider delivery.
+
 High-risk/irreversible actions use purpose-built review forms. Medication support remains read-only/communication-oriented until separately governed.
 
 The `AssistantProposal` compiler is the language-normalization boundary: **conversational outside, structured inside**. Staff never sees proposal/schema terminology or a form wizard. The assistant responds like a coworker, uses current patient/workflow/session context, asks at most one concise blocking question, then renders only the minimum useful review controls. One utterance may contain several observations, partial work, deferral, communication or an interruption, but only explicitly requested executable changes receive authority. Negated, historical, refused, uncertain and corrected statements remain distinct. The compiler never supplies a default follow-up or silently converts documentation into a performed or billable service. Medication, treatment and diagnostic commands fail closed into separately governed workflows. See ADR-0008.
 
 ## Interruptible nursing workday
 
-The nursing conversation begins with an authorized, patient-level incoming handover roster. Every patient context is independently checked before the plan opens. Starting care creates a patient/encounter-bound work episode; an alarm or spontaneous room visit pauses that episode, starts a separate episode, and leaves an explicit return path. Segment timing excludes interruptions. Completion requires what-was-done evidence, and shift transfer is blocked until every active or paused responsibility is resolved. The outgoing handover and provider reconciliation remain separate acknowledgements; neither is implied by local documentation.
+The nursing conversation begins with an authorized, actor-owned, versioned patient-level incoming handover roster. Acknowledgements bind the exact handover ID/version and actor. Every patient context is independently checked before the plan opens. Starting care creates a patient/encounter-bound work episode; one planned responsibility can have only one episode, while alarms/spontaneous visits are explicit separate episodes. An interruption pauses the original episode and leaves an explicit return path. Segment timing excludes interruptions. Terminal episodes cannot be resumed or edited. Completion requires what-was-done evidence, and shift transfer is blocked until every active or paused responsibility is resolved. A transferred shift is final. The outgoing handover and provider reconciliation remain separate acknowledgements; neither is implied by local documentation.
+
+The outgoing transfer is only complete when the configured receiving actor acknowledges the durable receipt. “Sent” and “accepted” are distinct UI states. Role-addressed communication likewise stays in the role queue until an authorized person claims or answers it; user-list order never selects a recipient.
 
 ## Command transaction and projection
 

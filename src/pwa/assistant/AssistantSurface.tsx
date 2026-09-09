@@ -107,7 +107,14 @@ export interface AssistantHandoff {
   patientId: string;
   title: string;
   reason: string;
-  recipientRole?: "physician";
+  recipientRole?:
+    | "registered-nurse"
+    | "physician"
+    | "pharmacy"
+    | "physiotherapy"
+    | "occupational-therapy";
+  recipientId?: string | null;
+  recipientLabel?: string;
   dueAt: string;
 }
 
@@ -226,7 +233,13 @@ function WorkdayCard({
     workday.stage === "handover"
       ? "Übergabe patientenweise übernehmen"
       : workday.stage === "closed"
-        ? "Verantwortung an den Spätdienst übergeben"
+        ? workday.handover.status === "acknowledged"
+          ? "Die nächste Schicht hat die offene Verantwortung übernommen"
+          : workday.outgoingTransfers.some(
+                (transfer) => transfer.state === "pending",
+              )
+            ? "Übergabe gesendet · Übernahme noch ausstehend"
+            : "Schicht sicher abgeschlossen"
         : workday.activeEpisode
           ? "Du arbeitest gerade in einem Patientenkontext"
           : workday.resumableEpisode
@@ -289,6 +302,7 @@ function WorkdayCard({
                   <section className="workday-row" key={patientId}>
                     <button
                       className="workday-patient"
+                      disabled={busy}
                       onClick={() => selectPatient(patientId)}
                     >
                       <strong>
@@ -314,6 +328,7 @@ function WorkdayCard({
                         perform(
                           {
                             type: "acknowledge-handover",
+                            handoverId: workday.handover.id,
                             patientId,
                             version: workday.handover.version,
                           },
@@ -338,6 +353,7 @@ function WorkdayCard({
                   <section className="workday-row" key={item.patientId}>
                     <button
                       className="workday-patient"
+                      disabled={busy}
                       onClick={() => selectPatient(item.patientId)}
                     >
                       <strong>
@@ -347,25 +363,48 @@ function WorkdayCard({
                       <small>{item.reason}</small>
                     </button>
                     {item.status === "planned" && !workday.activeEpisode && (
-                      <button
-                        className="status-button"
-                        disabled={busy}
-                        aria-label={`Arbeit beginnen: Zimmer ${listedPatient.room}, ${listedPatient.displayName}`}
-                        onClick={() =>
-                          perform(
-                            {
-                              type: "start-episode",
-                              patientId: listedPatient.id,
-                              encounterId: listedPatient.encounterId,
-                              kind: "planned",
-                              title: item.title,
-                            },
-                            "Arbeit konnte nicht begonnen werden.",
-                          )
-                        }
-                      >
-                        Beginnen
-                      </button>
+                      <div className="button-row compact-actions">
+                        <button
+                          className="status-button"
+                          disabled={busy}
+                          aria-label={`Arbeit beginnen: Zimmer ${listedPatient.room}, ${listedPatient.displayName}`}
+                          onClick={() =>
+                            perform(
+                              {
+                                type: "start-episode",
+                                patientId: listedPatient.id,
+                                encounterId: listedPatient.encounterId,
+                                kind: "planned",
+                                title: item.title,
+                              },
+                              "Arbeit konnte nicht begonnen werden.",
+                            )
+                          }
+                        >
+                          Beginnen
+                        </button>
+                        <button
+                          className="status-button secondary"
+                          disabled={busy}
+                          aria-label={`Offene Verantwortung übergeben: Zimmer ${listedPatient.room}, ${listedPatient.displayName}`}
+                          onClick={() =>
+                            perform(
+                              {
+                                type: "defer-responsibility",
+                                patientId: listedPatient.id,
+                                encounterId: listedPatient.encounterId,
+                                reason:
+                                  "Im aktuellen Dienst nicht abgeschlossen; sichtbar an nächste Verantwortung übergeben.",
+                                receivingActorId:
+                                  workday.handover.nextResponsibleActorId,
+                              },
+                              "Verantwortung konnte nicht übergeben werden.",
+                            )
+                          }
+                        >
+                          Übergeben
+                        </button>
+                      </div>
                     )}
                     <span className={`episode-state ${item.status}`}>
                       {item.status === "planned"
@@ -412,6 +451,7 @@ function WorkdayCard({
                         type: "pause-episode",
                         episodeId: workday.activeEpisode!.id,
                         reason: "interruption",
+                        draftText: evidence,
                       },
                       "Unterbrechung konnte nicht gespeichert werden.",
                     )
@@ -431,6 +471,7 @@ function WorkdayCard({
                           patientId: alarmPatient.id,
                           encounterId: alarmPatient.encounterId,
                           title: `Simulierter Nurse-call · Zimmer ${alarmPatient.room}`,
+                          pausedDraftText: evidence,
                         },
                         "Alarm konnte nicht übernommen werden.",
                       )
@@ -441,7 +482,7 @@ function WorkdayCard({
                 )}
                 <button
                   className="primary"
-                  disabled={busy || evidence.trim().length < 3}
+                  disabled={busy || evidence.trim().length < 10}
                   onClick={() => {
                     void act({
                       type: "complete-episode",
@@ -486,12 +527,75 @@ function WorkdayCard({
             </section>
           )}
 
+          {workday.incomingTransfers.some(
+            (transfer) => transfer.state === "pending",
+          ) && (
+            <section
+              className="episode-resume"
+              aria-label="Übernommene offene Verantwortung"
+            >
+              <span>Nächste Schicht · Eingang</span>
+              {workday.incomingTransfers
+                .filter((transfer) => transfer.state === "pending")
+                .map((transfer) => (
+                  <div key={transfer.id} className="transfer-row">
+                    <strong>
+                      {patientFor(transfer.patientId)?.displayName ??
+                        "Patientenkontext"}
+                    </strong>
+                    <p>{transfer.reason}</p>
+                    <button
+                      className="primary"
+                      disabled={busy}
+                      onClick={() =>
+                        perform(
+                          {
+                            type: "acknowledge-transfer",
+                            transferId: transfer.id,
+                          },
+                          "Übernahme konnte nicht quittiert werden.",
+                        )
+                      }
+                    >
+                      Verantwortung übernehmen
+                    </button>
+                  </div>
+                ))}
+            </section>
+          )}
+
+          {workday.stage === "closed" &&
+            workday.outgoingTransfers.length > 0 && (
+              <section
+                className="episode-resume"
+                aria-label="Ausgehende Verantwortungsübergaben"
+              >
+                <span>Nächste Schicht · Ausgang</span>
+                {workday.outgoingTransfers.map((transfer) => (
+                  <div key={transfer.id} className="transfer-row">
+                    <strong>
+                      {patientFor(transfer.patientId)?.displayName ??
+                        "Patientenkontext"}
+                    </strong>
+                    <p>{transfer.reason}</p>
+                    <small>
+                      {transfer.state === "acknowledged"
+                        ? "Übernahme bestätigt"
+                        : "Wartet auf Bestätigung der nächsten Schicht"}
+                    </small>
+                  </div>
+                ))}
+              </section>
+            )}
+
           {workday.stage !== "handover" &&
             workday.stage !== "closed" &&
             !workday.activeEpisode &&
             !workday.resumableEpisode &&
             workday.episodes.length > 0 &&
-            workday.plan.every((item) => item.status === "completed") && (
+            workday.plan.every((item) =>
+              ["completed", "paused"].includes(item.status),
+            ) && (
               <section className="shift-close">
                 <span>
                   {
@@ -511,7 +615,7 @@ function WorkdayCard({
                     )
                   }
                 >
-                  Übergabe erstellen & Verantwortung übertragen
+                  Übergabe vorbereiten und Schicht beenden
                 </button>
               </section>
             )}
@@ -535,6 +639,7 @@ export function AssistantSurface({
   workday,
   availablePatients,
   onWorkdayAction,
+  externallyBusy,
 }: {
   patient: Patient | null;
   userId: string;
@@ -549,10 +654,12 @@ export function AssistantSurface({
   workday: WorkdayView | null;
   availablePatients: Patient[];
   onWorkdayAction: (command: WorkdayCommand) => Promise<void>;
+  externallyBusy: boolean;
 }) {
   const [prompt, setPrompt] = useState("");
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [busy, setBusy] = useState(false);
+  const [workflowBusy, setWorkflowBusy] = useState(false);
   const [recording, setRecording] = useState(false);
   const [voiceReview, setVoiceReview] = useState<{
     confidence: number | null;
@@ -568,7 +675,9 @@ export function AssistantSurface({
     preview: string;
     response: AssistantResponse;
   } | null>(null);
-  const [episodeEvidence, setEpisodeEvidence] = useState("");
+  const [episodeDrafts, setEpisodeDrafts] = useState<Record<string, string>>(
+    {},
+  );
   const recognition = useRef<SpeechRecognitionLike | null>(null);
   const mediaRecorder = useRef<MediaRecorder | null>(null);
   const mediaStream = useRef<MediaStream | null>(null);
@@ -583,7 +692,50 @@ export function AssistantSurface({
   const activePatientId = useRef(patient?.id ?? null);
   const lastResponse = useRef<HTMLDivElement | null>(null);
 
-  useEffect(() => onBusyChange(busy), [busy, onBusyChange]);
+  const interactionBusy = busy || workflowBusy || externallyBusy;
+
+  useEffect(
+    () => onBusyChange(interactionBusy),
+    [interactionBusy, onBusyChange],
+  );
+
+  useEffect(() => setEpisodeDrafts({}), [userId]);
+
+  const activeEpisodeId = workday?.activeEpisode?.id ?? null;
+  const episodeEvidence = activeEpisodeId
+    ? (episodeDrafts[activeEpisodeId] ??
+      workday?.activeEpisode?.draftText ??
+      "")
+    : "";
+  const setEpisodeEvidence = (value: string) => {
+    if (!activeEpisodeId) return;
+    setEpisodeDrafts((current) => ({ ...current, [activeEpisodeId]: value }));
+  };
+
+  useEffect(() => {
+    if (!activeEpisodeId) return;
+    const persisted = workday?.activeEpisode?.draftText ?? "";
+    if (episodeEvidence === persisted) return;
+    const timer = window.setTimeout(() => {
+      void onWorkdayAction({
+        type: "save-episode-draft",
+        episodeId: activeEpisodeId,
+        draftText: episodeEvidence,
+      }).catch((failure: unknown) =>
+        setError(
+          failure instanceof Error
+            ? failure.message
+            : "Zwischenstand konnte nicht gespeichert werden.",
+        ),
+      );
+    }, 600);
+    return () => window.clearTimeout(timer);
+  }, [
+    activeEpisodeId,
+    episodeEvidence,
+    onWorkdayAction,
+    workday?.activeEpisode?.draftText,
+  ]);
 
   const rememberMessages = (
     update: (current: ConversationMessage[]) => ConversationMessage[],
@@ -754,7 +906,7 @@ export function AssistantSurface({
     event?.preventDefault();
     const submitted = prompt.trim();
     const submittedContextEpoch = contextEpoch.current;
-    if (!online || submitted.length < 2) return;
+    if (!online || submitted.length < 2 || workflowBusy) return;
     if (
       voiceReview &&
       (!voiceReview.confirmed ||
@@ -930,10 +1082,6 @@ export function AssistantSurface({
   };
 
   const startLocalVoice = async () => {
-    if (!patient) {
-      setError("Bitte vor der lokalen Aufnahme einen Patientenkontext wählen.");
-      return;
-    }
     if (
       !navigator.mediaDevices?.getUserMedia ||
       typeof MediaRecorder === "undefined"
@@ -942,6 +1090,7 @@ export function AssistantSurface({
       return;
     }
     const generation = ++voiceGeneration.current;
+    const recordedPatientId = patient?.id ?? null;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       if (generation !== voiceGeneration.current) {
@@ -973,8 +1122,10 @@ export function AssistantSurface({
             headers: {
               "x-demo-user": userId,
               "x-command-id": crypto.randomUUID(),
-              "x-pfh-patient-context": patient.id,
               "x-pfh-purpose": "direct-care",
+              ...(recordedPatientId
+                ? { "x-pfh-patient-context": recordedPatientId }
+                : {}),
             },
             body: form,
             signal: controller.signal,
@@ -992,7 +1143,7 @@ export function AssistantSurface({
             throw new Error(body.message ?? "Transkription fehlgeschlagen.");
           if (
             generation !== voiceGeneration.current ||
-            activePatientId.current !== patient.id
+            activePatientId.current !== recordedPatientId
           )
             return;
           setPrompt(body.transcription.text);
@@ -1038,12 +1189,23 @@ export function AssistantSurface({
   };
 
   const startVoice = () => {
-    if (["local-openai", "hosted-test"].includes(aiStatus?.asr.mode ?? ""))
+    if (
+      aiStatus?.asr.ready &&
+      ["local-openai", "hosted-test"].includes(aiStatus.asr.mode)
+    )
       void startLocalVoice();
-    else if (aiStatus?.asr.mode === "browser-demo") startBrowserVoice();
+    else if (
+      aiStatus?.asr.mode === "browser-demo" ||
+      (aiStatus?.asr.mode === "hosted-test" && speechRecognitionConstructor())
+    )
+      startBrowserVoice();
     else
       setError(aiStatus?.asr.message ?? "Spracherkennung ist nicht verfügbar.");
   };
+  const browserDemoFallbackReady = Boolean(
+    aiStatus?.asr.mode === "hosted-test" && speechRecognitionConstructor(),
+  );
+  const voiceReady = Boolean(aiStatus?.asr.ready || browserDemoFallbackReady);
 
   const stopVoice = () => {
     if (mediaRecorder.current?.state === "recording")
@@ -1077,6 +1239,7 @@ export function AssistantSurface({
       const result = await post<{
         handoff?: AssistantHandoff;
         bundle?: unknown;
+        itemStates?: string[];
         workflowChanged?: boolean;
       }>(
         `/api/v1/assistant/intents/${token}/execute`,
@@ -1101,13 +1264,15 @@ export function AssistantSurface({
       )
         return;
       setPendingAction(null);
-      const execution = result.bundle
-        ? "Geprüft: Die ausgewählten Angaben wurden als klinische Entwürfe angelegt und warten auf die normale Freigabe."
-        : result.workflowChanged
-          ? "Erledigt: Die aktuelle Arbeit ist pausiert und der spontane Zimmerbesuch wurde gestartet."
-          : result.handoff
-            ? "Vorbereitet: Der strukturierte Sicherheitseditor wurde zur endgültigen Prüfung geöffnet; noch nichts wurde gesendet."
-            : "Geprüfter Entwurf erstellt.";
+      const execution = result.itemStates?.includes("reviewed")
+        ? "Zur unabhängigen Zweitfreigabe vorgemerkt. Der ungewöhnliche Wert ist noch nicht als gültiger Vitalwert freigegeben."
+        : result.bundle
+          ? "Freigegeben: Die ausgewählten Angaben wurden lokal angenommen. Die externe Quittierung bleibt sichtbar."
+          : result.workflowChanged
+            ? "Erledigt: Die aktuelle Arbeit ist pausiert und der spontane Zimmerbesuch wurde gestartet."
+            : result.handoff
+              ? "Vorbereitet: Der strukturierte Sicherheitseditor wurde zur endgültigen Prüfung geöffnet; noch nichts wurde gesendet."
+              : "Geprüfter Entwurf erstellt.";
       rememberMessages((current) =>
         current.map((message) =>
           "response" in message && message.id === selection.response.id
@@ -1125,13 +1290,15 @@ export function AssistantSurface({
       );
       if (result.handoff) onHandoff(result.handoff);
       await onExecuted(
-        result.bundle
-          ? "Die einzeln ausgewählten Aktionen wurden erstellt. Notiz und Messwert bleiben bis zur normalen Freigabe Entwürfe."
-          : result.workflowChanged
-            ? "Arbeitswechsel übernommen. Der vorherige Patient bleibt sicher zum Fortsetzen vorgemerkt."
-            : result.handoff
-              ? "Die Angaben sind jetzt im passenden Sicherheitseditor geöffnet."
-              : "Der prüfpflichtige Entwurf wurde erstellt.",
+        result.itemStates?.includes("reviewed")
+          ? "Der ungewöhnliche Wert wartet auf eine unabhängige Zweitfreigabe und ist noch kein gültiger Vitalwert."
+          : result.bundle
+            ? "Die einzeln geprüften Angaben sind lokal freigegeben und werden nachvollziehbar synchronisiert."
+            : result.workflowChanged
+              ? "Arbeitswechsel übernommen. Der vorherige Patient bleibt sicher zum Fortsetzen vorgemerkt."
+              : result.handoff
+                ? "Die Angaben sind jetzt im passenden Sicherheitseditor geöffnet."
+                : "Der prüfpflichtige Entwurf wurde erstellt.",
       );
     } catch (failure) {
       if (failure instanceof DOMException && failure.name === "AbortError")
@@ -1162,6 +1329,17 @@ export function AssistantSurface({
     .reverse()
     .find((message) => message.kind === "turn")?.id;
 
+  const runWorkdayAction = async (command: WorkdayCommand) => {
+    if (interactionBusy) return;
+    setWorkflowBusy(true);
+    setError(null);
+    try {
+      await onWorkdayAction(command);
+    } finally {
+      setWorkflowBusy(false);
+    }
+  };
+
   return (
     <section
       id="conversation"
@@ -1174,11 +1352,11 @@ export function AssistantSurface({
           <WorkdayCard
             workday={workday}
             patients={availablePatients}
-            busy={busy}
+            busy={interactionBusy}
             evidence={episodeEvidence}
             setEvidence={setEpisodeEvidence}
             selectPatient={onSelectPatient}
-            act={onWorkdayAction}
+            act={runWorkdayAction}
             fail={setError}
           />
         ) : (
@@ -1372,9 +1550,13 @@ export function AssistantSurface({
             </div>
           );
         })}
-        {busy && (
+        {interactionBusy && (
           <div className="assistant-thinking" role="status">
-            Pflegekontext wird sicher ausgewertet…
+            {externallyBusy
+              ? "Patientenkontext wird sicher gewechselt…"
+              : workflowBusy
+                ? "Arbeitstag wird sicher aktualisiert…"
+                : "Pflegekontext wird sicher ausgewertet…"}
           </div>
         )}
         {error && (
@@ -1478,7 +1660,7 @@ export function AssistantSurface({
               recording ? "Aufnahme stoppen" : "Sprachnachricht aufnehmen"
             }
             onClick={recording ? stopVoice : startVoice}
-            disabled={busy || !online || !aiStatus?.asr.ready}
+            disabled={interactionBusy || !online || !voiceReady}
           >
             {recording ? (
               <span aria-hidden="true">■</span>
@@ -1534,14 +1716,14 @@ export function AssistantSurface({
                   void ask();
                 }
               }}
-              disabled={busy || recording}
+              disabled={interactionBusy || recording}
             />
           </label>
           <button
             className="send-button"
             aria-label="Nachricht senden"
             disabled={
-              busy ||
+              interactionBusy ||
               recording ||
               !online ||
               prompt.trim().length < 2 ||
@@ -1557,8 +1739,10 @@ export function AssistantSurface({
           </button>
         </form>
         <small className="composer-meta">
-          {aiStatus?.asr.ready
-            ? "Spracheingabe bereit"
+          {voiceReady
+            ? browserDemoFallbackReady && !aiStatus?.asr.ready
+              ? "Browser-Spracheingabe für synthetische Demo bereit"
+              : "Spracheingabe bereit"
             : "Spracheingabe in dieser Demo nicht eingerichtet"}{" "}
           · Audio wird nach der Transkription verworfen · keine automatische
           Freigabe

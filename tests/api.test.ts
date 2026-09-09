@@ -32,7 +32,7 @@ describe("purpose-specific BFF", () => {
     await app.inject({
       method: "POST",
       url: "/api/v1/tasks/t-bp-anna/not-a-transition",
-      headers: commandHeaders("u-assistant"),
+      headers: commandHeaders("u-nurse"),
       payload: {},
     });
     await app.inject({
@@ -128,6 +128,70 @@ describe("purpose-specific BFF", () => {
     expect(response.body).not.toContain("999");
   });
 
+  it("enforces high-assurance and occurrence time on every observation entry path", async () => {
+    const app = buildApp(undefined, { demoMode: true });
+    apps.push(app);
+    await app.inject({
+      method: "POST",
+      url: "/api/v1/assistant/context",
+      headers: commandHeaders("u-nurse"),
+      payload: { patientId: "p-anna" },
+    });
+    const draftResponse = await app.inject({
+      method: "POST",
+      url: "/api/v1/observations/drafts",
+      headers: commandHeaders("u-nurse"),
+      payload: {
+        patientId: "p-anna",
+        code: "oxygen-saturation",
+        value: 35,
+        effectiveAt: "2026-09-05T09:00:00.000Z",
+      },
+    });
+    expect(draftResponse.statusCode).toBe(201);
+    const draft = draftResponse.json<Observation>();
+    expect(draft.approvalPolicy).toBe("high-assurance");
+    const firstReview = await app.inject({
+      method: "POST",
+      url: `/api/v1/observation/${draft.id}/approve`,
+      headers: commandHeaders("u-nurse"),
+      payload: {
+        expectedVersion: draft.version,
+        patientMrn: "SH-260901-001",
+        patientBirthDate: "1941-03-18",
+        reviewedDiff: true,
+      },
+    });
+    expect(firstReview.json()).toMatchObject({
+      status: "reviewed",
+      approvedAt: null,
+    });
+    const summary = await app.inject({
+      method: "POST",
+      url: "/api/v1/assistant/query",
+      headers: commandHeaders("u-nurse"),
+      payload: {
+        patientId: "p-anna",
+        prompt: "Patientenprofil",
+        inputModality: "typed",
+      },
+    });
+    expect(summary.body).not.toContain("Sauerstoffsättigung 35 %");
+
+    const future = await app.inject({
+      method: "POST",
+      url: "/api/v1/observations/drafts",
+      headers: commandHeaders("u-nurse"),
+      payload: {
+        patientId: "p-anna",
+        code: "pulse",
+        value: 80,
+        effectiveAt: new Date(Date.now() + 10 * 60_000).toISOString(),
+      },
+    });
+    expect(future.statusCode).toBe(422);
+  });
+
   it("rejects unknown identity and direct cross-role writes", async () => {
     const app = buildApp(undefined, { demoMode: true });
     apps.push(app);
@@ -139,6 +203,56 @@ describe("purpose-specific BFF", () => {
     });
     expect(response.statusCode).toBe(401);
     expect(response.json()).toMatchObject({ error: "AUTH_DENIED" });
+  });
+
+  it("rejects contradictory evidence on direct task completion", async () => {
+    const app = buildApp(undefined, { demoMode: true });
+    apps.push(app);
+    const accepted = await app.inject({
+      method: "POST",
+      url: "/api/v1/tasks/t-bp-anna/accept",
+      headers: commandHeaders("u-assistant"),
+      payload: {},
+    });
+    expect(accepted.statusCode).toBe(200);
+    const rejected = await app.inject({
+      method: "POST",
+      url: "/api/v1/tasks/t-bp-anna/complete",
+      headers: commandHeaders("u-assistant"),
+      payload: {
+        evidence: "Blutdruckkontrolle nicht durchgeführt; später nachholen.",
+      },
+    });
+    expect(rejected.statusCode).toBe(422);
+    const snapshot = await app.inject({
+      method: "GET",
+      url: "/api/v1/snapshot",
+      headers: { "x-demo-user": "u-nurse" },
+    });
+    expect(
+      snapshot
+        .json<{ tasks: Array<{ id: string; state: string }> }>()
+        .tasks.find((task) => task.id === "t-bp-anna")?.state,
+    ).toBe("accepted");
+  });
+
+  it("keeps treatment instructions out of the generic task endpoint", async () => {
+    const app = buildApp(undefined, { demoMode: true });
+    apps.push(app);
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/tasks",
+      headers: commandHeaders("u-nurse"),
+      payload: {
+        patientId: "p-anna",
+        title: "Insulin 20 IE sofort geben",
+        reason: "Freie Texteingabe aus dem generischen Aufgabenweg",
+        ownerRole: "registered-nurse",
+        priority: "urgent",
+        dueAt: "2026-09-09T14:00:00.000Z",
+      },
+    });
+    expect(response.statusCode).toBe(422);
   });
 
   it("exposes degraded-safe readiness independent of AI and providers", async () => {
@@ -184,6 +298,24 @@ describe("purpose-specific BFF", () => {
       },
     });
     const observation = draft.json<Observation>();
+    const wrongContextApproval = await app.inject({
+      method: "POST",
+      url: `/api/v1/observation/${observation.id}/approve`,
+      headers: commandHeaders("u-nurse"),
+      payload: {
+        expectedVersion: 1,
+        patientMrn: "SH-260902-004",
+        patientBirthDate: "1937-11-02",
+        reviewedDiff: true,
+      },
+    });
+    expect(wrongContextApproval.statusCode).toBe(403);
+    await app.inject({
+      method: "POST",
+      url: "/api/v1/assistant/context",
+      headers: commandHeaders("u-nurse"),
+      payload: { patientId: "p-luca" },
+    });
     await app.inject({
       method: "POST",
       url: `/api/v1/observation/${observation.id}/approve`,
@@ -343,5 +475,140 @@ describe("purpose-specific BFF", () => {
     });
     expect(forgedVoice.statusCode).toBe(403);
     expect(forgedVoice.json()).toMatchObject({ error: "AUTH_DENIED" });
+  });
+
+  it("releases authority after a validation error, then consumes it exactly once", async () => {
+    const app = buildApp(undefined, { demoMode: true });
+    apps.push(app);
+    await app.inject({
+      method: "POST",
+      url: "/api/v1/assistant/context",
+      headers: commandHeaders("u-nurse"),
+      payload: { patientId: "p-anna" },
+    });
+    const query = await app.inject({
+      method: "POST",
+      url: "/api/v1/assistant/query",
+      headers: commandHeaders("u-nurse"),
+      payload: {
+        patientId: "p-anna",
+        prompt: "Mobilisiert, Puls 82.",
+        inputModality: "typed",
+      },
+    });
+    expect(query.statusCode).toBe(200);
+    const response = query.json<{
+      patientContext: {
+        patientId: string;
+        encounterId: string;
+        resourceVersion: number;
+      };
+      components: Array<{
+        type: string;
+        intentToken?: string;
+        reviewItems?: Array<{ id: string }>;
+      }>;
+    }>();
+    const draftAction = response.components.find(
+      (component) => component.type === "DraftAction",
+    );
+    expect(draftAction?.intentToken).toBeTypeOf("string");
+    const execution = {
+      patientId: response.patientContext.patientId,
+      encounterId: response.patientContext.encounterId,
+      purpose: "direct-care",
+      resourceVersion: response.patientContext.resourceVersion,
+      explicitlyConfirmed: true,
+      reviewedActionIds: ["action-12"],
+    };
+    const executeUrl = `/api/v1/assistant/intents/${draftAction!.intentToken}/execute`;
+    const invalid = await app.inject({
+      method: "POST",
+      url: executeUrl,
+      headers: commandHeaders("u-nurse"),
+      payload: execution,
+    });
+    expect(invalid.statusCode).toBe(400);
+
+    const valid = await app.inject({
+      method: "POST",
+      url: executeUrl,
+      headers: commandHeaders("u-nurse"),
+      payload: {
+        ...execution,
+        reviewedActionIds: draftAction!.reviewItems!.map((item) => item.id),
+      },
+    });
+    expect(valid.statusCode).toBe(200);
+    const replay = await app.inject({
+      method: "POST",
+      url: executeUrl,
+      headers: commandHeaders("u-nurse"),
+      payload: {
+        ...execution,
+        reviewedActionIds: draftAction!.reviewItems!.map((item) => item.id),
+      },
+    });
+    expect(replay.statusCode).toBe(403);
+  });
+
+  it("durably revokes an older same-context review when a newer query arrives", async () => {
+    const app = buildApp(undefined, { demoMode: true });
+    apps.push(app);
+    await app.inject({
+      method: "POST",
+      url: "/api/v1/assistant/context",
+      headers: commandHeaders("u-nurse"),
+      payload: { patientId: "p-anna" },
+    });
+    const first = await app.inject({
+      method: "POST",
+      url: "/api/v1/assistant/query",
+      headers: commandHeaders("u-nurse"),
+      payload: {
+        patientId: "p-anna",
+        prompt: "Puls 82.",
+        inputModality: "typed",
+      },
+    });
+    const firstBody = first.json<{
+      patientContext: {
+        patientId: string;
+        encounterId: string;
+        resourceVersion: number;
+      };
+      components: Array<{
+        type: string;
+        intentToken?: string;
+        reviewItems?: Array<{ id: string }>;
+      }>;
+    }>();
+    const stale = firstBody.components.find(
+      (component) => component.type === "DraftAction",
+    )!;
+    await app.inject({
+      method: "POST",
+      url: "/api/v1/assistant/query",
+      headers: commandHeaders("u-nurse"),
+      payload: {
+        patientId: "p-anna",
+        prompt: "Puls 83.",
+        inputModality: "typed",
+      },
+    });
+    const rejected = await app.inject({
+      method: "POST",
+      url: `/api/v1/assistant/intents/${stale.intentToken}/execute`,
+      headers: commandHeaders("u-nurse"),
+      payload: {
+        patientId: firstBody.patientContext.patientId,
+        encounterId: firstBody.patientContext.encounterId,
+        purpose: "direct-care",
+        resourceVersion: firstBody.patientContext.resourceVersion,
+        explicitlyConfirmed: true,
+        reviewedActionIds: stale.reviewItems!.map((item) => item.id),
+      },
+    });
+    expect(rejected.statusCode).toBe(403);
   });
 });

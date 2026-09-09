@@ -131,6 +131,46 @@ describe("assistant action gateway", () => {
     ).toBe(false);
   });
 
+  it.each([
+    ["Puls 82.", "82 /min"],
+    ["SpO2 96 Prozent.", "96 %"],
+  ])(
+    "routes a declarative bedside measurement to one review action: %s",
+    async (prompt, expected) => {
+      const { assistant } = fixture();
+      const response = await assistant.query("u-nurse", {
+        prompt,
+        patientId: "p-anna",
+        purpose: "direct-care",
+      });
+      expect(response.classification.intent).toBe("care-update");
+      const action = draftAction(response);
+      expect(action.reviewItems).toHaveLength(1);
+      expect(action.preview).toContain(expected);
+      expect(action.preview).not.toContain("Letzte Vitalwerte");
+    },
+  );
+
+  it("keeps a doubtful but syntactically valid value behind high-assurance review", async () => {
+    const { assistant } = fixture();
+    const response = await assistant.query("u-nurse", {
+      prompt: "SpO2 35 Prozent.",
+      patientId: "p-anna",
+      purpose: "direct-care",
+    });
+    const action = draftAction(response);
+    expect(action.reviewItems?.[0]?.label).toContain("Ungewöhnlicher Messwert");
+    const result = assistant.executeIntent(
+      "u-nurse",
+      action.intentToken,
+      executionContext(response),
+    );
+    expect(result).toMatchObject({
+      bundle: [expect.objectContaining({ status: "reviewed" })],
+      itemStates: ["reviewed"],
+    });
+  });
+
   it("does not bind a named patient statement to the wrong open chart", async () => {
     const { assistant } = fixture();
     const response = await assistant.query("u-nurse", {
@@ -247,17 +287,22 @@ describe("assistant action gateway", () => {
       "u-nurse",
       action.intentToken,
       executionContext(response),
-    ) as { bundle: unknown[]; draftOnly: boolean };
-    expect(result.draftOnly).toBe(false);
+    ) as { bundle: unknown[]; itemStates: string[] };
+    expect(result.itemStates).toEqual([
+      "pending-provider",
+      "pending-provider",
+      "sent",
+      "new",
+    ]);
     expect(result.bundle).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          status: "draft",
+          status: "pending-provider",
         }),
         expect.objectContaining({
           value: 151,
           secondaryValue: 88,
-          status: "draft",
+          status: "pending-provider",
         }),
         expect.objectContaining({ recipientRole: "physician", state: "sent" }),
         expect.objectContaining({
@@ -278,9 +323,12 @@ describe("assistant action gateway", () => {
     expect(after.tasks).toHaveLength(before.tasks.length + 1);
     for (const [id, state] of existingTaskStates)
       expect(after.tasks.find((task) => task.id === id)?.state).toBe(state);
-    expect(after.outbox).toHaveLength(before.outbox.length);
-    expect(after.notes.at(-1)?.status).toBe("draft");
-    expect(after.observations.at(-1)?.status).toBe("draft");
+    expect(after.outbox).toHaveLength(before.outbox.length + 4);
+    expect(after.outbox.map((item) => item.aggregateType)).toEqual(
+      expect.arrayContaining(["note", "observation", "communication", "task"]),
+    );
+    expect(after.notes.at(-1)?.status).toBe("pending-provider");
+    expect(after.observations.at(-1)?.status).toBe("pending-provider");
   });
 
   it("refuses to compile medication or dose instructions from free text", () => {
@@ -401,6 +449,8 @@ describe("assistant action gateway", () => {
     "Gestern Arzt informiert.",
     "Die Ärztin ist bereits benachrichtigt.",
     "Arzt keinesfalls in 30 Minuten informieren.",
+    "Arzt keineswegs informieren.",
+    "Arzt informieren? Nein.",
   ])(
     "does not turn historical or negated physician wording into a send action: %s",
     async (prompt) => {
@@ -552,7 +602,7 @@ describe("assistant action gateway", () => {
     ).toThrow("CLINICAL_PLAN_UNGROUNDED_CLINICAL_CONTENT");
   });
 
-  it("burns a token when a caller tries to steal it for another patient", async () => {
+  it("does not let an invalid caller burn another person's reviewed token", async () => {
     const { assistant, clinical } = fixture();
     const before = clinical.snapshot("u-nurse").notes.length;
     const response = await assistant.query("u-nurse", {
@@ -573,10 +623,10 @@ describe("assistant action gateway", () => {
         }),
       ),
     ).toThrow(/Identität|Kontext|Version/);
-    expect(() =>
+    expect(
       assistant.executeIntent("u-nurse", token, executionContext(response)),
-    ).toThrow(/ungültig|abgelaufen/);
-    expect(clinical.snapshot("u-nurse").notes).toHaveLength(before);
+    ).toMatchObject({ patientId: "p-anna", status: "pending-provider" });
+    expect(clinical.snapshot("u-nurse").notes).toHaveLength(before + 1);
   });
 
   it("rejects purpose and resource-version mismatches without mutation", async () => {
@@ -628,7 +678,7 @@ describe("assistant action gateway", () => {
 
     expect(
       assistant.executeIntent("u-nurse", token, executionContext(response)),
-    ).toMatchObject({ patientId: "p-anna", status: "draft" });
+    ).toMatchObject({ patientId: "p-anna", status: "pending-provider" });
     expect(() =>
       assistant.executeIntent("u-nurse", token, executionContext(response)),
     ).toThrow(/ungültig|abgelaufen/);
@@ -753,6 +803,61 @@ describe("assistant action gateway", () => {
 });
 
 describe("assistant clinical safety and privacy", () => {
+  it("resolves an explicit named treatment-team mention without guessing", async () => {
+    const { assistant } = fixture();
+    const response = await assistant.query("u-assistant", {
+      prompt: "Frage @Samira: Kannst du die Mobilisation später übernehmen?",
+      patientId: "p-anna",
+      purpose: "direct-care",
+    });
+    expect(response.classification.intent).toBe("draft-physician-question");
+    expect(draftAction(response).title).toContain("Samira Vogel");
+    expect(
+      assistant.executeIntent(
+        "u-assistant",
+        draftAction(response).intentToken,
+        executionContext(response),
+      ),
+    ).toMatchObject({
+      handoff: {
+        kind: "communication",
+        recipientRole: "registered-nurse",
+        recipientId: "u-nurse-evening",
+        recipientLabel: "Samira Vogel",
+      },
+    });
+  });
+
+  it("does not resolve a partial named mention", async () => {
+    const { assistant } = fixture();
+    const response = await assistant.query("u-assistant", {
+      prompt: "Frage @Sam: Kannst du später übernehmen?",
+      patientId: "p-anna",
+      purpose: "direct-care",
+    });
+    expect(response.components).toEqual([
+      expect.objectContaining({ type: "SafetyAlert", severity: "warning" }),
+    ]);
+    expect(
+      response.components.some((component) => component.type === "DraftAction"),
+    ).toBe(false);
+  });
+
+  it("does not silently choose between a named person and a role mention", async () => {
+    const { assistant } = fixture();
+    const response = await assistant.query("u-assistant", {
+      prompt: "Frage @Samira und @Arzt: Wer kann später übernehmen?",
+      patientId: "p-anna",
+      purpose: "direct-care",
+    });
+    expect(response.components).toEqual([
+      expect.objectContaining({ type: "SafetyAlert", severity: "warning" }),
+    ]);
+    expect(
+      response.components.some((component) => component.type === "DraftAction"),
+    ).toBe(false);
+  });
+
   it("formats clinical task times in the explicit organization timezone", async () => {
     const { assistant } = fixture();
     const response = await assistant.query("u-assistant", {

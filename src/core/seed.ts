@@ -3,7 +3,6 @@ import type {
   ClinicalTask,
   Communication,
   DemoUser,
-  Handover,
   IntakeItem,
   Observation,
   Patient,
@@ -538,41 +537,6 @@ export const intake: IntakeItem[] = [
     ownerRole: "administration",
     sourceLabels: ["careCoach Dokumente"],
     taskId: "t-intake-luca-consent",
-  },
-];
-
-export const handovers: Handover[] = [
-  {
-    id: "h-rehab2-morning",
-    wardId: "rehab-2",
-    fromShift: "Nacht",
-    toShift: "Früh",
-    patientIds: allClinicalPatientIds,
-    deltaTaskIds: ["t-bp-anna", "t-mobilise-luca"],
-    deltaObservationIds: ["o-bp-anna-1", "o-temp-luca-1", "o-spo2-mei-1"],
-    unresolvedCommunicationIds: ["c-dizziness-anna"],
-    narrative:
-      "Teamübergabe: Anna – Blutdruck und offene Arztfrage; Luca – Mobilisation und Radiologie; Ruth – Belastungsschmerz beobachten; Peter – Gewicht und Ödeme; Sofia – Transfer zu zweit und Haut; Emil – Hörhilfe und Angehörigengespräch. Mei bleibt bei der diplomierten Pflege.",
-    signedBy: "u-nurse",
-    acknowledgedBy: null,
-    status: "signed",
-    createdAt: "2026-09-05T06:58:00.000Z",
-  },
-  {
-    id: "h-rehab2-afternoon",
-    wardId: "rehab-2",
-    fromShift: "Früh",
-    toShift: "Spät",
-    patientIds: nursingPatientIds,
-    deltaTaskIds: ["t-bp-anna", "t-mobilise-luca"],
-    deltaObservationIds: ["o-bp-anna-1"],
-    unresolvedCommunicationIds: ["c-dizziness-anna"],
-    narrative:
-      "Entwurf für die nächste Schicht: offene Ergebnisse, Teilaufgaben und Abweichungen der sechs zugewiesenen Personen einzeln bestätigen.",
-    signedBy: null,
-    acknowledgedBy: null,
-    status: "draft",
-    createdAt: "2026-09-05T12:30:00.000Z",
   },
 ];
 

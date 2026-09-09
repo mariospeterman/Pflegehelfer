@@ -18,7 +18,12 @@ const loinc: Record<Observation["code"], { code: string; display: string }> = {
   weight: { code: "29463-7", display: "Body weight" },
 };
 
-const sourceTag = (provider: Patient["source"]["provider"]) => [
+type DataClass = "synthetic-demo" | "institution-local";
+
+const sourceTag = (
+  provider: Patient["source"]["provider"],
+  dataClass: DataClass,
+) => [
   {
     system: "https://pflegehelfer.example.invalid/source-provider",
     code: provider,
@@ -27,9 +32,16 @@ const sourceTag = (provider: Patient["source"]["provider"]) => [
     system: "https://pflegehelfer.example.invalid/mapping",
     code: "r4-ch-core-6.0.0-v1",
   },
+  {
+    system: "https://pflegehelfer.example.invalid/data-classification",
+    code: dataClass,
+  },
 ];
 
-export function patientToFhirR4(patient: Patient): FhirR4Resource {
+export function patientToFhirR4(
+  patient: Patient,
+  dataClass: DataClass,
+): FhirR4Resource {
   return {
     resourceType: "Patient",
     id: patient.id,
@@ -37,11 +49,11 @@ export function patientToFhirR4(patient: Patient): FhirR4Resource {
       profile: [
         "http://fhir.ch/ig/ch-core/StructureDefinition/ch-core-patient",
       ],
-      tag: sourceTag(patient.source.provider),
+      tag: sourceTag(patient.source.provider, dataClass),
     },
     identifier: [
       {
-        system: "https://pflegehelfer.example.invalid/synthetic-mrn",
+        system: `https://pflegehelfer.example.invalid/${dataClass === "synthetic-demo" ? "synthetic-mrn" : "medical-record-number"}`,
         value: patient.mrn,
       },
     ],
@@ -50,18 +62,24 @@ export function patientToFhirR4(patient: Patient): FhirR4Resource {
   };
 }
 
-export function observationToFhirR4(observation: Observation): FhirR4Resource {
+export function observationToFhirR4(
+  observation: Observation,
+  dataClass: DataClass,
+): FhirR4Resource {
   const coding = loinc[observation.code];
   const base: FhirR4Resource = {
     resourceType: "Observation",
     id: observation.id,
     meta: {
       profile: ["http://hl7.org/fhir/StructureDefinition/vitalsigns"],
-      tag: sourceTag(observation.source.provider),
+      tag: sourceTag(observation.source.provider, dataClass),
     },
-    status: ["synced", "approved", "pending-provider"].includes(
-      observation.status,
-    )
+    status: [
+      "synced",
+      "approved",
+      "pending-provider",
+      "external-gated",
+    ].includes(observation.status)
       ? "final"
       : "preliminary",
     category: [

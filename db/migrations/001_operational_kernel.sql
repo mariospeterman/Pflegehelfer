@@ -236,6 +236,8 @@ CREATE TABLE IF NOT EXISTS audit_entries (
   entry_hash text NOT NULL,
   occurred_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE UNIQUE INDEX IF NOT EXISTS uq_audit_entries_hash
+  ON audit_entries (organization_id, entry_hash);
 CREATE TABLE IF NOT EXISTS analytics_events (
   id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   organization_id text NOT NULL REFERENCES organizations(id),
@@ -254,12 +256,44 @@ CREATE TABLE IF NOT EXISTS handover_snapshots (
   cutoff_at timestamptz NOT NULL,
   source_hash text NOT NULL CHECK (source_hash ~ '^[a-f0-9]{64}$'),
   status text NOT NULL CHECK (status IN ('open', 'transferred', 'acknowledged')),
+  owner_actor_id text,
   created_by text NOT NULL,
   receiving_actor_id text,
   created_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (organization_id, id),
-  UNIQUE (organization_id, department_id, shift_key, version)
+  PRIMARY KEY (organization_id, id)
 );
+ALTER TABLE handover_snapshots ADD COLUMN IF NOT EXISTS owner_actor_id text;
+-- The former shift-wide synthetic showcase used system-bootstrap and did not
+-- preserve an actor authority. Never invent one during migration. Retain the
+-- row as non-executable legacy evidence; the next demo session creates its
+-- own actor-bound roster. Production activation is blocked unless operators
+-- have reconciled/reset every such row before accepting real patient data.
+UPDATE handover_snapshots
+SET owner_actor_id = 'legacy-unassigned'
+WHERE owner_actor_id IS NULL;
+ALTER TABLE handover_snapshots ALTER COLUMN owner_actor_id SET NOT NULL;
+DO $$
+DECLARE
+  constraint_name text;
+BEGIN
+  SELECT conname INTO constraint_name
+  FROM pg_constraint
+  WHERE conrelid = 'handover_snapshots'::regclass
+    AND contype = 'u'
+    AND pg_get_constraintdef(oid) =
+      'UNIQUE (organization_id, department_id, shift_key, version)'
+  LIMIT 1;
+  IF constraint_name IS NOT NULL THEN
+    EXECUTE format(
+      'ALTER TABLE handover_snapshots DROP CONSTRAINT %I',
+      constraint_name
+    );
+  END IF;
+END $$;
+CREATE UNIQUE INDEX IF NOT EXISTS handover_snapshots_actor_version
+  ON handover_snapshots
+    (organization_id, department_id, shift_key, owner_actor_id, version)
+  WHERE owner_actor_id IS NOT NULL;
 CREATE TABLE IF NOT EXISTS handover_acknowledgements (
   organization_id text NOT NULL,
   handover_id uuid NOT NULL,
@@ -285,9 +319,11 @@ CREATE TABLE IF NOT EXISTS work_episodes (
   started_at timestamptz NOT NULL DEFAULT now(),
   completed_at timestamptz,
   completion_evidence text,
+  draft_text text NOT NULL DEFAULT '',
   PRIMARY KEY (organization_id, id),
   FOREIGN KEY (organization_id, session_id) REFERENCES working_sessions(organization_id, id)
 );
+ALTER TABLE work_episodes ADD COLUMN IF NOT EXISTS draft_text text NOT NULL DEFAULT '';
 CREATE UNIQUE INDEX IF NOT EXISTS work_episodes_one_active_actor
   ON work_episodes (organization_id, actor_id) WHERE state = 'active';
 CREATE TABLE IF NOT EXISTS work_episode_segments (
@@ -317,6 +353,25 @@ CREATE TABLE IF NOT EXISTS service_evidence (
   UNIQUE (organization_id, episode_id),
   FOREIGN KEY (organization_id, episode_id) REFERENCES work_episodes(organization_id, id)
 );
+
+CREATE TABLE IF NOT EXISTS responsibility_transfers (
+  organization_id text NOT NULL REFERENCES organizations(id),
+  id uuid NOT NULL,
+  session_id uuid NOT NULL,
+  patient_id text NOT NULL,
+  encounter_id text NOT NULL,
+  from_actor_id text NOT NULL,
+  to_actor_id text NOT NULL,
+  reason text NOT NULL,
+  state text NOT NULL CHECK (state IN ('pending', 'acknowledged')),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  acknowledged_at timestamptz,
+  PRIMARY KEY (organization_id, id),
+  UNIQUE (organization_id, session_id, patient_id),
+  FOREIGN KEY (organization_id, session_id) REFERENCES working_sessions(organization_id, id)
+);
+CREATE INDEX IF NOT EXISTS responsibility_transfers_incoming
+  ON responsibility_transfers (organization_id, to_actor_id, state, created_at);
 
 INSERT INTO pfh_schema_migrations (version) VALUES (1) ON CONFLICT DO NOTHING;
 COMMIT;

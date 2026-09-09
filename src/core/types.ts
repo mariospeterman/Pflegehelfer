@@ -26,6 +26,7 @@ export type SyncState =
   | "reviewed"
   | "approved"
   | "pending-provider"
+  | "external-gated"
   | "synced"
   | "rejected"
   | "conflict"
@@ -167,22 +168,6 @@ export interface IntakeItem {
   taskId: string | null;
 }
 
-export interface Handover {
-  id: string;
-  wardId: string;
-  fromShift: string;
-  toShift: string;
-  patientIds: string[];
-  deltaTaskIds: string[];
-  deltaObservationIds: string[];
-  unresolvedCommunicationIds: string[];
-  narrative: string;
-  signedBy: string | null;
-  acknowledgedBy: string | null;
-  status: "draft" | "signed" | "acknowledged";
-  createdAt: string;
-}
-
 export interface RoundAction {
   id: string;
   patientId: string;
@@ -213,20 +198,30 @@ export interface ProviderHealth {
 
 export interface OutboxItem {
   id: string;
-  aggregateType: "observation" | "note";
+  aggregateType: "observation" | "note" | "task" | "communication";
   aggregateId: string;
   patientId: string;
   provider: ProviderId;
   idempotencyKey: string;
   expectedProviderVersion: string | null;
   canonicalCommand: {
-    kind: "observation.upsert" | "nursing-note.upsert";
-    resource: Observation | ClinicalNote;
+    kind:
+      | "observation.upsert"
+      | "nursing-note.upsert"
+      | "task.upsert"
+      | "communication.upsert";
+    resource: Observation | ClinicalNote | ClinicalTask | Communication;
   };
   correlationId: string;
   causationId: string;
   attempts: number;
-  state: "pending" | "processing" | "acknowledged" | "rejected" | "conflict";
+  state:
+    | "pending"
+    | "processing"
+    | "acknowledged"
+    | "rejected"
+    | "conflict"
+    | "external-gated";
   createdAt: string;
   lastAttemptAt: string | null;
   receiptId: string | null;
@@ -234,6 +229,10 @@ export interface OutboxItem {
   errorCode: string | null;
   errorClassification: ProviderErrorClassification | null;
   conflictSnapshot: { version: string; summary: string } | null;
+}
+
+export function isTerminalOutboxState(state: OutboxItem["state"]): boolean {
+  return state === "acknowledged";
 }
 
 export type OutboxSummary = Pick<
@@ -276,6 +275,12 @@ export interface AuditEntry {
 }
 
 export interface AppSnapshot {
+  organization: {
+    institutionId: string;
+    siteId: string;
+    displayName: string;
+    dataClass: "synthetic-demo" | "institution-local";
+  };
   currentUser: DemoUser;
   users: DemoUser[];
   patients: Patient[];
@@ -284,7 +289,6 @@ export interface AppSnapshot {
   notes: ClinicalNote[];
   communications: Communication[];
   intake: IntakeItem[];
-  handovers: Handover[];
   roundActions: RoundAction[];
   providerHealth: ProviderHealth[];
   outbox: (OutboxSummary | ClinicalOutboxSummary)[];

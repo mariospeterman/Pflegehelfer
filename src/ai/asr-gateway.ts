@@ -66,6 +66,14 @@ export class AsrGateway {
         : (env.PFH_ASR_BASE_URL ??
           (this.mode === "hosted-test" ? "https://api.openai.com/v1" : null));
     this.apiKey = env.PFH_ASR_API_KEY ?? env.OPENAI_API_KEY ?? null;
+    if (
+      this.mode === "local-openai" &&
+      env.PFH_DEMO_MODE !== "true" &&
+      !/^[a-f0-9]{64}$/.test(env.PFH_ASR_MODEL_DIGEST ?? "")
+    )
+      throw new Error(
+        "Production local ASR requires an immutable PFH_ASR_MODEL_DIGEST and governed model pack.",
+      );
     if (this.mode === "browser-demo" && env.PFH_DEMO_MODE !== "true")
       throw new Error("Browser ASR is restricted to the synthetic demo.");
     if (
@@ -121,6 +129,7 @@ export class AsrGateway {
   async transcribe(
     audio: Uint8Array,
     mimeType: string,
+    dataClass: "synthetic-demo" | "institution-local" = "institution-local",
   ): Promise<TranscriptionResult> {
     let audioCopy: Uint8Array<ArrayBuffer> | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -134,6 +143,12 @@ export class AsrGateway {
           "EXTERNAL_VENDOR_GATE",
           "Spracherkennung ist für diese Umgebung nicht konfiguriert.",
           503,
+        );
+      if (this.mode === "hosted-test" && dataClass !== "synthetic-demo")
+        throw new DomainError(
+          "AUTH_DENIED",
+          "Externe Spracherkennung ist nur für eindeutig synthetische Demonstrationsdaten erlaubt.",
+          403,
         );
       if (audio.byteLength === 0 || audio.byteLength > 8 * 1024 * 1024)
         throw new DomainError(
@@ -178,6 +193,7 @@ export class AsrGateway {
             : {}),
           body: form,
           signal: controller.signal,
+          redirect: "error",
         },
       );
       if (!response.ok)

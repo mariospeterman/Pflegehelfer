@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   deterministicAssistantProposal,
+  isDoubtfulObservation,
   verifyModelProposalAgainstDeterministicCompiler,
 } from "../src/ai/assistant-proposal.js";
 import { resolveOccurrenceTime } from "../src/core/assistant-service.js";
@@ -25,6 +26,45 @@ describe("conversational AssistantProposal compiler regressions", () => {
         expect.objectContaining({ polarity: "negated", kind: "action" }),
       ]),
     );
+  });
+
+  it.each(["Arzt keineswegs informieren.", "Arzt informieren? Nein."])(
+    "treats held-out physician refusal as a no-op: %s",
+    (prompt) => {
+      const plan = deterministicAssistantProposal(prompt);
+      expect(plan?.actions).toHaveLength(0);
+      expect(plan?.understoodFacts).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ kind: "action", polarity: "negated" }),
+        ]),
+      );
+    },
+  );
+
+  it.each([
+    "Blutdruck wohl 151/88",
+    "Puls vermutlich 82",
+    "Puls könnte 82 sein",
+    "Es hiess, der Puls sei 82",
+    "Vorhin Puls 82",
+  ])(
+    "asks before writing an uncertain or time-incomplete value: %s",
+    (prompt) => {
+      const plan = deterministicAssistantProposal(prompt);
+      expect(plan?.actions).toHaveLength(0);
+      expect(plan?.observations).toEqual([
+        expect.objectContaining({ actionId: null }),
+      ]);
+      expect(plan?.clarificationQuestions).not.toHaveLength(0);
+    },
+  );
+
+  it("honors a negated documentation instruction around a measurement", () => {
+    const plan = deterministicAssistantProposal("Nicht Puls 82 dokumentieren");
+    expect(plan?.actions).toHaveLength(0);
+    expect(plan?.understoodFacts).toEqual([
+      expect.objectContaining({ kind: "action", polarity: "negated" }),
+    ]);
   });
 
   it("preserves fluid intake and symptom negation without medication classification", () => {
@@ -72,6 +112,21 @@ describe("conversational AssistantProposal compiler regressions", () => {
         }),
       ]),
     );
+  });
+
+  it("preserves syntactically valid extreme measurements for visible high-assurance review", () => {
+    const plan = deterministicAssistantProposal("Blutdruck 310 zu 210.");
+    const observation = plan?.actions.find(
+      (action) => action.type === "observation-proposal",
+    );
+    expect(observation).toMatchObject({
+      code: "blood-pressure",
+      value: 310,
+      secondaryValue: 210,
+    });
+    if (!observation || observation.type !== "observation-proposal")
+      throw new Error("expected preserved observation");
+    expect(isDoubtfulObservation(observation)).toBe(true);
   });
 
   it("keeps historical medication reports as documentation, never a medication command", () => {
@@ -376,12 +431,9 @@ describe("conversational AssistantProposal compiler regressions", () => {
     const plan = deterministicAssistantProposal(
       "Luca mobilisiert, fast alles gegessen, ca. 200 ml getrunken.",
     );
-    expect(plan?.workPerformed).toEqual([
-      expect.objectContaining({
-        activity: "Mobilisation",
-        status: "performed",
-      }),
-    ]);
+    expect(plan?.workPerformed).toHaveLength(1);
+    expect(plan?.workPerformed[0]?.activity).toContain("Mobilisation");
+    expect(plan?.workPerformed[0]?.status).toBe("performed");
     expect(plan?.understoodFacts).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -437,6 +489,38 @@ describe("conversational AssistantProposal compiler regressions", () => {
     });
   });
 
+  it("does not let model metadata turn deferred work into completion", () => {
+    const prompt = "Nur Morgenpflege erledigt, Mobilisation später.";
+    const compiled = deterministicAssistantProposal(prompt);
+    if (!compiled) throw new Error("expected proposal");
+    const candidate = structuredClone(compiled);
+    const deferredWork = candidate.workPerformed.find((item) =>
+      item.activity.includes("Mobilisation"),
+    );
+    const deferredTask = candidate.taskChanges.find((item) =>
+      item.taskLabel.includes("Mobilisation"),
+    );
+    if (!deferredWork || !deferredTask)
+      throw new Error("expected deferred metadata");
+    deferredWork.status = "performed";
+    deferredTask.change = "complete";
+    deferredTask.executable = true;
+
+    const verified = verifyModelProposalAgainstDeterministicCompiler(
+      prompt,
+      candidate,
+      compiled,
+    );
+    const verifiedWork = verified.workPerformed.find((item) =>
+      item.activity.includes("Mobilisation"),
+    );
+    const verifiedTask = verified.taskChanges.find((item) =>
+      item.taskLabel.includes("Mobilisation"),
+    );
+    expect(verifiedWork).toMatchObject({ status: "planned-later" });
+    expect(verifiedTask).toMatchObject({ change: "defer", executable: false });
+  });
+
   it("acknowledges explicit no-action wording without creating a write", () => {
     const plan = deterministicAssistantProposal(
       "Arzt nicht informieren, keine weitere Kontrolle.",
@@ -451,6 +535,20 @@ describe("conversational AssistantProposal compiler regressions", () => {
     expect(
       plan?.understoodFacts.every((fact) => fact.polarity === "negated"),
     ).toBe(true);
+  });
+
+  it.each([
+    "Arzt informieren? Doch nicht.",
+    "Arzt informieren - nein.",
+    "Folgekontrolle? Nein.",
+    "Folgekontrolle - nein.",
+    "Nachmessen? Doch nicht.",
+  ])("treats a short negative answer as no requested action: %s", (prompt) => {
+    const plan = deterministicAssistantProposal(prompt);
+    expect(plan?.actions).toHaveLength(0);
+    expect(plan?.understoodFacts).toContainEqual(
+      expect.objectContaining({ kind: "action", polarity: "negated" }),
+    );
   });
 
   it("represents an interruption as one atomic reviewable workflow change", () => {
@@ -514,6 +612,10 @@ describe("conversational AssistantProposal compiler regressions", () => {
     ["Temperatur ungefähr 37,8.", "temperature", 37.8],
     ["Puls vielleicht 82.", "pulse", 82],
     ["Gewicht möglicherweise 71,4 kg.", "weight", 71.4],
+    ["Puls möglicherweise ungefähr 82.", "pulse", 82],
+    ["Unklarer Puls 82.", "pulse", 82],
+    ["Vermuteter Puls: 82.", "pulse", 82],
+    ["Blutdruck ungefähr 151 zu etwa 88.", "blood-pressure", 151],
   ])(
     "preserves an uncertain scalar without making it executable: %s",
     (prompt, code, value) => {
@@ -530,6 +632,31 @@ describe("conversational AssistantProposal compiler regressions", () => {
       expect(plan?.clarificationQuestions).toHaveLength(1);
     },
   );
+
+  it.each([
+    "Puls soll 82 gewesen sein.",
+    "Patient sagt Puls 82.",
+    "Blutdruck war 140/80.",
+    "Puls war 82.",
+  ])(
+    "does not execute a reported or imprecisely timed past vital: %s",
+    (prompt) => {
+      const plan = deterministicAssistantProposal(prompt);
+      expect(
+        plan?.actions.some((action) => action.type === "observation-proposal"),
+      ).toBe(false);
+      expect(plan?.observations[0]?.actionId).toBeNull();
+      expect(plan?.clarificationQuestions).not.toHaveLength(0);
+    },
+  );
+
+  it("does not turn a negated documentation request into a note", () => {
+    const plan = deterministicAssistantProposal("Dokumentiere nicht Puls 82.");
+    expect(plan?.actions).toHaveLength(0);
+    expect(plan?.understoodFacts).toContainEqual(
+      expect.objectContaining({ kind: "measurement", polarity: "negated" }),
+    );
+  });
 
   it("asks one clarification instead of executing an approximate vital", () => {
     const plan = deterministicAssistantProposal("Temperatur ca. 37,4.");

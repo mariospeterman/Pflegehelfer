@@ -39,6 +39,7 @@ test("is one responsive conversation with drawer context and no module dashboard
   await expect(
     page.locator(".header-identity strong").getByText("Pflegehelfer"),
   ).toBeVisible();
+  await expect(page).toHaveTitle(/Pflegehelfer · Kronenhof/);
   await expect(
     page.getByRole("heading", { name: "Übergabe patientenweise übernehmen" }),
   ).toBeVisible();
@@ -115,7 +116,7 @@ test("one bedside sentence yields granular review and explicit execution", async
   await expect(page.getByText("Ausgeführt", { exact: true })).toBeVisible();
   await expect(
     page.getByText(
-      /klinische Entwürfe angelegt und warten auf die normale Freigabe/i,
+      /einzeln geprüften Angaben sind lokal freigegeben und werden nachvollziehbar synchronisiert/i,
     ),
   ).toBeVisible();
 });
@@ -142,6 +143,93 @@ test("patient switch closes executable proposals and keeps a visible context eve
       "Die frühere offene Änderung wurde beim Kontextwechsel sicher geschlossen.",
     ),
   ).toBeVisible();
+});
+
+test("direct patient changes lock conversation until the server confirms context", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "state transition runs once");
+  await page.route("**/api/v1/assistant/context", async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await route.continue();
+  });
+  await page
+    .locator(".patient-context-list button")
+    .filter({ hasText: "Anna Beispiel" })
+    .click();
+  const composer = page.getByLabel("Nachricht an Pflegehelfer");
+  await expect(composer).toBeDisabled();
+  await expect(page.locator(".drawer-role-switcher select")).toBeDisabled();
+  await expect(
+    page.locator(".patient-context-list button").first(),
+  ).toBeDisabled();
+  await expect(page.getByLabel("Aktiver Patientenkontext")).toContainText(
+    "Anna Beispiel",
+  );
+  await expect(composer).toBeEnabled();
+});
+
+test("workday context changes lock the composer until the server confirms the active patient", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "state transition runs once");
+
+  for (const patient of [
+    "Anna Beispiel",
+    "Luca Demo",
+    "Ruth Fiktiv",
+    "Peter Beispiel",
+    "Sofia Muster",
+    "Emil Demo",
+  ]) {
+    await page
+      .getByRole("button", {
+        name: new RegExp(`Gelesen und übernehmen:.*${patient}`),
+      })
+      .click();
+    if (patient !== "Emil Demo") {
+      await expect(
+        page.getByRole("button", {
+          name: new RegExp(`Übergabe geprüft:.*${patient}`),
+        }),
+      ).toBeVisible();
+    }
+  }
+  await expect(
+    page.getByRole("heading", { name: "Dein sicherer Arbeitsplan" }),
+  ).toBeVisible();
+
+  await page.route("**/api/v1/workday", async (route) => {
+    const body = route.request().postDataJSON() as { type?: string } | null;
+    if (route.request().method() === "POST" && body?.type === "start-episode") {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+    await route.continue();
+  });
+
+  await page
+    .getByRole("button", { name: /Arbeit beginnen: Zimmer 214A/ })
+    .click();
+  const composer = page.getByLabel("Nachricht an Pflegehelfer");
+  await expect(composer).toBeDisabled();
+  await expect(page.getByLabel("Aktiver Patientenkontext")).toContainText(
+    "Anna Beispiel",
+  );
+  await expect(composer).toBeEnabled();
+
+  const draftSaved = page.waitForResponse((response) => {
+    if (!response.url().includes("/api/v1/workday")) return false;
+    const body = response.request().postDataJSON() as { type?: string } | null;
+    return body?.type === "save-episode-draft";
+  });
+  await page
+    .getByLabel("Was wurde tatsächlich durchgeführt?")
+    .fill("Morgenpflege begonnen; Mobilisation wartet noch.");
+  await draftSaved;
+  await page.reload();
+  await expect(
+    page.getByLabel("Was wurde tatsächlich durchgeführt?"),
+  ).toHaveValue("Morgenpflege begonnen; Mobilisation wartet noch.");
 });
 
 test("physician role starts its own coworker journey without a nursing dashboard", async ({

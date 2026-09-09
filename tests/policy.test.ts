@@ -56,17 +56,6 @@ describe("least-privilege policy", () => {
     expect(
       snapshot.patients.find((patient) => patient.id === "p-mei"),
     ).toBeUndefined();
-    expect(snapshot.handovers.map((handover) => handover.id)).toEqual([
-      "h-rehab2-morning",
-      "h-rehab2-afternoon",
-    ]);
-    const incoming = snapshot.handovers.find(
-      (handover) => handover.id === "h-rehab2-morning",
-    );
-    expect(incoming?.patientIds).toEqual(nursingPatientIds);
-    expect(JSON.stringify(incoming)).not.toContain("p-mei");
-    expect(JSON.stringify(incoming)).not.toContain("Mei Muster");
-    expect(snapshot.handovers[0]?.patientIds).toEqual(nursingPatientIds);
     expect(JSON.stringify(snapshot)).not.toContain("Mei Muster");
   });
 
@@ -134,6 +123,30 @@ describe("least-privilege policy", () => {
     ).toThrow(/übernommen hat/);
   });
 
+  it("shows the patient thread to the authorized treatment team and lets the responder close the loop", () => {
+    const service = new PflegehelferService();
+    const message = service.createCommunication("u-nurse", {
+      patientId: "p-anna",
+      request: "Bitte aktuellen Zustand beurteilen",
+      reason: "Transparente Frage im Behandlungsteam",
+      recipientRole: "physician",
+      priority: "routine",
+      dueAt: "2026-09-05T15:00:00.000Z",
+    });
+    expect(
+      service
+        .snapshot("u-nurse-evening")
+        .communications.some((item) => item.id === message.id),
+    ).toBe(true);
+    service.transitionCommunication("u-physician", message.id, "answer", {
+      response: "Beurteilung erfolgt; Verlauf weiter beobachten.",
+    });
+    expect(
+      service.transitionCommunication("u-physician", message.id, "close", {})
+        .state,
+    ).toBe("closed");
+  });
+
   it("prevents patient work from being routed into HR or IT boundaries", () => {
     const service = new PflegehelferService();
     expect(() =>
@@ -166,6 +179,48 @@ describe("least-privilege policy", () => {
         dueAt: "2026-09-05T15:00:00.000Z",
       }),
     ).toThrow(/nichtklinische Rollen/);
+  });
+
+  it("keeps ordinary basic-care and mobility assignments in the generic task workflow", () => {
+    const service = new PflegehelferService();
+    expect(
+      service.createTask("u-nurse", {
+        patientId: "p-anna",
+        title: "Bewohnerin mobilisieren und beim Ankleiden unterstützen",
+        reason: "Geplante Grundpflege",
+        ownerRole: "care-assistant",
+        priority: "routine",
+        dueAt: "2026-09-05T15:00:00.000Z",
+      }),
+    ).toMatchObject({ ownerRole: "care-assistant", state: "new" });
+    expect(
+      service.createTask("u-nurse", {
+        patientId: "p-anna",
+        title: "Beim Essen und Trinken Hilfestellung geben",
+        reason: "Geplante Grundpflege",
+        ownerRole: "care-assistant",
+        priority: "routine",
+        dueAt: "2026-09-05T15:30:00.000Z",
+      }),
+    ).toMatchObject({ ownerRole: "care-assistant", state: "new" });
+  });
+
+  it.each([
+    "Torasemid geben",
+    "Metoprolol verabreichen",
+    "Neues Präparat absetzen",
+  ])("keeps %s out of the generic task workflow", (title) => {
+    const service = new PflegehelferService();
+    expect(() =>
+      service.createTask("u-nurse", {
+        patientId: "p-anna",
+        title,
+        reason: "Freie generische Aufgabe",
+        ownerRole: "registered-nurse",
+        priority: "urgent",
+        dueAt: "2026-09-05T15:00:00.000Z",
+      }),
+    ).toThrow(/Fachworkflow/);
   });
 
   it("requires explicit ownership for completion and recipient responses", () => {

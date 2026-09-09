@@ -216,6 +216,8 @@ interface IntentRecord extends Omit<BoundIntentInput, "ttlMs"> {
   expiresAt: number;
 }
 
+export type DurableIntentRecord = IntentRecord;
+
 export interface IntentExecutionContext {
   patientId: string;
   encounterId: string;
@@ -263,13 +265,29 @@ export class OpaqueIntentBroker {
       if (record.actorId === actorId) this.intents.delete(token);
   }
 
+  durableRecord(token: string): DurableIntentRecord | null {
+    const record = this.intents.get(token);
+    return record && record.expiresAt >= Date.now()
+      ? structuredClone(record)
+      : null;
+  }
+
+  restore(token: string, record: DurableIntentRecord): void {
+    if (record.expiresAt < Date.now())
+      throw new DomainError(
+        "AUTH_DENIED",
+        "Assistenzaktion ist ungültig oder abgelaufen.",
+        403,
+      );
+    this.intents.set(token, structuredClone(record));
+  }
+
   consume(
     token: string,
     actor: DemoUser,
     context: IntentExecutionContext,
   ): Omit<IntentRecord, "actorId" | "actorRole" | "expiresAt"> {
     const record = this.intents.get(token);
-    this.intents.delete(token);
     if (!record || record.expiresAt < Date.now())
       throw new DomainError(
         "AUTH_DENIED",
@@ -298,5 +316,14 @@ export class OpaqueIntentBroker {
       resourceVersion: record.resourceVersion,
       payload: structuredClone(record.payload),
     };
+  }
+
+  /**
+   * Invalid or stale confirmations must not let another caller burn a valid
+   * review token. The command gateway removes authority only after the
+   * validated operation has completed successfully.
+   */
+  finalize(token: string): void {
+    this.intents.delete(token);
   }
 }

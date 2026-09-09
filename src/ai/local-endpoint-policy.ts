@@ -7,7 +7,6 @@ function isPrivateIpv4(hostname: string): boolean {
   return (
     octets[0] === 10 ||
     octets[0] === 127 ||
-    (octets[0] === 169 && octets[1] === 254) ||
     (octets[0] === 172 && (octets[1] ?? 0) >= 16 && (octets[1] ?? 0) <= 31) ||
     (octets[0] === 192 && octets[1] === 168)
   );
@@ -18,8 +17,7 @@ function isPrivateIpv6(hostname: string): boolean {
   return (
     normalized === "::1" ||
     normalized.startsWith("fc") ||
-    normalized.startsWith("fd") ||
-    /^fe[89ab]/.test(normalized)
+    normalized.startsWith("fd")
   );
 }
 

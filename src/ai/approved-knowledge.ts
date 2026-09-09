@@ -64,7 +64,7 @@ export const approvedKnowledgeDocuments: ApprovedKnowledgeDocument[] = [
     validTo: null,
     allowedRoles: clinicalRoles,
     content:
-      "Die Übergabe enthält nur seit der letzten bestätigten Übergabe veränderte Risiken, offene Aufgaben, unbeantwortete klinische Nachrichten und relevante Verlaufspunkte. Die abgebende Person prüft und signiert; die übernehmende Person bestätigt die Übernahme. Offene Punkte bleiben als Aufgabe oder Nachricht nachvollziehbar.",
+      "Die Übergabe enthält veränderte Risiken, offene Aufgaben, unbeantwortete klinische Nachrichten und relevante Verlaufspunkte aus dem operationalen Arbeitstag. Die abgebende Person löst jede Verantwortung durch Abschluss oder ausdrückliche Weitergabe; die übernehmende Person bestätigt den genauen Transferbeleg. Offene Punkte bleiben als Aufgabe oder Nachricht nachvollziehbar.",
   },
   {
     id: "sop-fall-response",
@@ -166,6 +166,14 @@ export class ApprovedKnowledgeService {
       Math.max(2_000, Number(env.PFH_DEEP_LLM_TIMEOUT_MS ?? 15_000)),
     );
     if (
+      this.mode === "local-openai" &&
+      env.PFH_DEMO_MODE !== "true" &&
+      !/^[a-f0-9]{64}$/.test(env.PFH_DEEP_LLM_MODEL_DIGEST ?? "")
+    )
+      throw new Error(
+        "Production local deep AI requires an immutable PFH_DEEP_LLM_MODEL_DIGEST and governed model pack.",
+      );
+    if (
       this.mode === "hosted-test" &&
       (env.PFH_DEMO_MODE !== "true" ||
         env.PFH_LLM_DATA_CLASSIFICATION !== "synthetic-only" ||
@@ -201,6 +209,7 @@ export class ApprovedKnowledgeService {
     prompt: string,
     role: Role,
     at = new Date(),
+    dataClass: "synthetic-demo" | "institution-local" = "institution-local",
   ): Promise<KnowledgeAnswer> {
     const date = at.toISOString().slice(0, 10);
     const query = tokens(prompt);
@@ -239,7 +248,8 @@ export class ApprovedKnowledgeService {
     if (
       this.mode === "deterministic" ||
       !this.baseUrl ||
-      (this.mode === "hosted-test" && !this.apiKey)
+      (this.mode === "hosted-test" &&
+        (!this.apiKey || dataClass !== "synthetic-demo"))
     )
       return fallback();
 
@@ -280,6 +290,7 @@ export class ApprovedKnowledgeService {
             ],
           }),
           signal: controller.signal,
+          redirect: "error",
         },
       );
       if (!response.ok) throw new Error(`deep-model-http-${response.status}`);

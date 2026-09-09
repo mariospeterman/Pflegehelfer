@@ -46,6 +46,14 @@ Open:
 
 `pnpm dev` and `pnpm demo` both use Medplum. Generated demo credentials stay in ignored `.env.demo`; do not commit or paste them. The role switcher is a synthetic-only identity harness. The normal non-demo server fails readiness and rejects demo identity until an institutional identity adapter is configured.
 
+For the local Medplum UI, sign in with the generated `MEDPLUM_DEFAULT_SUPER_ADMIN_EMAIL` and `MEDPLUM_DEFAULT_SUPER_ADMIN_PASSWORD`. Read them only on the development machine:
+
+```bash
+grep '^MEDPLUM_DEFAULT_SUPER_ADMIN_\(EMAIL\|PASSWORD\)=' .env.demo
+```
+
+Medplum is the detailed FHIR inspection workspace: use its search to inspect the fictional Patient, Encounter, Observation, Task, Communication, QuestionnaireResponse, Provenance and AuditEvent resources created through Pflegehelfer. Routine staff work stays in the Pflegehelfer conversation.
+
 For optional local text models, install Ollama, pull an approved development model and configure the OpenAI-compatible URL/model in `.env.demo`. The gateway tries that configured private/local endpoint first and falls back only to the deterministic interpreter when it is unavailable. A hosted OpenAI-compatible endpoint is permitted only in explicit demo mode with synthetic-only classification; it is not the production default. Daily workflows remain available when AI is down. Browser speech is explicitly synthetic-only; production uses the local transcription adapter after model validation.
 
 ## What to test
@@ -55,7 +63,7 @@ Use the role switcher to experience the whole workflow:
 1. Pflegeassistenz accepts and completes shift tasks.
 2. Pflegefachperson selects a patient in the conversation, asks for source-bound facts, dictates a documentation/vital/team/task bundle and approves its visible structured changes.
 3. Physician/pharmacy answers a closed-loop clinical question and creates a safe follow-up.
-4. Outgoing and incoming staff sign/acknowledge the delta handover.
+4. Outgoing staff explicitly defer unresolved responsibility and incoming staff acknowledge the durable transfer receipt; “sent” and “accepted” remain distinct.
 5. IT changes a provider simulator to delay/down/reject/conflict, then an authorised clinician reconciles it.
 6. Use Pflegehelfer for daily work; open Medplum only for authorized detailed FHIR inspection of matching resources, Provenance and AuditEvent records.
 7. Toggle browser offline mode and confirm that cached context is marked stale and clinical writes are disabled.

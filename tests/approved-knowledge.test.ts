@@ -72,6 +72,7 @@ describe("approved local knowledge and deep-model boundary", () => {
       PFH_DEEP_LLM_MODE: "local-openai",
       PFH_DEEP_LLM_BASE_URL: "http://127.0.0.1:11434/v1",
       PFH_DEEP_LLM_MODEL: "test-model",
+      PFH_DEMO_MODE: "true",
     });
     const result = await knowledge.answer(
       "Welche SOP gilt bei Medikationsdiskrepanz?",
@@ -111,6 +112,7 @@ describe("approved local knowledge and deep-model boundary", () => {
     const knowledge = new ApprovedKnowledgeService(undefined, {
       PFH_DEEP_LLM_MODE: "local-openai",
       PFH_DEEP_LLM_BASE_URL: "http://127.0.0.1:11434/v1",
+      PFH_DEMO_MODE: "true",
     });
     const result = await knowledge.answer(
       "Welche SOP gilt bei Medikationsdiskrepanz?",
@@ -148,6 +150,7 @@ describe("approved local knowledge and deep-model boundary", () => {
     const result = await new ApprovedKnowledgeService(undefined, {
       PFH_DEEP_LLM_MODE: "local-openai",
       PFH_DEEP_LLM_BASE_URL: "http://127.0.0.1:11434/v1",
+      PFH_DEMO_MODE: "true",
     }).answer(
       "Welche SOP gilt bei Medikationsdiskrepanz?",
       "registered-nurse",
@@ -176,6 +179,17 @@ describe("approved local knowledge and deep-model boundary", () => {
           PFH_DEEP_LLM_BASE_URL: "https://attacker.invalid/v1",
         }),
     ).toThrow(/LOCAL_AI_ENDPOINT_NOT_ALLOWED/);
+  });
+
+  it("requires an immutable deep-model digest outside demo mode", () => {
+    expect(
+      () =>
+        new ApprovedKnowledgeService(undefined, {
+          PFH_DEEP_LLM_MODE: "local-openai",
+          PFH_DEEP_LLM_BASE_URL: "http://127.0.0.1:11434/v1",
+          PFH_DEMO_MODE: "false",
+        }),
+    ).toThrow(/PFH_DEEP_LLM_MODEL_DIGEST/);
   });
 
   it("routes explicit policy language without requiring a model", async () => {

@@ -42,6 +42,15 @@ export interface CanonicalClinicalState {
   communications: Communication[];
 }
 
+type DataClass = "synthetic-demo" | "institution-local";
+const dataClassificationSystem =
+  "https://pflegehelfer.example.invalid/data-classification";
+
+const classificationTag = (dataClass: DataClass) => ({
+  system: dataClassificationSystem,
+  code: dataClass,
+});
+
 const taskStatus: Record<ClinicalTask["state"], Task["status"]> = {
   new: "ready",
   accepted: "accepted",
@@ -64,6 +73,7 @@ const communicationStatus: Record<
 
 function sourceTags(
   source: Patient["source"],
+  dataClass: DataClass,
 ): NonNullable<NonNullable<Resource["meta"]>["tag"]> {
   return [
     {
@@ -78,10 +88,7 @@ function sourceTags(
       system: "https://pflegehelfer.example.invalid/mapping-version",
       code: source.mappingVersion,
     },
-    {
-      system: "https://pflegehelfer.example.invalid/data-classification",
-      code: "synthetic",
-    },
+    classificationTag(dataClass),
     {
       system: "https://pflegehelfer.example.invalid/source-recorded-at",
       code: source.recordedAt,
@@ -89,7 +96,7 @@ function sourceTags(
   ];
 }
 
-function practitioner(user: DemoUser): Practitioner {
+function practitioner(user: DemoUser, dataClass: DataClass): Practitioner {
   const [first, ...family] = user.displayName.replace("Dr. ", "").split(" ");
   return {
     resourceType: "Practitioner",
@@ -102,6 +109,7 @@ function practitioner(user: DemoUser): Practitioner {
     ],
     meta: {
       tag: [
+        classificationTag(dataClass),
         {
           system: "https://pflegehelfer.example.invalid/role",
           code: user.role,
@@ -118,7 +126,7 @@ function practitioner(user: DemoUser): Practitioner {
   };
 }
 
-function encounter(patient: Patient): Encounter {
+function encounter(patient: Patient, dataClass: DataClass): Encounter {
   return {
     resourceType: "Encounter",
     id: fhirResourceId("Encounter", patient.encounterId),
@@ -128,7 +136,7 @@ function encounter(patient: Patient): Encounter {
         value: patient.encounterId,
       },
     ],
-    meta: { tag: sourceTags(patient.source) },
+    meta: { tag: sourceTags(patient.source, dataClass) },
     status: "in-progress",
     class: {
       system: "http://terminology.hl7.org/CodeSystem/v3-ActCode",
@@ -146,7 +154,7 @@ function encounter(patient: Patient): Encounter {
   };
 }
 
-function location(patient: Patient): Location {
+function location(patient: Patient, dataClass: DataClass): Location {
   return {
     resourceType: "Location",
     id: fhirResourceId("Location", `room-${patient.room.toLowerCase()}`),
@@ -156,13 +164,14 @@ function location(patient: Patient): Location {
         value: `room-${patient.room.toLowerCase()}`,
       },
     ],
+    meta: { tag: [classificationTag(dataClass)] },
     status: "active",
     name: `Zimmer ${patient.room}`,
     partOf: { reference: ref("Location", patient.wardId) },
   };
 }
 
-function task(item: ClinicalTask): Task {
+function task(item: ClinicalTask, dataClass: DataClass): Task {
   return {
     resourceType: "Task",
     id: fhirResourceId("Task", item.id),
@@ -172,7 +181,7 @@ function task(item: ClinicalTask): Task {
         value: item.id,
       },
     ],
-    meta: { tag: sourceTags(item.source) },
+    meta: { tag: sourceTags(item.source, dataClass) },
     status: taskStatus[item.state],
     businessStatus: {
       coding: [
@@ -215,7 +224,10 @@ function task(item: ClinicalTask): Task {
   };
 }
 
-function communication(item: Communication): FhirCommunication {
+function communication(
+  item: Communication,
+  dataClass: DataClass,
+): FhirCommunication {
   return {
     resourceType: "Communication",
     id: fhirResourceId("Communication", item.id),
@@ -225,7 +237,7 @@ function communication(item: Communication): FhirCommunication {
         value: item.id,
       },
     ],
-    meta: { tag: sourceTags(item.source) },
+    meta: { tag: sourceTags(item.source, dataClass) },
     status: communicationStatus[item.state],
     priority: item.priority === "elevated" ? "urgent" : item.priority,
     subject: { reference: ref("Patient", item.patientId) },
@@ -252,7 +264,7 @@ function communication(item: Communication): FhirCommunication {
   };
 }
 
-function note(item: ClinicalNote): QuestionnaireResponse {
+function note(item: ClinicalNote, dataClass: DataClass): QuestionnaireResponse {
   return {
     resourceType: "QuestionnaireResponse",
     id: fhirResourceId("QuestionnaireResponse", item.id),
@@ -260,8 +272,13 @@ function note(item: ClinicalNote): QuestionnaireResponse {
       system: "https://pflegehelfer.example.invalid/note-id",
       value: item.id,
     },
-    meta: { tag: sourceTags(item.source) },
-    status: ["synced", "approved", "pending-provider"].includes(item.status)
+    meta: { tag: sourceTags(item.source, dataClass) },
+    status: [
+      "synced",
+      "approved",
+      "pending-provider",
+      "external-gated",
+    ].includes(item.status)
       ? "completed"
       : "in-progress",
     subject: { reference: ref("Patient", item.patientId) },
@@ -277,20 +294,22 @@ function note(item: ClinicalNote): QuestionnaireResponse {
   };
 }
 
-function goals(patient: Patient): Goal[] {
+function goals(patient: Patient, dataClass: DataClass): Goal[] {
   return patient.careGoals.map((description, index) => ({
     resourceType: "Goal",
     id: fhirResourceId("Goal", `${patient.id}-goal-${index + 1}`),
+    meta: { tag: [classificationTag(dataClass)] },
     lifecycleStatus: "active",
     description: { text: description },
     subject: { reference: ref("Patient", patient.id) },
   }));
 }
 
-function carePlan(patient: Patient): CarePlan {
+function carePlan(patient: Patient, dataClass: DataClass): CarePlan {
   return {
     resourceType: "CarePlan",
     id: fhirResourceId("CarePlan", `${patient.id}-care-plan`),
+    meta: { tag: [classificationTag(dataClass)] },
     status: "active",
     intent: "plan",
     subject: { reference: ref("Patient", patient.id) },
@@ -320,6 +339,11 @@ function provenance(resource: Resource): Provenance | null {
           tag.system ===
           "https://pflegehelfer.example.invalid/source-recorded-at",
       )?.code ?? "2026-09-05T00:00:00.000Z",
+    meta: {
+      tag: (resource.meta?.tag ?? []).filter(
+        (tag) => tag.system === dataClassificationSystem,
+      ),
+    },
     target: [{ reference: `${resource.resourceType}/${resource.id}` }],
     agent: [
       {
@@ -338,11 +362,15 @@ function provenance(resource: Resource): Provenance | null {
   };
 }
 
-export function auditEventToFhirR4(entry: AuditEntry): AuditEvent {
+export function auditEventToFhirR4(
+  entry: AuditEntry,
+  dataClass: DataClass = "synthetic-demo",
+): AuditEvent {
   const action = entry.action.includes(":read") ? "R" : "E";
   return {
     resourceType: "AuditEvent",
     id: entry.id,
+    meta: { tag: [classificationTag(dataClass)] },
     type: {
       system: "http://terminology.hl7.org/CodeSystem/audit-event-type",
       code: "rest",
@@ -413,6 +441,7 @@ export function auditEventToFhirR4(entry: AuditEntry): AuditEvent {
 export function toFhirResourceSet(
   state: CanonicalClinicalState,
   auditEntries: readonly AuditEntry[] = [],
+  dataClass: DataClass = "synthetic-demo",
 ): Resource[] {
   const wardLocations: Location[] = [
     {
@@ -426,20 +455,23 @@ export function toFhirResourceSet(
       ],
       status: "active",
       name: "Rehabilitation Station 2",
+      meta: { tag: [classificationTag(dataClass)] },
     },
   ];
   const clinical: Resource[] = [
     ...wardLocations,
-    ...state.users.map(practitioner),
+    ...state.users.map((user) => practitioner(user, dataClass)),
     ...state.patients.flatMap((patient) => [
       {
-        ...patientToFhirR4(patient),
+        ...patientToFhirR4(patient, dataClass),
         id: fhirResourceId("Patient", patient.id),
         meta: {
-          profile: patientToFhirR4(patient).meta.profile,
+          profile: patientToFhirR4(patient, dataClass).meta.profile,
           tag: [
-            ...patientToFhirR4(patient).meta.tag,
-            ...sourceTags(patient.source),
+            ...patientToFhirR4(patient, dataClass).meta.tag,
+            ...sourceTags(patient.source, dataClass).filter(
+              (tag) => tag.system !== dataClassificationSystem,
+            ),
           ],
         },
         identifier: [
@@ -448,27 +480,29 @@ export function toFhirResourceSet(
             value: patient.id,
           },
           {
-            system: "https://pflegehelfer.example.invalid/synthetic-mrn",
+            system: `https://pflegehelfer.example.invalid/${dataClass === "synthetic-demo" ? "synthetic-mrn" : "medical-record-number"}`,
             value: patient.mrn,
           },
         ],
       } as Resource,
-      location(patient),
-      encounter(patient),
-      ...goals(patient),
-      carePlan(patient),
+      location(patient, dataClass),
+      encounter(patient, dataClass),
+      ...goals(patient, dataClass),
+      carePlan(patient, dataClass),
     ]),
-    ...state.tasks.map(task),
+    ...state.tasks.map((item) => task(item, dataClass)),
     ...state.observations.map(
       (item) =>
         ({
-          ...observationToFhirR4(item),
+          ...observationToFhirR4(item, dataClass),
           id: fhirResourceId("Observation", item.id),
           meta: {
-            profile: observationToFhirR4(item).meta.profile,
+            profile: observationToFhirR4(item, dataClass).meta.profile,
             tag: [
-              ...observationToFhirR4(item).meta.tag,
-              ...sourceTags(item.source),
+              ...observationToFhirR4(item, dataClass).meta.tag,
+              ...sourceTags(item.source, dataClass).filter(
+                (tag) => tag.system !== dataClassificationSystem,
+              ),
             ],
           },
           identifier: [
@@ -481,14 +515,14 @@ export function toFhirResourceSet(
           performer: [{ reference: ref("Practitioner", item.performerId) }],
         }) as Resource,
     ),
-    ...state.notes.map(note),
-    ...state.communications.map(communication),
+    ...state.notes.map((item) => note(item, dataClass)),
+    ...state.communications.map((item) => communication(item, dataClass)),
   ];
   return [
     ...clinical,
     ...clinical
       .map(provenance)
       .filter((item): item is Provenance => item !== null),
-    ...auditEntries.map(auditEventToFhirR4),
+    ...auditEntries.map((entry) => auditEventToFhirR4(entry, dataClass)),
   ];
 }

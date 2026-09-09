@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { PflegehelferService } from "../src/core/service.js";
 
 describe("clinical communication visibility", () => {
-  it("shows a direct message only to its sender and exact recipient", () => {
+  it("shows a named mention transparently to the patient-authorized treatment team", () => {
     const service = new PflegehelferService();
     const direct = service.createCommunication("u-nurse", {
       patientId: "p-anna",
@@ -28,12 +28,12 @@ describe("clinical communication visibility", () => {
       service
         .snapshot("u-physician-evening", "direct-care")
         .communications.some((item) => item.id === direct.id),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       service
         .snapshot("u-nurse-evening", "direct-care")
         .communications.some((item) => item.id === direct.id),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("shows an overdue named message to the governed on-call role", () => {

@@ -39,6 +39,42 @@ describe("versioned working session", () => {
     expect(resumed.contextRevision).toBe(1);
   });
 
+  it("keeps model conversation recall inside the current patient context", async () => {
+    const store = new InMemoryOperationalStore();
+    const turn = (id: string, patientId: string | null, prompt: string) => ({
+      id,
+      prompt,
+      response: { patientContext: patientId ? { patientId } : null },
+      createdAt: new Date().toISOString(),
+      inputModality: "typed" as const,
+    });
+    await store.appendConversationTurn(
+      "u-nurse",
+      "registered-nurse",
+      turn("anna", "p-anna", "Anna wurde mobilisiert."),
+    );
+    await store.appendConversationTurn(
+      "u-nurse",
+      "registered-nurse",
+      turn("luca", "p-luca", "Luca hat 200 ml getrunken."),
+    );
+    await store.appendConversationTurn(
+      "u-nurse",
+      "registered-nurse",
+      turn("general", null, "Was ist heute wichtig?"),
+    );
+
+    await expect(
+      store.loadConversation("u-nurse", "registered-nurse", "p-luca"),
+    ).resolves.toMatchObject([{ id: "luca" }]);
+    await expect(
+      store.loadConversation("u-nurse", "registered-nurse", null),
+    ).resolves.toMatchObject([{ id: "general" }]);
+    await expect(
+      store.loadConversation("u-nurse", "registered-nurse"),
+    ).resolves.toHaveLength(3);
+  });
+
   it("rejects duplicate steps, executable fields and a missing completion", () => {
     expect(
       workflowDefinitionSchema.safeParse({

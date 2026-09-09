@@ -1,20 +1,43 @@
 # Implementation plan
 
-Last updated: 2026-09-08
-Baseline: `fcd9f782bb0e5052e057854cbcbaccc39aa1630e`
+Last updated: 2026-09-09
+Baseline: `a197e0b816e4d7042a86abf4e9b8a8ab4c02331c`
 
 The product contract is `docs/PRODUCT_CONTRACT.md`. Work proceeds in six vertical slices on the existing modular monolith and one PWA. A table, migration or simulator alone does not complete a slice; each gate needs a real endpoint-to-storage-to-UI test.
 
+## Lean-completion implementation matrix
+
+This matrix reconciles the source audit of `a197e0b` with the active product contract. `Internal` means repository work; `EXTERNAL_VENDOR_GATE` is used only for evidence the repository cannot create.
+
+| Outcome                                | Existing implementation                                                                | Defect / simplification                                                                                                                       | Acceptance evidence                                                                              | Gate                                 |
+| -------------------------------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------ |
+| Natural, model-upgradable conversation | Typed `AssistantProposal`, bounded authorized model context and deterministic composer | Add a genuine bounded model-presentation composer and formal model-swap/held-out clinical corpus without moving authority into the model      | context/model-request tests, model-swap corpus, read queries remain action-free                  | Internal                             |
+| One readable approval                  | One-use review cards, local finality and high-assurance countersignature               | Persist proposal revision/hash as first-class relational records and prove concurrent countersignature behavior                               | one review produces explicit per-item local/destination states; edits create a new revision/hash | Internal                             |
+| Durable acceptance                     | Hashed intent/voice authority and restart/replay tests in PostgreSQL                   | Complete one atomic accepted-command transaction across authority, workflow, audit and FHIR/provider outbox                                   | concurrent/restart/replay/lost-response tests                                                    | Internal                             |
+| Interruptible work                     | Versioned roster, episode drafts/evidence, defer and receiver receipt                  | Add concurrent mutation tests and finer subtask responsibility only where real institutional workflows require it                             | memory + real PostgreSQL behavioral contract and browser interruption journey                    | Internal                             |
+| Provider synchronization               | Neutral adapters, simulators and FHIR projections                                      | Use leased relational inbox/outbox, one terminal-state vocabulary and explicit destination routing; do not use the checkpoint as worker queue | two-worker/retry/dedupe/restart/inbound/outbound tests                                           | Internal                             |
+| Clinical state ownership               | Medplum resources plus whole-state Binary checkpoint                                   | Reconstruct from resource-scoped clinical repositories and retire checkpoint from normal operation after migration test                       | restart/reconstruction and failing real Medplum transaction                                      | Internal                             |
+| Site portability                       | Runtime immutable site pack, second fictional site, 2/12 assignments                   | Add governed immutable publication/activation and site-scoped Medplum control-resource migration                                              | pack validation and 2/12-assignment acceptance                                                   | Internal                             |
+| Shared collaboration                   | Authorized shared patient team thread and role/named ownership                         | Add persistent multi-comment history, directory/coverage resolution and revocation/event-replay proof                                         | cross-role/audience/revocation/thread lifecycle tests                                            | Internal                             |
+| Voice/model truth                      | Local/hosted adapters and browser/file capture                                         | Health requires a bounded real call; allow permitted patient-independent voice; preserve honest disabled state                                | configured smoke test or explicit `disabled`, MIME/size/context tests                            | Internal + deployment/model approval |
+| Vendor activation                      | Per-operation gated provider registry                                                  | Never invent private endpoints; activate operations independently only with contracts/auth/sandbox/read-back evidence                         | vendor contract acceptance suite                                                                 | `EXTERNAL_VENDOR_GATE`               |
+| Operational proof                      | Fast checks, Playwright and checksum smoke                                             | Add real PostgreSQL/Medplum backup-restore and blocked-egress execution evidence; publish exact skips                                         | clean-checkout evidence manifest                                                                 | Internal + deployment approval       |
+
 ## Current implementation checkpoint
 
-- Pinned Node 24.19.0 and pnpm 11.19.0.
+- Pinned Node 24.19.0 and pnpm 11.19.0; the local validation runtime is Node 24.18.0 and satisfies the pinned major/runtime constraints.
 - Generic proposal IR, independent model grounding, negation/temporal/partial/correction coverage and dedicated clinical-workflow rejection are implemented and regression tested.
-- The configured early shift supplies six assigned patients; handover acknowledgement, start/pause/interruption/resume/completion and provider-state display run in PostgreSQL and the PWA.
-- Site timezone, shifts, provider routing intent, role permissions, workflows and staff assignment are strictly validated in `config/sites/tertianum-kronenhof.json`.
+- The configured early shift supplies six assigned patients; handover acknowledgement, start/pause/interruption/resume/completion, episode draft, explicit defer and receiving-shift acknowledgement run in PostgreSQL and the PWA. This is the sole live responsibility authority.
+- Site timezone, shifts, provider routing, role permissions, workflows and staff assignment are runtime-loaded and strictly validated. `alpenblick-demo.json` and 2/12-assignment tests prove source-code-independent variation.
 - Workday access now fails closed when no exact actor+role assignment exists; older operational databases receive the `context_revision` compatibility upgrade idempotently.
+- Same-shift handovers are actor-owned, acknowledgements bind the exact handover/version, terminal episodes cannot be reopened, one planned responsibility cannot be duplicated and transferred shifts cannot restart. PostgreSQL and the executable demo store share these behavioral contracts.
+- Recent model context is patient-filtered and each completed response retains its origin patient/revision across slow in-flight context switches. The PWA locks chat/role/context controls until server-confirmed patient changes and autosaves episode drafts before reload.
 - The clinical compiler has a conservative generic imperative boundary, preserves scalar uncertainty and `nicht … sondern …` corrections, and keeps ambiguous physician timing in one concise clarification rather than inventing a deadline.
-- The patient profile includes safety, goals, medication read-only data, recent vitals and care protocol. Team questions render as structured patient-bound threads with role-authorized acknowledge/answer/close actions.
-- The remaining work is the production acceptance work listed under Slices C, E and F; it must not be relabelled as an external vendor gate.
+- The patient profile includes safety, goals, medication read-only data, approved recent vitals and care protocol. Team questions render as shared patient-bound threads with narrow acknowledge/answer/close ownership and no first-user auto-assignment.
+- Hashed one-use assistant and voice authority is durable across API restart. Normal clinical review is locally final; doubtful measurements remain non-current until independent countersignature.
+- Provider simulators now receive note, Observation, Task and Communication commands and preserve business workflow state while acknowledgement is tracked separately.
+- Production local fast/deep/ASR model packs require immutable SHA-256 digest configuration; local endpoint redirects and link-local addresses fail closed. Hosted development remains explicit-consent, synthetic-only.
+- The remaining production acceptance work is concentrated in Slices C, E and F; it must not be relabelled as an external vendor gate.
 
 ## Slice A — clinical work compiler
 

@@ -15,6 +15,10 @@ import { fhirResourceId } from "../core/fhir-resource-set.js";
 import { AsrGateway } from "../ai/asr-gateway.js";
 import { ModelGateway } from "../ai/model-gateway.js";
 import { ApprovedKnowledgeService } from "../ai/approved-knowledge.js";
+import {
+  completionEvidenceIsIncomplete,
+  requiresDedicatedClinicalWorkflow,
+} from "../ai/assistant-proposal.js";
 import { isDomainError, PflegehelferService } from "../core/service.js";
 import { emptyWorkflowState } from "../core/service.js";
 import { siteConfiguration } from "../core/site-config.js";
@@ -31,8 +35,10 @@ import {
 } from "../infrastructure/medplum-workspace.js";
 import {
   InMemoryOperationalStore,
+  type DurableVoiceAuthority,
   type OperationalStore,
 } from "../infrastructure/operational-store.js";
+import type { WorkdayCommand } from "../core/workday.js";
 
 const roleSchema = z.enum([
   "care-assistant",
@@ -239,6 +245,11 @@ export function buildApp(
   const asr = new AsrGateway();
   const knowledge = new ApprovedKnowledgeService();
   const assistant = new AssistantService(service, models, knowledge);
+  const effectiveDataClass = () =>
+    service.dataClass() === "synthetic-demo" &&
+    service.providerProfile === "synthetic-simulator"
+      ? ("synthetic-demo" as const)
+      : ("institution-local" as const);
   const assistantWorkingContext = async (actorId: string) => {
     const actor = service.user(actorId);
     const session = await operationalStore.getOrStartSession(
@@ -246,7 +257,11 @@ export function buildApp(
       actor.role,
     );
     const recentPrompts = (
-      await operationalStore.loadConversation(actorId, actor.role)
+      await operationalStore.loadConversation(
+        actorId,
+        actor.role,
+        session.patientId,
+      )
     )
       .slice(-6)
       .map((turn) => turn.prompt);
@@ -259,38 +274,86 @@ export function buildApp(
       activeEpisodePatientId: workday?.activeEpisode?.patientId ?? null,
       resumableEpisodePatientId: workday?.resumableEpisode?.patientId ?? null,
       recentPrompts,
+      organizationLabel: siteConfiguration.displayName,
+      actorRole: actor.role,
+      dataClass: effectiveDataClass(),
+      workdayHandover: workday
+        ? {
+            shiftKey: workday.handover.shiftKey,
+            status: workday.handover.status,
+            acknowledgedCount: workday.handover.acknowledgedPatientIds.length,
+            assignedCount: workday.handover.patientIds.length,
+            openCount:
+              workday.plan.filter((item) => item.status !== "completed")
+                .length +
+              workday.incomingTransfers.filter(
+                (item) => item.state === "pending",
+              ).length,
+            summary: [
+              `${workday.handover.acknowledgedPatientIds.length}/${workday.handover.patientIds.length} Patientenkontexte geprüft`,
+              ...workday.plan.map(
+                (item) =>
+                  `${item.title}: ${
+                    {
+                      planned: "geplant",
+                      active: "in Arbeit",
+                      paused: "offen/übergeben",
+                      completed: "abgeschlossen",
+                    }[item.status]
+                  }`,
+              ),
+              ...workday.incomingTransfers
+                .filter((item) => item.state === "pending")
+                .map((item) => `Eingehende Verantwortung: ${item.reason}`),
+            ].join(" · "),
+          }
+        : null,
     };
   };
   let durableResources = service.fhirResources();
   let persistenceQueue: Promise<void> = Promise.resolve();
+  let assistantAuditQueue: Promise<void> = Promise.resolve();
   let eventRevision = 0;
-  const voiceReceipts = new Map<
-    string,
-    {
-      actorId: string;
-      patientId: string;
-      purpose: z.infer<typeof purposeSchema>;
-      textHash: string;
-      model: string;
-      entityIds: string[];
-      sessionId: string;
-      threadId: string;
-      contextRevision: number;
-      expiresAt: number;
-    }
-  >();
+  const voiceReceipts = new Map<string, DurableVoiceAuthority>();
   const revokeVoiceReceipts = (actorId: string) => {
     for (const [receiptId, receipt] of voiceReceipts)
       if (receipt.actorId === actorId) voiceReceipts.delete(receiptId);
   };
-  const consumeVoiceReceipt = (
+  const authorityHash = (token: string) =>
+    createHash("sha256").update(token).digest("hex");
+  const persistResponseAuthorities = async (
+    response: AssistantResponse,
+    session: { id: string; threadId: string; contextRevision: number },
+  ) => {
+    for (const component of response.components) {
+      if (component.type !== "DraftAction") continue;
+      const record = assistant.durableIntentRecord(component.intentToken);
+      if (!record)
+        throw new DomainError(
+          "INVALID_STATE",
+          "Die geprüfte Aktion konnte nicht dauerhaft gebunden werden.",
+          503,
+        );
+      await operationalStore.storeIntentAuthority({
+        tokenHash: authorityHash(component.intentToken),
+        record,
+        sessionId: session.id,
+        threadId: session.threadId,
+        contextRevision: session.contextRevision,
+      });
+    }
+  };
+  const consumeValidatedVoiceReceipt = async (
     actorId: string,
     body: AssistantQueryBody,
     session: { id: string; threadId: string; contextRevision: number },
-  ) => {
-    if (body.inputModality !== "voice") return;
-    const receipt = voiceReceipts.get(body.voiceReceiptId ?? "");
-    if (body.voiceReceiptId) voiceReceipts.delete(body.voiceReceiptId);
+  ): Promise<string | null> => {
+    if (body.inputModality !== "voice") return null;
+    const receiptId = body.voiceReceiptId ?? "";
+    const tokenHash = authorityHash(receiptId);
+    const receipt =
+      voiceReceipts.get(receiptId) ??
+      (await operationalStore.loadVoiceAuthority(tokenHash));
     const purpose = body.purpose ?? "direct-care";
     const textHash = createHash("sha256").update(body.prompt).digest("hex");
     const confirmed = [...(body.voiceConfirmedEntityIds ?? [])].sort();
@@ -312,6 +375,14 @@ export function buildApp(
         "Sprachtranskript ist abgelaufen, verändert oder nicht an diesen Kontext gebunden.",
         403,
       );
+    if (!(await operationalStore.consumeVoiceAuthority(tokenHash)))
+      throw new DomainError(
+        "AUTH_DENIED",
+        "Sprachtranskript wurde bereits verwendet.",
+        403,
+      );
+    voiceReceipts.delete(receiptId);
+    return receiptId;
   };
   const eventSubscribers = new Set<(revision: number) => void>();
   const contextTransitions = new Map<string, Promise<unknown>>();
@@ -523,6 +594,38 @@ export function buildApp(
     );
     return pending;
   };
+  const runAssistantQuery = async <T>(
+    operation: () => Promise<T>,
+  ): Promise<T> => {
+    // Model/ASR latency must never occupy the global clinical-write queue.
+    // The generated query audit is copied to the operational audit chain on a
+    // separate queue; the unique hash index makes overlapping concurrent
+    // slices idempotent.
+    const beforeAuditLength = service.audit.length;
+    const result = await operation();
+    const entries = service.audit.slice(beforeAuditLength);
+    const pending = assistantAuditQueue.then(async () => {
+      for (const entry of entries) await operationalStore.appendAudit(entry);
+      const resourcesByReference = new Map(
+        durableResources.map((resource) => [
+          `${resource.resourceType}/${resource.id}`,
+          resource,
+        ]),
+      );
+      for (const resource of service.fhirAuditResourcesSince(beforeAuditLength))
+        resourcesByReference.set(
+          `${resource.resourceType}/${resource.id}`,
+          resource,
+        );
+      durableResources = [...resourcesByReference.values()];
+    });
+    assistantAuditQueue = pending.then(
+      () => undefined,
+      () => undefined,
+    );
+    await pending;
+    return result;
+  };
   const app = Fastify({
     logger: {
       level:
@@ -682,7 +785,13 @@ export function buildApp(
       });
       return;
     }
-    request.log.error({ err: error }, "unhandled request error");
+    request.log.error(
+      {
+        errorType: error instanceof Error ? error.name : typeof error,
+        requestId: request.id,
+      },
+      "unhandled request error",
+    );
     void reply.code(500).send({
       error: "INTERNAL",
       message: "Interner Fehler.",
@@ -733,7 +842,7 @@ export function buildApp(
     time: new Date().toISOString(),
   }));
   app.get("/ready", async (_request, reply) => {
-    await persistenceQueue;
+    await Promise.all([persistenceQueue, assistantAuditQueue]);
     const auditValid = service.audit.verify();
     const [workspaceStatus, operationalReady] = await Promise.all([
       workspace.status(),
@@ -926,6 +1035,7 @@ export function buildApp(
         z
           .object({
             type: z.literal("acknowledge-handover"),
+            handoverId: z.string().uuid(),
             patientId: z.string(),
             version: z.number().int().positive(),
           })
@@ -944,6 +1054,7 @@ export function buildApp(
             type: z.literal("pause-episode"),
             episodeId: z.string().uuid(),
             reason: z.enum(["pause", "interruption"]),
+            draftText: z.string().max(1200).optional(),
           })
           .strict(),
         z
@@ -953,6 +1064,7 @@ export function buildApp(
             patientId: z.string(),
             encounterId: z.string(),
             title: z.string().trim().min(3).max(160),
+            pausedDraftText: z.string().max(1200).optional(),
           })
           .strict(),
         z
@@ -963,14 +1075,36 @@ export function buildApp(
           .strict(),
         z
           .object({
+            type: z.literal("save-episode-draft"),
+            episodeId: z.string().uuid(),
+            draftText: z.string().max(1200),
+          })
+          .strict(),
+        z
+          .object({
+            type: z.literal("defer-responsibility"),
+            patientId: z.string(),
+            encounterId: z.string(),
+            reason: z.string().trim().min(3).max(500),
+            receivingActorId: z.string().trim().min(3).max(80),
+          })
+          .strict(),
+        z
+          .object({
+            type: z.literal("acknowledge-transfer"),
+            transferId: z.string().uuid(),
+          })
+          .strict(),
+        z
+          .object({
             type: z.literal("complete-episode"),
             episodeId: z.string().uuid(),
-            evidence: z.string().trim().min(3).max(1200),
+            evidence: z.string().trim().min(10).max(1200),
           })
           .strict(),
         z.object({ type: z.literal("close-shift") }).strict(),
       ])
-      .parse(request.body);
+      .parse(request.body) as WorkdayCommand;
     if ("patientId" in command) {
       const allowedPatient = service
         .snapshot(actorId, actor.defaultPurpose)
@@ -982,13 +1116,43 @@ export function buildApp(
           403,
         );
       if (
-        ["start-episode", "interrupt-and-start"].includes(command.type) &&
         "encounterId" in command &&
         command.encounterId !== allowedPatient.encounterId
       )
         throw new DomainError(
           "VALIDATION",
           "Der Fallbezug stimmt nicht mit dem freigegebenen Patientenkontext überein.",
+          422,
+        );
+    }
+    if (
+      command.type === "defer-responsibility" &&
+      (() => {
+        const assignment = siteConfiguration.staffAssignments.find(
+          (item) => item.actorId === actorId && item.role === actor.role,
+        );
+        const expectedRecipient = assignment
+          ? siteConfiguration.shifts[assignment.shiftId]?.nextResponsibleActorId
+          : null;
+        return command.receivingActorId !== expectedRecipient;
+      })()
+    )
+      throw new DomainError(
+        "VALIDATION",
+        "Die übernehmende Verantwortung stimmt nicht mit dem freigegebenen nächsten Dienst überein.",
+        422,
+      );
+    if (command.type === "complete-episode") {
+      if (requiresDedicatedClinicalWorkflow(command.evidence))
+        throw new DomainError(
+          "VALIDATION",
+          "Medikations-, Behandlungs- oder Diagnostikangaben müssen im dafür vorgesehenen sicheren Ablauf geprüft werden.",
+          422,
+        );
+      if (completionEvidenceIsIncomplete(command.evidence))
+        throw new DomainError(
+          "VALIDATION",
+          "Die Angaben beschreiben offene oder nicht durchgeführte Arbeit. Bitte Episode unterbrechen oder Verantwortung sichtbar weitergeben.",
           422,
         );
     }
@@ -999,6 +1163,40 @@ export function buildApp(
           actor.role,
           command,
         );
+        if (command.type === "complete-episode") {
+          const episode = result.episodes.find(
+            (candidate) => candidate.id === command.episodeId,
+          );
+          if (!episode)
+            throw new DomainError(
+              "INVALID_STATE",
+              "Die abgeschlossene Arbeitsepisode ist nicht mehr verfügbar.",
+              409,
+            );
+          service.runAtomically(() => {
+            const patient = service
+              .snapshot(actorId, actor.defaultPurpose)
+              .patients.find((candidate) => candidate.id === episode.patientId);
+            if (!patient)
+              throw new DomainError(
+                "AUTH_DENIED",
+                "Der Patientenkontext der Arbeitsepisode ist nicht freigegeben.",
+                403,
+              );
+            const draft = service.createNoteDraft(actorId, {
+              patientId: patient.id,
+              structuredText: command.evidence,
+              purpose: actor.defaultPurpose,
+            });
+            service.approve(actorId, "note", draft.id, {
+              expectedVersion: draft.version,
+              patientMrn: patient.mrn,
+              patientBirthDate: patient.birthDate,
+              reviewedDiff: true,
+              purpose: actor.defaultPurpose,
+            });
+          });
+        }
         if (
           ["start-episode", "interrupt-and-start", "resume-episode"].includes(
             command.type,
@@ -1006,6 +1204,7 @@ export function buildApp(
         ) {
           assistant.revokeActorIntents(actorId);
           revokeVoiceReceipts(actorId);
+          await operationalStore.revokeActorAuthorities(actorId);
         }
         publishInvalidation();
         return {
@@ -1044,6 +1243,7 @@ export function buildApp(
     }
     assistant.revokeActorIntents(actorId);
     revokeVoiceReceipts(actorId);
+    await operationalStore.revokeActorAuthorities(actorId);
     const transition = operationalStore.changePatientContext(
       actorId,
       actor.role,
@@ -1081,11 +1281,14 @@ export function buildApp(
     await persistenceQueue;
     const context = z
       .object({
-        patientId: z.string(),
+        patientId: z.string().nullable(),
         purpose: purposeSchema.default("direct-care"),
       })
       .parse({
-        patientId: request.headers["x-pfh-patient-context"],
+        patientId:
+          typeof request.headers["x-pfh-patient-context"] === "string"
+            ? request.headers["x-pfh-patient-context"]
+            : null,
         purpose: request.headers["x-pfh-purpose"],
       });
     const actorId = userId(request);
@@ -1101,7 +1304,10 @@ export function buildApp(
         403,
       );
     const snapshot = service.snapshot(actorId, context.purpose);
-    if (!snapshot.patients.some((patient) => patient.id === context.patientId))
+    if (
+      context.patientId &&
+      !snapshot.patients.some((patient) => patient.id === context.patientId)
+    )
       throw new DomainError(
         "AUTH_DENIED",
         "Sprachaufnahme liegt ausserhalb des freigegebenen Patientenkontexts.",
@@ -1130,9 +1336,13 @@ export function buildApp(
       fileBuffer.byteLength,
     );
     try {
-      const transcription = await asr.transcribe(bytes, file.mimetype);
+      const transcription = await asr.transcribe(
+        bytes,
+        file.mimetype,
+        effectiveDataClass(),
+      );
       const receiptId = randomUUID();
-      voiceReceipts.set(receiptId, {
+      const voiceAuthority: DurableVoiceAuthority = {
         actorId,
         patientId: context.patientId,
         purpose: context.purpose,
@@ -1145,7 +1355,12 @@ export function buildApp(
         threadId: session.threadId,
         contextRevision: session.contextRevision,
         expiresAt: Date.now() + 5 * 60_000,
-      });
+      };
+      voiceReceipts.set(receiptId, voiceAuthority);
+      await operationalStore.storeVoiceAuthority(
+        authorityHash(receiptId),
+        voiceAuthority,
+      );
       return persist(() => {
         service.audit.append({
           actor,
@@ -1167,20 +1382,26 @@ export function buildApp(
     const actorId = userId(request);
     const actor = service.user(actorId);
     await contextTransitions.get(actorId);
-    const session = await operationalStore.getOrStartSession(
-      actorId,
-      actor.role,
-    );
+    let session = await operationalStore.getOrStartSession(actorId, actor.role);
     if (session.patientId !== body.patientId)
       throw new DomainError(
         "AUTH_DENIED",
         "Assistenzanfrage stimmt nicht mit dem bewusst gewählten Patientenkontext überein.",
         403,
       );
-    consumeVoiceReceipt(actorId, body, session);
+    const voiceReceiptId = await consumeValidatedVoiceReceipt(
+      actorId,
+      body,
+      session,
+    );
     assistant.revokeActorIntents(actorId);
+    await operationalStore.revokeActorAuthorities(actorId);
+    session = await operationalStore.advanceAssistantRevision(
+      actorId,
+      actor.role,
+    );
     const workingContext = await assistantWorkingContext(actorId);
-    const response = await persist(() =>
+    const response = await runAssistantQuery(() =>
       assistant.query(userId(request), {
         prompt: body.prompt,
         patientId: body.patientId,
@@ -1190,13 +1411,17 @@ export function buildApp(
         ...(body.purpose ? { purpose: body.purpose } : {}),
       }),
     );
+    await persistResponseAuthorities(response, session);
     await operationalStore.appendConversationTurn(actorId, actor.role, {
       id: response.id,
       prompt: body.prompt,
       response: archiveAssistantResponse(response),
       createdAt: new Date().toISOString(),
       inputModality: body.inputModality,
+      originPatientId: body.patientId,
+      originContextRevision: session.contextRevision,
     });
+    void voiceReceiptId;
     return response;
   });
 
@@ -1205,21 +1430,27 @@ export function buildApp(
     const actorId = userId(request);
     const actor = service.user(actorId);
     await contextTransitions.get(actorId);
-    const session = await operationalStore.getOrStartSession(
-      actorId,
-      actor.role,
-    );
+    let session = await operationalStore.getOrStartSession(actorId, actor.role);
     if (session.patientId !== body.patientId)
       throw new DomainError(
         "AUTH_DENIED",
         "Assistenzanfrage stimmt nicht mit dem bewusst gewählten Patientenkontext überein.",
         403,
       );
-    consumeVoiceReceipt(actorId, body, session);
+    const voiceReceiptId = await consumeValidatedVoiceReceipt(
+      actorId,
+      body,
+      session,
+    );
 
     assistant.revokeActorIntents(actorId);
+    await operationalStore.revokeActorAuthorities(actorId);
+    session = await operationalStore.advanceAssistantRevision(
+      actorId,
+      actor.role,
+    );
     const workingContext = await assistantWorkingContext(actorId);
-    const response = await persist(() =>
+    const response = await runAssistantQuery(() =>
       assistant.query(actorId, {
         prompt: body.prompt,
         patientId: body.patientId,
@@ -1229,6 +1460,7 @@ export function buildApp(
         ...(body.purpose ? { purpose: body.purpose } : {}),
       }),
     );
+    await persistResponseAuthorities(response, session);
     let completed = false;
     request.raw.once("close", () => {
       if (!completed) assistant.revokeResponseIntents(response);
@@ -1260,6 +1492,8 @@ export function buildApp(
         response: archiveAssistantResponse(response),
         createdAt: new Date().toISOString(),
         inputModality: body.inputModality,
+        originPatientId: body.patientId,
+        originContextRevision: session.contextRevision,
       });
     } catch {
       assistant.revokeResponseIntents(response);
@@ -1271,6 +1505,7 @@ export function buildApp(
       reply.raw.end();
       return;
     }
+    void voiceReceiptId;
     write({ type: "complete", response });
     completed = true;
     reply.raw.end();
@@ -1300,89 +1535,124 @@ export function buildApp(
           403,
         );
       }, request);
-    return persist(async () => {
-      const result = assistant.executeIntent(actorId, token, {
-        patientId: execution.patientId,
-        encounterId: execution.encounterId,
-        purpose: execution.purpose,
-        resourceVersion: execution.resourceVersion,
-        explicitlyConfirmed: execution.explicitlyConfirmed,
-        ...(execution.reviewedActionIds
-          ? { reviewedActionIds: execution.reviewedActionIds }
-          : {}),
-      });
-      if (
-        !result ||
-        typeof result !== "object" ||
-        !("workflowActions" in result)
-      )
-        return result;
-      const workflowActions = (
-        result as {
-          workflowActions: Array<{
-            operation: "pause-current-and-start-room";
-            targetRoom: string;
-            reason: string;
-          }>;
-        }
-      ).workflowActions;
-      const workflowAction = workflowActions[0];
-      if (
-        workflowActions.length !== 1 ||
-        !workflowAction ||
-        workflowAction.operation !== "pause-current-and-start-room"
-      )
-        throw new DomainError(
-          "VALIDATION",
-          "Der Ablaufwechsel ist nicht eindeutig.",
-          400,
-        );
-      const workday = await operationalStore.getWorkday(actorId, actor.role);
-      const active = workday.activeEpisode;
-      if (
-        !active ||
-        active.patientId !== execution.patientId ||
-        active.encounterId !== execution.encounterId
-      )
-        throw new DomainError(
-          "VERSION_CONFLICT",
-          "Die aktive Arbeit hat sich geändert. Bitte den Wechsel neu formulieren.",
-          409,
-        );
-      const target = service
-        .snapshot(actorId, execution.purpose)
-        .patients.find((patient) => patient.room === workflowAction.targetRoom);
-      if (!target || target.id === active.patientId)
-        throw new DomainError(
-          "VALIDATION",
-          `Zimmer ${workflowAction.targetRoom} ist im freigegebenen Arbeitskontext nicht eindeutig verfügbar.`,
-          400,
-        );
-      const next = await operationalStore.applyWorkdayCommand(
-        actorId,
-        actor.role,
-        {
-          type: "interrupt-and-start",
-          episodeId: active.id,
-          patientId: target.id,
-          encounterId: target.encounterId,
-          title: `Spontaner Besuch · Zimmer ${target.room}`,
-        },
+    const tokenHash = authorityHash(token);
+    const durableIntent = await operationalStore.loadIntentAuthority({
+      tokenHash,
+      actorId,
+      sessionId: session.id,
+      threadId: session.threadId,
+      contextRevision: session.contextRevision,
+      patientId: execution.patientId,
+    });
+    if (
+      !durableIntent ||
+      durableIntent.encounterId !== execution.encounterId ||
+      durableIntent.purpose !== execution.purpose ||
+      durableIntent.resourceVersion !== execution.resourceVersion
+    )
+      throw new DomainError(
+        "AUTH_DENIED",
+        "Assistenzaktion ist ungültig, abgelaufen oder bereits verwendet.",
+        403,
       );
-      service.audit.append({
-        actor,
-        action: "assistant:workflow-interrupted",
-        patientId: target.id,
-        purpose: execution.purpose,
-        outcome: "success",
-        detail: {
-          pausedEpisodeId: active.id,
-          targetRoom: target.room,
-          requestedByUser: true,
-        },
-      });
-      return { workday: next, workflowChanged: true };
-    }, request);
+    if (!(await operationalStore.consumeIntentAuthority(tokenHash)))
+      throw new DomainError(
+        "AUTH_DENIED",
+        "Assistenzaktion wurde bereits verwendet.",
+        403,
+      );
+    assistant.restoreDurableIntent(token, durableIntent);
+    try {
+      return await persist(async () => {
+        const result = assistant.executeIntent(actorId, token, {
+          patientId: execution.patientId,
+          encounterId: execution.encounterId,
+          purpose: execution.purpose,
+          resourceVersion: execution.resourceVersion,
+          explicitlyConfirmed: execution.explicitlyConfirmed,
+          ...(execution.reviewedActionIds
+            ? { reviewedActionIds: execution.reviewedActionIds }
+            : {}),
+        });
+        if (
+          !result ||
+          typeof result !== "object" ||
+          !("workflowActions" in result)
+        )
+          return result;
+        const workflowActions = (
+          result as {
+            workflowActions: Array<{
+              operation: "pause-current-and-start-room";
+              targetRoom: string;
+              reason: string;
+            }>;
+          }
+        ).workflowActions;
+        const workflowAction = workflowActions[0];
+        if (
+          workflowActions.length !== 1 ||
+          !workflowAction ||
+          workflowAction.operation !== "pause-current-and-start-room"
+        )
+          throw new DomainError(
+            "VALIDATION",
+            "Der Ablaufwechsel ist nicht eindeutig.",
+            400,
+          );
+        const workday = await operationalStore.getWorkday(actorId, actor.role);
+        const active = workday.activeEpisode;
+        if (
+          !active ||
+          active.patientId !== execution.patientId ||
+          active.encounterId !== execution.encounterId
+        )
+          throw new DomainError(
+            "VERSION_CONFLICT",
+            "Die aktive Arbeit hat sich geändert. Bitte den Wechsel neu formulieren.",
+            409,
+          );
+        const target = service
+          .snapshot(actorId, execution.purpose)
+          .patients.find(
+            (patient) => patient.room === workflowAction.targetRoom,
+          );
+        if (!target || target.id === active.patientId)
+          throw new DomainError(
+            "VALIDATION",
+            `Zimmer ${workflowAction.targetRoom} ist im freigegebenen Arbeitskontext nicht eindeutig verfügbar.`,
+            400,
+          );
+        const next = await operationalStore.applyWorkdayCommand(
+          actorId,
+          actor.role,
+          {
+            type: "interrupt-and-start",
+            episodeId: active.id,
+            patientId: target.id,
+            encounterId: target.encounterId,
+            title: `Spontaner Besuch · Zimmer ${target.room}`,
+          },
+        );
+        service.audit.append({
+          actor,
+          action: "assistant:workflow-interrupted",
+          patientId: target.id,
+          purpose: execution.purpose,
+          outcome: "success",
+          detail: {
+            pausedEpisodeId: active.id,
+            targetRoom: target.room,
+            requestedByUser: true,
+          },
+        });
+        return { workday: next, workflowChanged: true };
+      }, request);
+    } catch (error) {
+      await operationalStore.releaseIntentAuthority(tokenHash);
+      assistant.restoreDurableIntent(token, durableIntent);
+      throw error;
+    }
   });
 
   app.post("/api/v1/tasks", async (request, reply) => {
@@ -1446,10 +1716,36 @@ export function buildApp(
     const params = z
       .object({ type: z.enum(["observation", "note"]), id: z.string() })
       .parse(request.params);
+    const actorId = userId(request);
+    const actor = service.user(actorId);
+    const record =
+      params.type === "observation"
+        ? service
+            .snapshot(actorId, actor.defaultPurpose)
+            .observations.find((item) => item.id === params.id)
+        : service
+            .snapshot(actorId, actor.defaultPurpose)
+            .notes.find((item) => item.id === params.id);
+    if (!record)
+      throw new DomainError(
+        "NOT_FOUND",
+        "Klinischer Entwurf nicht gefunden.",
+        404,
+      );
+    const session = await operationalStore.getOrStartSession(
+      actorId,
+      actor.role,
+    );
+    if (session.patientId !== record.patientId)
+      throw new DomainError(
+        "AUTH_DENIED",
+        "Freigabe erfordert den bewusst gewählten passenden Patientenkontext.",
+        403,
+      );
     return persist(
       () =>
         service.approve(
-          userId(request),
+          actorId,
           params.type,
           params.id,
           approveBody.parse(request.body),
@@ -1487,27 +1783,6 @@ export function buildApp(
           params.transition,
           communicationTransitionBody.parse(request.body),
         ),
-      request,
-    );
-  });
-  app.post("/api/v1/handovers/:id/acknowledge", async (request) => {
-    const params = z.object({ id: z.string() }).parse(request.params);
-    const body = z
-      .object({ purpose: purposeSchema.optional() })
-      .parse(request.body ?? {});
-    return persist(
-      () =>
-        service.acknowledgeHandover(userId(request), params.id, body.purpose),
-      request,
-    );
-  });
-  app.post("/api/v1/handovers/:id/sign", async (request) => {
-    const params = z.object({ id: z.string() }).parse(request.params);
-    const body = z
-      .object({ purpose: purposeSchema.optional() })
-      .parse(request.body ?? {});
-    return persist(
-      () => service.signHandover(userId(request), params.id, body.purpose),
       request,
     );
   });
@@ -1629,8 +1904,10 @@ export function buildApp(
         return { status: "reset" };
       }, request);
       await operationalStore.resetDemoState();
-      for (const user of service.checkpoint().state.users)
+      for (const user of service.checkpoint().state.users) {
         assistant.revokeActorIntents(user.id);
+        await operationalStore.revokeActorAuthorities(user.id);
+      }
       return result;
     });
   }

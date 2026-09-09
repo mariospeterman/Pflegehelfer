@@ -11,6 +11,8 @@ boots reuse the built indexes and are substantially faster.
 
 Production topology requires a TLS reverse proxy, institutional OIDC/Keycloak, purpose-specific BFF sessions, least-privilege Medplum ClientApplication and AccessPolicy, PostgreSQL/Redis HA, immutable audit export, encrypted backup/PITR, OpenTelemetry, secrets management and network isolation. Never expose Medplum, Ollama/vLLM or ASR directly to client devices; only the BFF and approved context links cross the edge.
 
+The actor-owned handover migration deliberately marks legacy shift-wide showcase rows as `legacy-unassigned`; it never guesses a responsible clinician from the old `system-bootstrap` author. For this fictional demo, reset operational demo state after upgrade. A real deployment must stop intake, reconcile/archive every legacy open/transferred handover with the responsible institution, verify zero `legacy-unassigned` executable rows, and only then activate the new version. This repository does not claim an unattended live-data migration from the retired shared-handover model.
+
 Pin all application, Medplum, database, model and FHIR-package artifacts by immutable digest/checksum. Import them into the offline release repository, generate an SBOM, scan, sign, stage the complete clinical journeys and retain approval/rollback evidence. Model and terminology packages never auto-update.
 
 The demo `.env.demo` credentials and broad bootstrap privileges are prohibited in production. Before production readiness can return healthy, configure institutional identity/device claims, narrow Medplum access policies, TLS, retention, backup, monitoring and every activated provider’s documented connection contract.

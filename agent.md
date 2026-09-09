@@ -24,6 +24,10 @@ Do not introduce `Focus`, module tabs, separate workflow pages, dashboard projec
 
 The baseline excludes microservices, Flowable, NATS/Kafka, vector databases and Kubernetes without measured need/new ADR.
 
+There is one live responsibility authority: the PostgreSQL workday with explicit patient acknowledgement, patient/encounter-bound episodes and receiving-shift receipts. Imported provider documents can be source evidence but never a mutable or fallback handover state. Role-addressed team work remains unassigned until claimed; array order is never identity or delegation policy. A `high-assurance` observation remains `reviewed`, is excluded from current-vitals queries and needs an independent authorized countersignature before approval/provider delivery.
+
+Handover acknowledgements bind the exact handover ID/version and responsible actor. Completed episodes, resolved planned responsibility and transferred shifts are terminal. Recent model context is filtered to the active authorized patient and retains the patient/context revision captured when each turn began.
+
 ## Workflow and safety
 
 `WorkflowTemplate` has immutable published versions. `WorkingSession` binds actor/role/organization, template version, assistant thread, step and context revision. Sign-in resumes/starts the active role workflow and places the next safe step in conversation. Workflow data is bounded and cannot execute code, grant policy, weaken approval, enable providers or auto-select patients.

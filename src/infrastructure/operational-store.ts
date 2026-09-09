@@ -1,10 +1,17 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import pg from "pg";
 import { workflowForRole, type WorkflowDefinition } from "../core/workflows.js";
-import { DomainError, type AuditEntry, type Role } from "../core/types.js";
+import type { DurableIntentRecord } from "../core/assistant.js";
+import {
+  DomainError,
+  type AuditEntry,
+  type Purpose,
+  type Role,
+} from "../core/types.js";
 import type {
+  ResponsibilityTransferView,
   WorkdayCommand,
   WorkdayView,
   WorkEpisodeView,
@@ -31,6 +38,25 @@ function facilityDateKey(value = new Date()): string {
   }).format(value);
 }
 
+function handoverSourceHash(input: {
+  departmentId: string;
+  shiftKey: string;
+  actorId: string;
+  patientIds: readonly string[];
+}): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        organizationId,
+        departmentId: input.departmentId,
+        shiftKey: input.shiftKey,
+        actorId: input.actorId,
+        patientIds: [...input.patientIds].sort(),
+      }),
+    )
+    .digest("hex");
+}
+
 function workdayConfiguration(actorId: string, role: Role) {
   const assignment = siteConfiguration.staffAssignments.find(
     (candidate) => candidate.actorId === actorId && candidate.role === role,
@@ -51,12 +77,52 @@ function workdayConfiguration(actorId: string, role: Role) {
   };
 }
 
+function optionalWorkdayConfiguration(actorId: string, role: Role) {
+  const assignment = siteConfiguration.staffAssignments.find(
+    (candidate) => candidate.actorId === actorId && candidate.role === role,
+  );
+  if (!assignment) return null;
+  const shiftId = assignment.shiftId;
+  const shift = siteConfiguration.shifts[shiftId]!;
+  return {
+    shiftId,
+    shift,
+    patientIds: assignment.patientIds,
+    shiftKey: `${siteConfiguration.siteId}-${facilityDateKey()}-${shiftId}`,
+  };
+}
+
 export interface StoredConversationTurn {
   id: string;
   prompt: string;
   response: unknown;
   createdAt: string;
   inputModality: "typed" | "voice";
+  originPatientId?: string | null;
+  originContextRevision?: number;
+}
+
+function storedTurnPatientId(turn: StoredConversationTurn): string | null {
+  if (turn.originPatientId !== undefined) return turn.originPatientId;
+  if (!turn.response || typeof turn.response !== "object") return null;
+  const patientContext = (turn.response as { patientContext?: unknown })
+    .patientContext;
+  if (!patientContext || typeof patientContext !== "object") return null;
+  const patientId = (patientContext as { patientId?: unknown }).patientId;
+  return typeof patientId === "string" ? patientId : null;
+}
+
+export interface DurableVoiceAuthority {
+  actorId: string;
+  patientId: string | null;
+  purpose: Purpose;
+  textHash: string;
+  model: string;
+  entityIds: string[];
+  sessionId: string;
+  threadId: string;
+  contextRevision: number;
+  expiresAt: number;
 }
 
 export interface WorkingSessionView {
@@ -86,9 +152,14 @@ export interface OperationalStore {
     role: Role,
     patientId: string | null,
   ): Promise<WorkingSessionView>;
+  advanceAssistantRevision(
+    actorId: string,
+    role: Role,
+  ): Promise<WorkingSessionView>;
   loadConversation(
     actorId: string,
     role: Role,
+    patientId?: string | null,
   ): Promise<StoredConversationTurn[]>;
   appendConversationTurn(
     actorId: string,
@@ -103,6 +174,30 @@ export interface OperationalStore {
     command: WorkdayCommand,
   ): Promise<WorkdayView>;
   appendAudit(entry: AuditEntry): Promise<void>;
+  storeIntentAuthority(input: {
+    tokenHash: string;
+    record: DurableIntentRecord;
+    sessionId: string;
+    threadId: string;
+    contextRevision: number;
+  }): Promise<void>;
+  loadIntentAuthority(input: {
+    tokenHash: string;
+    actorId: string;
+    sessionId: string;
+    threadId: string;
+    contextRevision: number;
+    patientId: string;
+  }): Promise<DurableIntentRecord | null>;
+  consumeIntentAuthority(tokenHash: string): Promise<boolean>;
+  releaseIntentAuthority(tokenHash: string): Promise<void>;
+  revokeActorAuthorities(actorId: string): Promise<void>;
+  storeVoiceAuthority(
+    tokenHash: string,
+    record: DurableVoiceAuthority,
+  ): Promise<void>;
+  loadVoiceAuthority(tokenHash: string): Promise<DurableVoiceAuthority | null>;
+  consumeVoiceAuthority(tokenHash: string): Promise<boolean>;
   health(): Promise<boolean>;
   resetDemoState(): Promise<void>;
   close(): Promise<void>;
@@ -112,12 +207,29 @@ interface MemorySession extends WorkingSessionView {
   turns: StoredConversationTurn[];
   handoverId: string;
   acknowledgedPatientIds: string[];
+  acknowledgedHandoverKey: string | null;
   handoverStatus: "open" | "transferred" | "acknowledged";
+  receivingActorId: string | null;
   episodes: WorkEpisodeView[];
 }
 
 export class InMemoryOperationalStore implements OperationalStore {
   private readonly sessions = new Map<string, MemorySession>();
+  private readonly transfers: ResponsibilityTransferView[] = [];
+  private readonly authorities = new Map<
+    string,
+    {
+      record: DurableIntentRecord;
+      sessionId: string;
+      threadId: string;
+      contextRevision: number;
+      consumed: boolean;
+    }
+  >();
+  private readonly voiceAuthorities = new Map<
+    string,
+    { record: DurableVoiceAuthority; consumed: boolean }
+  >();
   initialize(): Promise<void> {
     return Promise.resolve();
   }
@@ -145,7 +257,9 @@ export class InMemoryOperationalStore implements OperationalStore {
         turns: [],
         handoverId: randomUUID(),
         acknowledgedPatientIds: [],
+        acknowledgedHandoverKey: null,
         handoverStatus: "open",
+        receivingActorId: null,
         episodes: [],
       };
       this.sessions.set(actorId, session);
@@ -166,14 +280,31 @@ export class InMemoryOperationalStore implements OperationalStore {
     stored.rowVersion += 1;
     return structuredClone(stored);
   }
+  async advanceAssistantRevision(
+    actorId: string,
+    role: Role,
+  ): Promise<WorkingSessionView> {
+    const session =
+      this.sessions.get(actorId) ??
+      ((await this.getOrStartSession(actorId, role)) as MemorySession);
+    session.contextRevision += 1;
+    session.rowVersion += 1;
+    return structuredClone(session);
+  }
   async loadConversation(
     actorId: string,
     role: Role,
+    patientId?: string | null,
   ): Promise<StoredConversationTurn[]> {
     const session =
       this.sessions.get(actorId) ??
       ((await this.getOrStartSession(actorId, role)) as MemorySession);
-    return structuredClone(session.turns ?? []);
+    const turns = session.turns ?? [];
+    return structuredClone(
+      patientId === undefined
+        ? turns
+        : turns.filter((turn) => storedTurnPatientId(turn) === patientId),
+    );
   }
   async appendConversationTurn(
     actorId: string,
@@ -190,7 +321,12 @@ export class InMemoryOperationalStore implements OperationalStore {
   }
   async getWorkday(actorId: string, role: Role): Promise<WorkdayView> {
     await this.getOrStartSession(actorId, role);
-    return memoryWorkdayView(this.sessions.get(actorId)!);
+    const session = this.sessions.get(actorId)!;
+    return memoryWorkdayView(
+      session,
+      this.transfers,
+      this.receivedMemoryHandover(actorId) ?? session,
+    );
   }
   async applyWorkdayCommand(
     actorId: string,
@@ -200,18 +336,64 @@ export class InMemoryOperationalStore implements OperationalStore {
     await this.getOrStartSession(actorId, role);
     const session = this.sessions.get(actorId)!;
     const configuredWorkday = workdayConfiguration(actorId, role);
+    if (session.status === "completed") throw new Error("SHIFT_ALREADY_CLOSED");
     if (command.type === "acknowledge-handover") {
-      if (command.version !== 1) throw new Error("HANDOVER_VERSION_STALE");
+      const handover = [...this.sessions.values()].find(
+        (candidate) => candidate.handoverId === command.handoverId,
+      );
+      if (
+        !handover ||
+        (handover.actorId !== actorId &&
+          handover.receivingActorId !== actorId) ||
+        command.version !== 1 ||
+        !workdayConfiguration(
+          handover.actorId,
+          handover.effectiveRole,
+        ).patientIds.includes(command.patientId)
+      )
+        throw new Error("HANDOVER_VERSION_STALE");
+      const acknowledgementKey = `${command.handoverId}:${command.version}`;
+      if (session.acknowledgedHandoverKey !== acknowledgementKey) {
+        session.acknowledgedHandoverKey = acknowledgementKey;
+        session.acknowledgedPatientIds = [];
+      }
       if (!session.acknowledgedPatientIds.includes(command.patientId))
         session.acknowledgedPatientIds.push(command.patientId);
       if (
         session.acknowledgedPatientIds.length ===
         configuredWorkday.patientIds.length
-      )
+      ) {
         session.currentStepId = "prioritize";
+        if (handover.receivingActorId === actorId)
+          handover.handoverStatus = "acknowledged";
+      }
     } else if (command.type === "start-episode") {
+      if (command.kind === "planned") {
+        const handover = this.receivedMemoryHandover(actorId) ?? session;
+        if (session.acknowledgedHandoverKey !== `${handover.handoverId}:1`)
+          throw new Error("HANDOVER_ACKNOWLEDGEMENT_REQUIRED");
+        const assignedPatientIds = workdayConfiguration(
+          handover.actorId,
+          handover.effectiveRole,
+        ).patientIds;
+        if (
+          !assignedPatientIds.every((patientId) =>
+            session.acknowledgedPatientIds.includes(patientId),
+          )
+        )
+          throw new Error("HANDOVER_ACKNOWLEDGEMENT_REQUIRED");
+      }
       if (session.episodes.some((episode) => episode.state === "active"))
         throw new Error("ACTIVE_EPISODE_REQUIRES_PAUSE");
+      if (
+        command.kind === "planned" &&
+        session.episodes.some(
+          (episode) =>
+            episode.kind === "planned" &&
+            episode.patientId === command.patientId,
+        )
+      )
+        throw new Error("PLANNED_EPISODE_ALREADY_EXISTS");
       const assignment =
         command.kind === "planned" &&
         configuredWorkday.patientIds.includes(command.patientId)
@@ -230,6 +412,8 @@ export class InMemoryOperationalStore implements OperationalStore {
         state: "active",
         startedAt: new Date().toISOString(),
         completedAt: null,
+        draftText: "",
+        completionEvidence: null,
       });
       session.currentStepId = "work";
       session.patientId = command.patientId;
@@ -241,6 +425,7 @@ export class InMemoryOperationalStore implements OperationalStore {
       );
       if (!active) throw new Error("EPISODE_STATE_CONFLICT");
       active.state = "paused";
+      active.draftText = command.pausedDraftText?.slice(0, 1200) ?? "";
       session.episodes.push({
         id: randomUUID(),
         patientId: command.patientId,
@@ -250,30 +435,123 @@ export class InMemoryOperationalStore implements OperationalStore {
         state: "active",
         startedAt: new Date().toISOString(),
         completedAt: null,
+        draftText: "",
+        completionEvidence: null,
       });
       session.currentStepId = "work";
       session.patientId = command.patientId;
       session.contextRevision += 1;
     } else {
-      const episode =
-        command.type === "close-shift"
-          ? null
-          : session.episodes.find((item) => item.id === command.episodeId);
-      if (command.type !== "close-shift" && !episode)
+      const episode = [
+        "close-shift",
+        "defer-responsibility",
+        "acknowledge-transfer",
+      ].includes(command.type)
+        ? null
+        : session.episodes.find(
+            (item) =>
+              item.id ===
+              (command as Extract<WorkdayCommand, { episodeId: string }>)
+                .episodeId,
+          );
+      if (
+        ![
+          "close-shift",
+          "defer-responsibility",
+          "acknowledge-transfer",
+        ].includes(command.type) &&
+        !episode
+      )
         throw new Error("EPISODE_NOT_FOUND");
-      if (command.type === "pause-episode" && episode) episode.state = "paused";
+      if (command.type === "pause-episode" && episode) {
+        if (episode.state !== "active")
+          throw new Error("EPISODE_STATE_CONFLICT");
+        episode.state = "paused";
+        if (command.draftText !== undefined)
+          episode.draftText = command.draftText.slice(0, 1200);
+      }
       if (command.type === "resume-episode" && episode) {
+        if (episode.state !== "paused")
+          throw new Error("EPISODE_STATE_CONFLICT");
         if (session.episodes.some((item) => item.state === "active"))
           throw new Error("ACTIVE_EPISODE_REQUIRES_PAUSE");
         episode.state = "active";
         session.patientId = episode.patientId;
         session.contextRevision += 1;
       }
+      if (
+        command.type === "save-episode-draft" &&
+        episode &&
+        !["active", "paused"].includes(episode.state)
+      )
+        throw new Error("EPISODE_STATE_CONFLICT");
+      if (command.type === "save-episode-draft" && episode)
+        episode.draftText = command.draftText.slice(0, 1200);
+      if (command.type === "defer-responsibility") {
+        const existing = session.episodes.find(
+          (item) =>
+            item.patientId === command.patientId && item.kind === "planned",
+        );
+        if (existing?.state === "completed")
+          throw new Error("RESPONSIBILITY_ALREADY_COMPLETED");
+        if (existing) {
+          existing.state = "deferred";
+          existing.completedAt = new Date().toISOString();
+        } else {
+          const assignment = siteConfiguration.nursingAssignments.find(
+            (item) => item.patientId === command.patientId,
+          );
+          if (!assignment) throw new Error("PLANNED_ASSIGNMENT_NOT_FOUND");
+          session.episodes.push({
+            id: randomUUID(),
+            patientId: command.patientId,
+            encounterId: command.encounterId,
+            kind: "planned",
+            title: assignment.title,
+            state: "deferred",
+            startedAt: new Date().toISOString(),
+            completedAt: new Date().toISOString(),
+            draftText: "",
+            completionEvidence: null,
+          });
+        }
+        if (
+          !this.transfers.some(
+            (item) =>
+              item.fromActorId === actorId &&
+              item.patientId === command.patientId &&
+              item.state === "pending",
+          )
+        )
+          this.transfers.push({
+            id: randomUUID(),
+            patientId: command.patientId,
+            fromActorId: actorId,
+            toActorId: command.receivingActorId,
+            reason: command.reason,
+            state: "pending",
+            createdAt: new Date().toISOString(),
+            acknowledgedAt: null,
+          });
+      }
+      if (command.type === "acknowledge-transfer") {
+        const transfer = this.transfers.find(
+          (item) =>
+            item.id === command.transferId && item.toActorId === actorId,
+        );
+        if (!transfer) throw new Error("TRANSFER_NOT_FOUND");
+        transfer.state = "acknowledged";
+        transfer.acknowledgedAt = new Date().toISOString();
+      }
       if (command.type === "complete-episode" && episode) {
-        if (command.evidence.trim().length < 3)
+        if (episode.state !== "active")
+          throw new Error("EPISODE_STATE_CONFLICT");
+        if (command.evidence.trim().length < 10)
           throw new Error("COMPLETION_EVIDENCE_REQUIRED");
         episode.state = "completed";
         episode.completedAt = new Date().toISOString();
+        episode.completionEvidence = command.evidence.trim();
+        episode.draftText = "";
       }
       if (command.type === "close-shift") {
         if (session.episodes.some((item) => item.state === "active"))
@@ -292,22 +570,127 @@ export class InMemoryOperationalStore implements OperationalStore {
         if (unresolvedPatients.length > 0)
           throw new Error("PLANNED_RESPONSIBILITY_REQUIRES_RESOLUTION");
         session.handoverStatus = "transferred";
+        session.receivingActorId =
+          configuredWorkday.shift.nextResponsibleActorId;
         session.currentStepId = "complete";
         session.status = "completed";
       }
     }
     session.rowVersion += 1;
-    return memoryWorkdayView(session);
+    return memoryWorkdayView(
+      session,
+      this.transfers,
+      this.receivedMemoryHandover(actorId) ?? session,
+    );
+  }
+  private receivedMemoryHandover(actorId: string): MemorySession | undefined {
+    return [...this.sessions.values()]
+      .filter(
+        (candidate) =>
+          candidate.receivingActorId === actorId &&
+          ["transferred", "acknowledged"].includes(candidate.handoverStatus),
+      )
+      .sort((left, right) => right.startedAt.localeCompare(left.startedAt))[0];
   }
   appendAudit(entry: AuditEntry): Promise<void> {
     void entry;
     return Promise.resolve();
+  }
+  storeIntentAuthority(input: {
+    tokenHash: string;
+    record: DurableIntentRecord;
+    sessionId: string;
+    threadId: string;
+    contextRevision: number;
+  }): Promise<void> {
+    if (!this.authorities.has(input.tokenHash))
+      this.authorities.set(input.tokenHash, {
+        record: structuredClone(input.record),
+        sessionId: input.sessionId,
+        threadId: input.threadId,
+        contextRevision: input.contextRevision,
+        consumed: false,
+      });
+    return Promise.resolve();
+  }
+  loadIntentAuthority(input: {
+    tokenHash: string;
+    actorId: string;
+    sessionId: string;
+    threadId: string;
+    contextRevision: number;
+    patientId: string;
+  }): Promise<DurableIntentRecord | null> {
+    const authority = this.authorities.get(input.tokenHash);
+    if (
+      !authority ||
+      authority.consumed ||
+      authority.record.expiresAt < Date.now() ||
+      authority.record.actorId !== input.actorId ||
+      authority.record.patientId !== input.patientId ||
+      authority.sessionId !== input.sessionId ||
+      authority.threadId !== input.threadId ||
+      authority.contextRevision !== input.contextRevision
+    )
+      return Promise.resolve(null);
+    return Promise.resolve(structuredClone(authority.record));
+  }
+  consumeIntentAuthority(tokenHash: string): Promise<boolean> {
+    const authority = this.authorities.get(tokenHash);
+    if (!authority || authority.consumed) return Promise.resolve(false);
+    authority.consumed = true;
+    return Promise.resolve(true);
+  }
+  releaseIntentAuthority(tokenHash: string): Promise<void> {
+    const authority = this.authorities.get(tokenHash);
+    if (authority && authority.record.expiresAt >= Date.now())
+      authority.consumed = false;
+    return Promise.resolve();
+  }
+  revokeActorAuthorities(actorId: string): Promise<void> {
+    for (const authority of this.authorities.values()) {
+      if (authority.record.actorId === actorId) authority.consumed = true;
+    }
+    for (const authority of this.voiceAuthorities.values()) {
+      if (authority.record.actorId === actorId) authority.consumed = true;
+    }
+    return Promise.resolve();
+  }
+  storeVoiceAuthority(
+    tokenHash: string,
+    record: DurableVoiceAuthority,
+  ): Promise<void> {
+    if (!this.voiceAuthorities.has(tokenHash))
+      this.voiceAuthorities.set(tokenHash, {
+        record: structuredClone(record),
+        consumed: false,
+      });
+    return Promise.resolve();
+  }
+  loadVoiceAuthority(tokenHash: string): Promise<DurableVoiceAuthority | null> {
+    const authority = this.voiceAuthorities.get(tokenHash);
+    return Promise.resolve(
+      authority &&
+        !authority.consumed &&
+        authority.record.expiresAt >= Date.now()
+        ? structuredClone(authority.record)
+        : null,
+    );
+  }
+  consumeVoiceAuthority(tokenHash: string): Promise<boolean> {
+    const authority = this.voiceAuthorities.get(tokenHash);
+    if (!authority || authority.consumed) return Promise.resolve(false);
+    authority.consumed = true;
+    return Promise.resolve(true);
   }
   health(): Promise<boolean> {
     return Promise.resolve(true);
   }
   resetDemoState(): Promise<void> {
     this.sessions.clear();
+    this.transfers.splice(0, this.transfers.length);
+    this.authorities.clear();
+    this.voiceAuthorities.clear();
     return Promise.resolve();
   }
   close(): Promise<void> {
@@ -369,6 +752,7 @@ export class PostgresOperationalStore implements OperationalStore {
         [organizationId, actorId, role],
       );
       const workflow = workflowForRole(role);
+      const configuredWorkday = optionalWorkdayConfiguration(actorId, role);
       await client.query(
         `INSERT INTO workflow_templates (organization_id,id,name,eligible_roles,active_version)
          VALUES ($1,$2,$3,$4,$5)
@@ -396,7 +780,7 @@ export class PostgresOperationalStore implements OperationalStore {
       );
       await client.query(
         `UPDATE workflow_templates SET active_version=$3
-         WHERE organization_id=$1 AND id=$2 AND active_version IS DISTINCT FROM $3`,
+         WHERE organization_id=$1 AND id=$2 AND active_version IS NULL`,
         [organizationId, workflow.id, workflow.version],
       );
       const existing = await client.query(
@@ -406,36 +790,55 @@ export class PostgresOperationalStore implements OperationalStore {
          JOIN workflow_template_versions v ON v.organization_id=s.organization_id AND v.template_id=s.workflow_template_id AND v.version=s.workflow_version
          JOIN workflow_templates w ON w.organization_id=s.organization_id AND w.id=s.workflow_template_id
          WHERE s.organization_id=$1 AND s.actor_id=$2 AND s.effective_role=$3
-           AND s.status='active' AND t.expires_at > now()
+           AND (
+             (s.status='active' AND t.expires_at > now())
+             OR (
+               s.status='completed' AND $4::text IS NOT NULL AND EXISTS (
+                 SELECT 1 FROM handover_snapshots h
+                 WHERE h.organization_id=s.organization_id
+                   AND h.owner_actor_id=s.actor_id
+                   AND h.shift_key=$4
+                   AND h.status IN ('transferred','acknowledged')
+               )
+             )
+           )
+         ORDER BY CASE WHEN s.status='active' THEN 0 ELSE 1 END, s.started_at DESC
+         LIMIT 1
          FOR UPDATE OF s`,
-        [organizationId, actorId, role],
+        [organizationId, actorId, role, configuredWorkday?.shiftKey ?? null],
       );
       let row = existing.rows[0] as Record<string, unknown> | undefined;
       if (!row) {
         const threadId = randomUUID();
         const sessionId = randomUUID();
         const expiresAt = new Date(Date.now() + sessionTtlMs);
-        const configuredWorkday = workdayConfiguration(actorId, role);
         await client.query(
           `INSERT INTO assistant_threads
              (organization_id,id,actor_id,effective_role,department_id,expires_at)
            VALUES ($1,$2,$3,$4,$5,$6)`,
           [organizationId, threadId, actorId, role, departmentId, expiresAt],
         );
-        await client.query(
-          `INSERT INTO handover_snapshots
-             (organization_id,id,department_id,shift_key,version,patient_ids,cutoff_at,source_hash,status,created_by)
-           VALUES ($1,$2,$3,$4,1,$5,now(),$6,'open','system-bootstrap')
-           ON CONFLICT (organization_id,department_id,shift_key,version) DO NOTHING`,
-          [
-            organizationId,
-            randomUUID(),
-            departmentId,
-            configuredWorkday.shiftKey,
-            configuredWorkday.patientIds,
-            "7e6fc6ac91f113aaa07597b01cb655f68feea8a405651a67ce384ca38344969e",
-          ],
-        );
+        if (configuredWorkday)
+          await client.query(
+            `INSERT INTO handover_snapshots
+             (organization_id,id,department_id,shift_key,version,patient_ids,cutoff_at,source_hash,status,owner_actor_id,created_by)
+           VALUES ($1,$2,$3,$4,1,$5,now(),$6,'open',$7,$7)
+           ON CONFLICT DO NOTHING`,
+            [
+              organizationId,
+              randomUUID(),
+              departmentId,
+              configuredWorkday.shiftKey,
+              configuredWorkday.patientIds,
+              handoverSourceHash({
+                departmentId,
+                shiftKey: configuredWorkday.shiftKey,
+                actorId,
+                patientIds: configuredWorkday.patientIds,
+              }),
+              actorId,
+            ],
+          );
         await client.query(
           `INSERT INTO working_sessions
              (organization_id,id,actor_id,effective_role,department_id,workflow_template_id,workflow_version,assistant_thread_id,current_step_id,status)
@@ -549,18 +952,42 @@ export class PostgresOperationalStore implements OperationalStore {
       client.release();
     }
   }
+  async advanceAssistantRevision(
+    actorId: string,
+    role: Role,
+  ): Promise<WorkingSessionView> {
+    const session = await this.getOrStartSession(actorId, role);
+    const advanced = await this.pool.query<{ context_revision: number }>(
+      `UPDATE assistant_threads
+       SET context_revision=context_revision+1,updated_at=now()
+       WHERE organization_id=$1 AND id=$2
+       RETURNING context_revision`,
+      [organizationId, session.threadId],
+    );
+    const contextRevision = advanced.rows[0]?.context_revision;
+    if (contextRevision === undefined)
+      throw new Error("ASSISTANT_THREAD_NOT_FOUND");
+    return { ...session, contextRevision };
+  }
   async loadConversation(
     actorId: string,
     role: Role,
+    patientId?: string | null,
   ): Promise<StoredConversationTurn[]> {
     const session = await this.getOrStartSession(actorId, role);
     const result = await this.pool.query(
       `SELECT content, created_at FROM (
          SELECT content, created_at, sequence FROM assistant_messages
          WHERE organization_id=$1 AND thread_id=$2 AND kind='assistant'
+           AND ($3::boolean = false OR patient_id IS NOT DISTINCT FROM $4)
          ORDER BY sequence DESC LIMIT 80
        ) recent ORDER BY sequence ASC`,
-      [organizationId, session.threadId],
+      [
+        organizationId,
+        session.threadId,
+        patientId !== undefined,
+        patientId ?? null,
+      ],
     );
     return result.rows.map(
       (row: { content: StoredConversationTurn; created_at: Date }) => ({
@@ -597,8 +1024,10 @@ export class PostgresOperationalStore implements OperationalStore {
           session.threadId,
           row.next_sequence,
           turn.id,
-          row.patient_id,
-          row.context_revision,
+          turn.originPatientId === undefined
+            ? row.patient_id
+            : turn.originPatientId,
+          turn.originContextRevision ?? row.context_revision,
           turn.inputModality,
           turn,
         ],
@@ -665,23 +1094,41 @@ export class PostgresOperationalStore implements OperationalStore {
     const configuredWorkday = workdayConfiguration(actorId, role);
     await this.pool.query(
       `INSERT INTO handover_snapshots
-         (organization_id,id,department_id,shift_key,version,patient_ids,cutoff_at,source_hash,status,created_by)
-       VALUES ($1,$2,$3,$4,1,$5,now(),$6,'open','system-bootstrap')
-       ON CONFLICT (organization_id,department_id,shift_key,version) DO NOTHING`,
+         (organization_id,id,department_id,shift_key,version,patient_ids,cutoff_at,source_hash,status,owner_actor_id,created_by)
+       VALUES ($1,$2,$3,$4,1,$5,now(),$6,'open',$7,$7)
+       ON CONFLICT DO NOTHING`,
       [
         organizationId,
         randomUUID(),
         session.departmentId,
         configuredWorkday.shiftKey,
         configuredWorkday.patientIds,
-        "7e6fc6ac91f113aaa07597b01cb655f68feea8a405651a67ce384ca38344969e",
+        handoverSourceHash({
+          departmentId: session.departmentId,
+          shiftKey: configuredWorkday.shiftKey,
+          actorId,
+          patientIds: configuredWorkday.patientIds,
+        }),
+        actorId,
       ],
     );
     const handoverResult = await this.pool.query(
       `SELECT * FROM handover_snapshots
-       WHERE organization_id=$1 AND department_id=$2 AND shift_key=$3
-       ORDER BY created_at DESC LIMIT 1`,
-      [organizationId, session.departmentId, configuredWorkday.shiftKey],
+       WHERE organization_id=$1 AND department_id=$2
+         AND ((shift_key=$3 AND owner_actor_id=$4) OR receiving_actor_id=$4)
+       ORDER BY CASE
+         WHEN receiving_actor_id=$4 AND status='transferred' THEN 0
+         WHEN shift_key=$3 AND status IN ('transferred','acknowledged') THEN 1
+         WHEN receiving_actor_id=$4 AND status='acknowledged' THEN 2
+         ELSE 3 END,
+         created_at DESC
+       LIMIT 1`,
+      [
+        organizationId,
+        session.departmentId,
+        configuredWorkday.shiftKey,
+        actorId,
+      ],
     );
     const handover = handoverResult.rows[0] as {
       id: string;
@@ -700,11 +1147,18 @@ export class PostgresOperationalStore implements OperationalStore {
        ORDER BY started_at ASC`,
       [organizationId, session.id],
     );
+    const transferResult = await this.pool.query(
+      `SELECT * FROM responsibility_transfers
+       WHERE organization_id=$1 AND (from_actor_id=$2 OR to_actor_id=$2)
+       ORDER BY created_at ASC`,
+      [organizationId, actorId],
+    );
     return buildWorkdayView(
       session,
       handover,
       acknowledgements.rows.map((row) => row.patient_id),
       episodeResult.rows.map(toEpisodeView),
+      transferResult.rows.map(toTransferView),
     );
   }
   private async setThreadPatientContext(
@@ -760,19 +1214,30 @@ export class PostgresOperationalStore implements OperationalStore {
     if (!["care-assistant", "registered-nurse"].includes(role))
       throw new Error("WORKDAY_ROLE_DENIED");
     const session = await this.getOrStartSession(actorId, role);
+    if (session.status === "completed") throw new Error("SHIFT_ALREADY_CLOSED");
     const configuredWorkday = workdayConfiguration(actorId, role);
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
-      await client.query(
-        `SELECT id FROM working_sessions WHERE organization_id=$1 AND id=$2 FOR UPDATE`,
+      const lockedSession = await client.query<{ status: string }>(
+        `SELECT status FROM working_sessions WHERE organization_id=$1 AND id=$2 FOR UPDATE`,
         [organizationId, session.id],
       );
+      if (lockedSession.rows[0]?.status !== "active")
+        throw new Error("SHIFT_ALREADY_CLOSED");
       if (command.type === "acknowledge-handover") {
         const handover = await client.query(
-          `SELECT * FROM handover_snapshots WHERE organization_id=$1 AND department_id=$2 AND shift_key=$3
-           ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
-          [organizationId, session.departmentId, configuredWorkday.shiftKey],
+          `SELECT * FROM handover_snapshots
+           WHERE organization_id=$1 AND department_id=$2 AND id=$3
+             AND ((shift_key=$4 AND owner_actor_id=$5) OR receiving_actor_id=$5)
+           FOR UPDATE`,
+          [
+            organizationId,
+            session.departmentId,
+            command.handoverId,
+            configuredWorkday.shiftKey,
+            actorId,
+          ],
         );
         const row = handover.rows[0] as {
           id: string;
@@ -780,6 +1245,7 @@ export class PostgresOperationalStore implements OperationalStore {
           patient_ids: string[];
         };
         if (
+          !row ||
           row.version !== command.version ||
           !row.patient_ids.includes(command.patientId)
         )
@@ -795,13 +1261,61 @@ export class PostgresOperationalStore implements OperationalStore {
            WHERE organization_id=$1 AND handover_id=$2 AND actor_id=$3 AND status='acknowledged'`,
           [organizationId, row.id, actorId],
         );
-        if (Number(count.rows[0]?.count) >= row.patient_ids.length)
+        if (Number(count.rows[0]?.count) >= row.patient_ids.length) {
           await client.query(
             `UPDATE working_sessions SET current_step_id='prioritize',row_version=row_version+1,updated_at=now()
              WHERE organization_id=$1 AND id=$2`,
             [organizationId, session.id],
           );
+          await client.query(
+            `UPDATE handover_snapshots SET status='acknowledged'
+             WHERE organization_id=$1 AND id=$2 AND receiving_actor_id=$3
+               AND status='transferred'`,
+            [organizationId, row.id, actorId],
+          );
+        }
       } else if (command.type === "start-episode") {
+        if (command.kind === "planned") {
+          const acknowledged = await client.query<{
+            patient_count: number;
+            acknowledged_count: string;
+          }>(
+            `WITH target AS (
+               SELECT * FROM handover_snapshots
+               WHERE organization_id=$1 AND department_id=$2
+                 AND ((shift_key=$3 AND owner_actor_id=$4) OR receiving_actor_id=$4)
+               ORDER BY CASE
+                 WHEN receiving_actor_id=$4 AND status='transferred' THEN 0
+                 WHEN shift_key=$3 AND status IN ('transferred','acknowledged') THEN 1
+                 WHEN receiving_actor_id=$4 AND status='acknowledged' THEN 2
+                 ELSE 3 END,
+                 created_at DESC
+               LIMIT 1
+               FOR UPDATE
+             )
+             SELECT cardinality(target.patient_ids) AS patient_count,
+                    count(ack.patient_id)::text AS acknowledged_count
+             FROM target
+             LEFT JOIN handover_acknowledgements ack
+               ON ack.organization_id=target.organization_id
+              AND ack.handover_id=target.id
+              AND ack.actor_id=$4
+              AND ack.status='acknowledged'
+             GROUP BY target.patient_ids`,
+            [
+              organizationId,
+              session.departmentId,
+              configuredWorkday.shiftKey,
+              actorId,
+            ],
+          );
+          const row = acknowledged.rows[0];
+          if (
+            !row ||
+            Number(row.acknowledged_count) < Number(row.patient_count)
+          )
+            throw new Error("HANDOVER_ACKNOWLEDGEMENT_REQUIRED");
+        }
         const assignment =
           command.kind === "planned" &&
           configuredWorkday.patientIds.includes(command.patientId)
@@ -811,6 +1325,16 @@ export class PostgresOperationalStore implements OperationalStore {
             : null;
         if (command.kind === "planned" && !assignment)
           throw new Error("PLANNED_ASSIGNMENT_NOT_FOUND");
+        if (command.kind === "planned") {
+          const duplicate = await client.query(
+            `SELECT id FROM work_episodes
+             WHERE organization_id=$1 AND session_id=$2 AND patient_id=$3 AND kind='planned'
+             FOR UPDATE`,
+            [organizationId, session.id, command.patientId],
+          );
+          if (duplicate.rowCount)
+            throw new Error("PLANNED_EPISODE_ALREADY_EXISTS");
+        }
         const active = await client.query(
           `SELECT id FROM work_episodes WHERE organization_id=$1 AND actor_id=$2 AND state='active' FOR UPDATE`,
           [organizationId, actorId],
@@ -850,9 +1374,14 @@ export class PostgresOperationalStore implements OperationalStore {
         );
       } else if (command.type === "interrupt-and-start") {
         const changed = await client.query(
-          `UPDATE work_episodes SET state='paused',row_version=row_version+1
+          `UPDATE work_episodes SET state='paused',draft_text=$4,row_version=row_version+1
            WHERE organization_id=$1 AND id=$2 AND actor_id=$3 AND state='active' RETURNING id`,
-          [organizationId, command.episodeId, actorId],
+          [
+            organizationId,
+            command.episodeId,
+            actorId,
+            command.pausedDraftText?.slice(0, 1200) ?? "",
+          ],
         );
         if (!changed.rowCount) throw new Error("EPISODE_STATE_CONFLICT");
         await client.query(
@@ -903,6 +1432,98 @@ export class PostgresOperationalStore implements OperationalStore {
            WHERE organization_id=$1 AND episode_id=$2 AND ordinal=(SELECT max(ordinal) FROM work_episode_segments WHERE organization_id=$1 AND episode_id=$2) AND ended_at IS NULL`,
           [organizationId, command.episodeId, command.reason],
         );
+        await client.query(
+          `UPDATE work_episodes SET draft_text=$4
+           WHERE organization_id=$1 AND id=$2 AND actor_id=$3`,
+          [
+            organizationId,
+            command.episodeId,
+            actorId,
+            command.draftText?.slice(0, 1200) ?? "",
+          ],
+        );
+      } else if (command.type === "save-episode-draft") {
+        const changed = await client.query(
+          `UPDATE work_episodes SET draft_text=$4,row_version=row_version+1
+           WHERE organization_id=$1 AND id=$2 AND actor_id=$3 AND state IN ('active','paused') RETURNING id`,
+          [organizationId, command.episodeId, actorId, command.draftText],
+        );
+        if (!changed.rowCount) throw new Error("EPISODE_STATE_CONFLICT");
+      } else if (command.type === "defer-responsibility") {
+        const assignment = siteConfiguration.nursingAssignments.find(
+          (item) => item.patientId === command.patientId,
+        );
+        if (
+          !assignment ||
+          !configuredWorkday.patientIds.includes(command.patientId)
+        )
+          throw new Error("PLANNED_ASSIGNMENT_NOT_FOUND");
+        const active = await client.query(
+          `SELECT id FROM work_episodes
+           WHERE organization_id=$1 AND actor_id=$2 AND state='active' AND patient_id<>$3`,
+          [organizationId, actorId, command.patientId],
+        );
+        if (active.rowCount) throw new Error("ACTIVE_EPISODE_REQUIRES_PAUSE");
+        const existing = await client.query<{ id: string; state: string }>(
+          `SELECT id,state FROM work_episodes
+           WHERE organization_id=$1 AND session_id=$2 AND patient_id=$3 AND kind='planned'
+           ORDER BY started_at DESC LIMIT 1 FOR UPDATE`,
+          [organizationId, session.id, command.patientId],
+        );
+        if (existing.rows[0]?.state === "completed")
+          throw new Error("RESPONSIBILITY_ALREADY_COMPLETED");
+        const episodeId = existing.rows[0]?.id ?? randomUUID();
+        if (existing.rows[0]) {
+          await client.query(
+            `UPDATE work_episodes SET state='deferred',completed_at=now(),row_version=row_version+1
+             WHERE organization_id=$1 AND id=$2`,
+            [organizationId, episodeId],
+          );
+          await client.query(
+            `UPDATE work_episode_segments SET ended_at=COALESCE(ended_at,now()),end_reason=COALESCE(end_reason,'pause')
+             WHERE organization_id=$1 AND episode_id=$2 AND ended_at IS NULL`,
+            [organizationId, episodeId],
+          );
+        } else {
+          await client.query(
+            `INSERT INTO work_episodes
+               (organization_id,id,session_id,actor_id,patient_id,encounter_id,kind,title,state,completed_at)
+             VALUES ($1,$2,$3,$4,$5,$6,'planned',$7,'deferred',now())`,
+            [
+              organizationId,
+              episodeId,
+              session.id,
+              actorId,
+              command.patientId,
+              command.encounterId,
+              assignment.title,
+            ],
+          );
+        }
+        await client.query(
+          `INSERT INTO responsibility_transfers
+             (organization_id,id,session_id,patient_id,encounter_id,from_actor_id,to_actor_id,reason,state)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending')
+           ON CONFLICT (organization_id,session_id,patient_id)
+           DO UPDATE SET to_actor_id=EXCLUDED.to_actor_id,reason=EXCLUDED.reason,state='pending',acknowledged_at=NULL`,
+          [
+            organizationId,
+            randomUUID(),
+            session.id,
+            command.patientId,
+            command.encounterId,
+            actorId,
+            command.receivingActorId,
+            command.reason,
+          ],
+        );
+      } else if (command.type === "acknowledge-transfer") {
+        const changed = await client.query(
+          `UPDATE responsibility_transfers SET state='acknowledged',acknowledged_at=now()
+           WHERE organization_id=$1 AND id=$2 AND to_actor_id=$3 AND state='pending' RETURNING id`,
+          [organizationId, command.transferId, actorId],
+        );
+        if (!changed.rowCount) throw new Error("TRANSFER_NOT_FOUND");
       } else if (command.type === "resume-episode") {
         const active = await client.query(
           `SELECT id FROM work_episodes WHERE organization_id=$1 AND actor_id=$2 AND state='active' FOR UPDATE`,
@@ -933,11 +1554,11 @@ export class PostgresOperationalStore implements OperationalStore {
           [organizationId, command.episodeId],
         );
       } else if (command.type === "complete-episode") {
-        if (command.evidence.trim().length < 3)
+        if (command.evidence.trim().length < 10)
           throw new Error("COMPLETION_EVIDENCE_REQUIRED");
         const episode = await client.query(
           `UPDATE work_episodes SET state='completed',completed_at=now(),completion_evidence=$4,row_version=row_version+1
-           WHERE organization_id=$1 AND id=$2 AND actor_id=$3 AND state IN ('active','paused') RETURNING *`,
+           WHERE organization_id=$1 AND id=$2 AND actor_id=$3 AND state='active' RETURNING *`,
           [organizationId, command.episodeId, actorId, command.evidence.trim()],
         );
         if (!episode.rowCount) throw new Error("EPISODE_STATE_CONFLICT");
@@ -972,34 +1593,38 @@ export class PostgresOperationalStore implements OperationalStore {
         if (paused.rowCount)
           throw new Error("PAUSED_EPISODE_REQUIRES_RESOLUTION");
         const unresolved = await client.query(
-          `SELECT patient_id
+          `SELECT assigned.patient_id
            FROM unnest((SELECT patient_ids FROM handover_snapshots
                         WHERE organization_id=$1 AND department_id=$2 AND shift_key=$4
-                        ORDER BY created_at DESC LIMIT 1)) AS patient_id
+                          AND owner_actor_id=$5
+                        ORDER BY created_at DESC LIMIT 1)) AS assigned(patient_id)
            WHERE NOT EXISTS (
-             SELECT 1 FROM work_episodes
-             WHERE organization_id=$1 AND session_id=$3
-               AND work_episodes.patient_id=patient_id
-               AND kind='planned'
-               AND state IN ('completed','deferred')
+             SELECT 1 FROM work_episodes AS completed_episode
+             WHERE completed_episode.organization_id=$1 AND completed_episode.session_id=$3
+               AND completed_episode.patient_id=assigned.patient_id
+               AND completed_episode.kind='planned'
+               AND completed_episode.state IN ('completed','deferred')
            )`,
           [
             organizationId,
             session.departmentId,
             session.id,
             configuredWorkday.shiftKey,
+            actorId,
           ],
         );
         if (unresolved.rowCount)
           throw new Error("PLANNED_RESPONSIBILITY_REQUIRES_RESOLUTION");
         await client.query(
           `UPDATE handover_snapshots SET status='transferred',receiving_actor_id=$3
-           WHERE organization_id=$1 AND department_id=$2 AND shift_key=$4 AND status='open'`,
+           WHERE organization_id=$1 AND department_id=$2 AND shift_key=$4
+             AND owner_actor_id=$5 AND status='open'`,
           [
             organizationId,
             session.departmentId,
             configuredWorkday.shift.nextResponsibleActorId,
             configuredWorkday.shiftKey,
+            actorId,
           ],
         );
         await client.query(
@@ -1032,7 +1657,8 @@ export class PostgresOperationalStore implements OperationalStore {
     await this.pool.query(
       `INSERT INTO audit_entries
          (organization_id,actor_id,actor_role,action,outcome,patient_id,purpose,detail,previous_hash,entry_hash,occurred_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+       ON CONFLICT (organization_id,entry_hash) DO NOTHING`,
       [
         organizationId,
         entry.actorId,
@@ -1048,6 +1674,127 @@ export class PostgresOperationalStore implements OperationalStore {
       ],
     );
   }
+  async storeIntentAuthority(input: {
+    tokenHash: string;
+    record: DurableIntentRecord;
+    sessionId: string;
+    threadId: string;
+    contextRevision: number;
+  }): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO safety_authority
+         (organization_id,token_hash,authority_type,actor_id,session_id,thread_id,context_revision,patient_id,binding,expires_at)
+       VALUES ($1,$2,'intent',$3,$4,$5,$6,$7,$8,$9)
+       ON CONFLICT (organization_id,token_hash) DO NOTHING`,
+      [
+        organizationId,
+        input.tokenHash,
+        input.record.actorId,
+        input.sessionId,
+        input.threadId,
+        input.contextRevision,
+        input.record.patientId,
+        input.record,
+        new Date(input.record.expiresAt),
+      ],
+    );
+  }
+  async loadIntentAuthority(input: {
+    tokenHash: string;
+    actorId: string;
+    sessionId: string;
+    threadId: string;
+    contextRevision: number;
+    patientId: string;
+  }): Promise<DurableIntentRecord | null> {
+    const result = await this.pool.query<{ binding: DurableIntentRecord }>(
+      `SELECT binding FROM safety_authority
+       WHERE organization_id=$1 AND token_hash=$2 AND authority_type='intent'
+         AND actor_id=$3 AND session_id=$4 AND thread_id=$5
+         AND context_revision=$6 AND patient_id=$7
+         AND consumed_at IS NULL AND expires_at > now()`,
+      [
+        organizationId,
+        input.tokenHash,
+        input.actorId,
+        input.sessionId,
+        input.threadId,
+        input.contextRevision,
+        input.patientId,
+      ],
+    );
+    return result.rows[0]?.binding
+      ? structuredClone(result.rows[0].binding)
+      : null;
+  }
+  async consumeIntentAuthority(tokenHash: string): Promise<boolean> {
+    const result = await this.pool.query(
+      `UPDATE safety_authority SET consumed_at=now()
+       WHERE organization_id=$1 AND token_hash=$2 AND authority_type='intent'
+         AND consumed_at IS NULL AND expires_at > now()`,
+      [organizationId, tokenHash],
+    );
+    return Boolean(result.rowCount);
+  }
+  async releaseIntentAuthority(tokenHash: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE safety_authority SET consumed_at=NULL
+       WHERE organization_id=$1 AND token_hash=$2 AND authority_type='intent'
+         AND consumed_at IS NOT NULL AND expires_at > now()`,
+      [organizationId, tokenHash],
+    );
+  }
+  async revokeActorAuthorities(actorId: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE safety_authority SET consumed_at=now()
+       WHERE organization_id=$1 AND actor_id=$2 AND consumed_at IS NULL`,
+      [organizationId, actorId],
+    );
+  }
+  async storeVoiceAuthority(
+    tokenHash: string,
+    record: DurableVoiceAuthority,
+  ): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO safety_authority
+         (organization_id,token_hash,authority_type,actor_id,session_id,thread_id,context_revision,patient_id,binding,expires_at)
+       VALUES ($1,$2,'voice',$3,$4,$5,$6,$7,$8,$9)
+       ON CONFLICT (organization_id,token_hash) DO NOTHING`,
+      [
+        organizationId,
+        tokenHash,
+        record.actorId,
+        record.sessionId,
+        record.threadId,
+        record.contextRevision,
+        record.patientId,
+        record,
+        new Date(record.expiresAt),
+      ],
+    );
+  }
+  async loadVoiceAuthority(
+    tokenHash: string,
+  ): Promise<DurableVoiceAuthority | null> {
+    const result = await this.pool.query<{ binding: DurableVoiceAuthority }>(
+      `SELECT binding FROM safety_authority
+       WHERE organization_id=$1 AND token_hash=$2 AND authority_type='voice'
+         AND consumed_at IS NULL AND expires_at > now()`,
+      [organizationId, tokenHash],
+    );
+    return result.rows[0]?.binding
+      ? structuredClone(result.rows[0].binding)
+      : null;
+  }
+  async consumeVoiceAuthority(tokenHash: string): Promise<boolean> {
+    const result = await this.pool.query(
+      `UPDATE safety_authority SET consumed_at=now()
+       WHERE organization_id=$1 AND token_hash=$2 AND authority_type='voice'
+         AND consumed_at IS NULL AND expires_at > now()`,
+      [organizationId, tokenHash],
+    );
+    return Boolean(result.rowCount);
+  }
   async health(): Promise<boolean> {
     try {
       await this.pool.query("SELECT 1");
@@ -1060,6 +1807,14 @@ export class PostgresOperationalStore implements OperationalStore {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      await client.query(
+        `DELETE FROM safety_authority WHERE organization_id=$1`,
+        [organizationId],
+      );
+      await client.query(
+        `DELETE FROM responsibility_transfers WHERE organization_id=$1`,
+        [organizationId],
+      );
       await client.query(
         `DELETE FROM service_evidence WHERE organization_id=$1`,
         [organizationId],
@@ -1149,6 +1904,34 @@ function toEpisodeView(row: Record<string, unknown>): WorkEpisodeView {
         : typeof row.completed_at === "string"
           ? row.completed_at
           : null,
+    draftText: typeof row.draft_text === "string" ? row.draft_text : "",
+    completionEvidence:
+      typeof row.completion_evidence === "string"
+        ? row.completion_evidence
+        : null,
+  };
+}
+
+function toTransferView(
+  row: Record<string, unknown>,
+): ResponsibilityTransferView {
+  return {
+    id: String(row.id),
+    patientId: String(row.patient_id),
+    fromActorId: String(row.from_actor_id),
+    toActorId: String(row.to_actor_id),
+    reason: String(row.reason),
+    state: String(row.state) as ResponsibilityTransferView["state"],
+    createdAt:
+      row.created_at instanceof Date
+        ? row.created_at.toISOString()
+        : String(row.created_at),
+    acknowledgedAt:
+      row.acknowledged_at instanceof Date
+        ? row.acknowledged_at.toISOString()
+        : typeof row.acknowledged_at === "string"
+          ? row.acknowledged_at
+          : null,
   };
 }
 
@@ -1163,7 +1946,17 @@ function buildWorkdayView(
   },
   acknowledgedPatientIds: string[],
   episodes: WorkEpisodeView[],
+  transfers: ResponsibilityTransferView[] = [],
 ): WorkdayView {
+  const outgoingTransfers = transfers.filter(
+    (transfer) => transfer.fromActorId === session.actorId,
+  );
+  const displayedHandoverStatus =
+    handover.status === "transferred" &&
+    outgoingTransfers.length > 0 &&
+    outgoingTransfers.every((transfer) => transfer.state === "acknowledged")
+      ? "acknowledged"
+      : handover.status;
   const activeEpisode =
     episodes.find((episode) => episode.state === "active") ?? null;
   const resumableEpisode =
@@ -1191,7 +1984,11 @@ function buildWorkdayView(
       shiftKey: handover.shift_key,
       patientIds: handover.patient_ids,
       acknowledgedPatientIds,
-      status: handover.status,
+      status: displayedHandoverStatus,
+      nextResponsibleActorId:
+        siteConfiguration.shifts[
+          workdayConfiguration(session.actorId, session.effectiveRole).shiftId
+        ]!.nextResponsibleActorId,
     },
     plan: handover.patient_ids.map((patientId) => {
       const episode = [...episodes]
@@ -1217,27 +2014,36 @@ function buildWorkdayView(
     episodes,
     activeEpisode,
     resumableEpisode,
+    incomingTransfers: transfers.filter(
+      (transfer) => transfer.toActorId === session.actorId,
+    ),
+    outgoingTransfers,
     // The operational store cannot infer provider delivery from episode
     // completion. The API overlays this with the clinical outbox/receipt state.
     providerState: "external-gated",
   };
 }
 
-function memoryWorkdayView(session: MemorySession): WorkdayView {
+function memoryWorkdayView(
+  session: MemorySession,
+  transfers: ResponsibilityTransferView[],
+  handoverSession: MemorySession,
+): WorkdayView {
   const configuredWorkday = workdayConfiguration(
-    session.actorId,
-    session.effectiveRole,
+    handoverSession.actorId,
+    handoverSession.effectiveRole,
   );
   return buildWorkdayView(
     session,
     {
-      id: session.handoverId,
+      id: handoverSession.handoverId,
       version: 1,
       shift_key: configuredWorkday.shiftKey,
       patient_ids: configuredWorkday.patientIds,
-      status: session.handoverStatus,
+      status: handoverSession.handoverStatus,
     },
     session.acknowledgedPatientIds,
     session.episodes,
+    transfers,
   );
 }

@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "institutionId": "org-demo",
-  "siteId": "rehab-2",
-  "displayName": "Kronenhof · Rehabilitation 2",
+  "institutionId": "org-alpenblick-demo",
+  "siteId": "alpenblick-wohnbereich-a",
+  "displayName": "Alpenblick Demo · Wohnbereich A",
   "timeZone": "Europe/Zurich",
   "sessionTtlHours": 12,
   "department": {
-    "id": "rehab-2",
-    "displayName": "Rehabilitation 2"
+    "id": "wohnbereich-a",
+    "displayName": "Wohnbereich A"
   },
   "activeShiftId": "early",
   "shifts": {

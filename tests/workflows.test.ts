@@ -31,12 +31,11 @@ describe("deterministic clinical workflows", () => {
       expect(approved.approvedAt).toBe("2026-09-05T08:12:00.000Z");
       const command = service.checkpoint().state.outbox.at(-1)!;
       expect(command.createdAt).toBe("2026-09-05T08:12:00.000Z");
-      expect(command.canonicalCommand.resource.approvedAt).toBe(
-        "2026-09-05T08:12:00.000Z",
-      );
-      expect(command.canonicalCommand.resource.source.recordedAt).toBe(
-        "2026-09-05T08:00:00.000Z",
-      );
+      const resource = command.canonicalCommand.resource;
+      if (!("approvedAt" in resource))
+        throw new Error("Expected an approval-gated clinical resource");
+      expect(resource.approvedAt).toBe("2026-09-05T08:12:00.000Z");
+      expect(resource.source.recordedAt).toBe("2026-09-05T08:00:00.000Z");
     } finally {
       vi.useRealTimers();
     }
@@ -157,6 +156,63 @@ describe("deterministic clinical workflows", () => {
     expect(final).toMatchObject({ state: "acknowledged", attempts: 2 });
     expect(service.snapshot("u-nurse").notes[0]?.status).toBe("synced");
     expect((await service.flushOutbox("u-it"))[0]?.attempts).toBe(2);
+  });
+
+  it("synchronizes patient tasks and team communications through the provider simulator", async () => {
+    const service = new PflegehelferService();
+    const task = service.createTask("u-nurse", {
+      patientId: "p-anna",
+      title: "Trinkmenge am Mittag prüfen",
+      reason: "Flüssigkeitsziel der aktuellen Schicht nachverfolgen.",
+      ownerRole: "care-assistant",
+      priority: "routine",
+      dueAt: "2026-09-05T12:30:00.000Z",
+    });
+    const communication = service.createCommunication("u-nurse", {
+      patientId: "p-anna",
+      request: "Bitte Mobilitätsziel bei der nächsten Visite bestätigen.",
+      reason: "Gemeinsame Tagesplanung im Behandlungsteam.",
+      recipientRole: "physician",
+      priority: "routine",
+      dueAt: "2026-09-05T13:00:00.000Z",
+    });
+
+    const before = service
+      .checkpoint()
+      .state.outbox.filter((item) =>
+        [task.id, communication.id].includes(item.aggregateId),
+      );
+    expect(before.map((item) => item.aggregateType).sort()).toEqual([
+      "communication",
+      "task",
+    ]);
+
+    const flushed = await service.flushOutbox("u-it");
+    expect(
+      flushed.filter((item) =>
+        [task.id, communication.id].includes(item.aggregateId),
+      ),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          aggregateType: "task",
+          state: "acknowledged",
+        }),
+        expect.objectContaining({
+          aggregateType: "communication",
+          state: "acknowledged",
+        }),
+      ]),
+    );
+    expect(
+      service.snapshot("u-nurse").tasks.find((item) => item.id === task.id)
+        ?.state,
+    ).toBe("new");
+    expect(
+      service
+        .snapshot("u-nurse")
+        .communications.find((item) => item.id === communication.id)?.state,
+    ).toBe("sent");
   });
 
   it("never silently overwrites a provider conflict", async () => {
@@ -281,18 +337,6 @@ describe("deterministic clinical workflows", () => {
     expect(answered.state).toBe("answered");
     expect(answered.resultingTaskId).toBeTruthy();
     expect(() =>
-      service.acknowledgeHandover("u-assistant", "h-rehab2-morning"),
-    ).toThrow(/ausserhalb/);
-    expect(() =>
-      service.acknowledgeHandover("u-nurse", "h-rehab2-morning"),
-    ).toThrow(/unabhängige Identitäten/);
-    expect(
-      service.acknowledgeHandover("u-nurse-evening", "h-rehab2-morning").status,
-    ).toBe("acknowledged");
-    expect(service.signHandover("u-nurse", "h-rehab2-afternoon").status).toBe(
-      "signed",
-    );
-    expect(() =>
       service.reviewIntakeItem(
         "u-nurse",
         "i-anna-med",
@@ -347,7 +391,11 @@ describe("deterministic clinical workflows", () => {
       ownerId: null,
       source: { provider: "nurse-call" },
     });
-    expect(service.snapshot("u-it").outbox).toHaveLength(0);
+    expect(
+      service
+        .snapshot("u-it")
+        .outbox.some((item) => item.aggregateId === bell.id),
+    ).toBe(false);
   });
 
   it("does not escalate a nurse call after a caregiver acknowledged it", () => {
@@ -378,7 +426,7 @@ describe("deterministic clinical workflows", () => {
     expect(verifyAuditEntries(tampered)).toBe(false);
   });
 
-  it("rolls back approval when a provider contract is externally gated", () => {
+  it("keeps local approval while provider delivery is externally gated", () => {
     const service = new PflegehelferService(
       undefined,
       createProductionProviderRegistry(),
@@ -388,22 +436,26 @@ describe("deterministic clinical workflows", () => {
       structuredText: "Mobilisation 20 m mit Rollator, links gesichert.",
     });
 
-    expect(() =>
-      service.approve("u-nurse", "note", draft.id, {
-        expectedVersion: 1,
-        patientMrn: "SH-260902-004",
-        patientBirthDate: "1937-11-02",
-        reviewedDiff: true,
-      }),
-    ).toThrow(/Vendor-Vertrag/);
+    service.approve("u-nurse", "note", draft.id, {
+      expectedVersion: 1,
+      patientMrn: "SH-260902-004",
+      patientBirthDate: "1937-11-02",
+      reviewedDiff: true,
+    });
 
     const snapshot = service.snapshot("u-nurse");
     expect(snapshot.notes.find((note) => note.id === draft.id)).toMatchObject({
-      status: "draft",
-      version: 1,
-      approvals: [],
+      status: "external-gated",
+      version: 2,
+      approvals: ["u-nurse"],
     });
-    expect(snapshot.outbox).toEqual([]);
+    expect(snapshot.outbox).toEqual([
+      expect.objectContaining({
+        aggregateId: draft.id,
+        state: "external-gated",
+        errorCode: "EXTERNAL_VENDOR_GATE",
+      }),
+    ]);
   });
 
   it("requires the author to make the first sensitive approval", () => {
@@ -448,6 +500,10 @@ describe("deterministic clinical workflows", () => {
     expect(() =>
       broker.consume(token, service.user("u-physician"), context),
     ).toThrow(/Identität|Kontext/);
+    expect(broker.consume(token, nurse, context)).toMatchObject({
+      patientId: "p-anna",
+    });
+    broker.finalize(token);
     expect(() => broker.consume(token, nurse, context)).toThrow(/ungültig/);
     const confirmed = broker.issue(nurse, input);
     expect(() =>

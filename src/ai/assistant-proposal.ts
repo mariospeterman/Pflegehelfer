@@ -278,6 +278,35 @@ export const assistantProposalSchema = z
 
 export type ExecutableAssistantAction = z.infer<typeof clinicalActionSchema>;
 export type AssistantProposal = z.infer<typeof assistantProposalSchema>;
+
+export function observationNeedsHighAssurance(input: {
+  code: Extract<
+    ExecutableAssistantAction,
+    { type: "observation-proposal" }
+  >["code"];
+  value: number;
+  secondaryValue: number | null;
+}): boolean {
+  if (input.code === "blood-pressure")
+    return (
+      input.value < 40 ||
+      input.value > 300 ||
+      input.secondaryValue === null ||
+      input.secondaryValue < 20 ||
+      input.secondaryValue > 200 ||
+      input.secondaryValue >= input.value
+    );
+  if (input.code === "temperature") return input.value < 25 || input.value > 45;
+  if (input.code === "oxygen-saturation") return input.value < 40;
+  if (input.code === "pulse") return input.value < 20 || input.value > 300;
+  return input.value < 1 || input.value > 500;
+}
+
+export function isDoubtfulObservation(
+  action: Extract<ExecutableAssistantAction, { type: "observation-proposal" }>,
+): boolean {
+  return observationNeedsHighAssurance(action);
+}
 type NewClinicalAction = ExecutableAssistantAction extends infer Action
   ? Action extends ExecutableAssistantAction
     ? Omit<Action, "id" | "dependencies" | "requestedByUser">
@@ -303,10 +332,23 @@ function firstSpan(source: string, expression: RegExp) {
 function reportingStatus(
   source: string,
 ): z.infer<typeof reportingStatusSchema> {
-  if (/\b(?:gestern|vorgestern|früher|damals|letzte[nsr]?)\b/i.test(source))
+  if (
+    /\b(?:gestern|vorgestern|vorhin|früher|damals|letzte[nsr]?|war|waren|gewesen)\b/i.test(
+      source,
+    )
+  )
     return "historical";
-  if (/\b(?:laut|berichtet|gab an|habe|sei)\b/i.test(source)) return "reported";
-  if (/\b(?:vielleicht|unklar|möglicherweise|eventuell)\b/i.test(source))
+  if (
+    /\b(?:laut|berichtet|gab an|habe|sei|hiess|hieß|angeblich|patient(?:in)?\s+(?:sagt|meint|berichtet))\b/i.test(
+      source,
+    )
+  )
+    return "reported";
+  if (
+    /\b(?:vielleicht|unklar(?:e|er|es|en)?|möglicherweise|eventuell|wohl|vermut(?:et|ete|eter|etes|eten|lich)|wahrscheinlich|mutmasslich|mutmaßlich|schätzungsweise|könnte|dürfte)\b/i.test(
+      source,
+    )
+  )
     return "uncertain";
   return "current";
 }
@@ -384,9 +426,9 @@ function hasLocalNegation(source: string, index: number, matchText: string) {
     index + matchText.length + 24,
   );
   return (
-    /\b(?:nicht|nichts|nie|keinesfalls|kein(?:e|en|er|es)?|ohne)\b|\bauf\s+keinen\s+fall\b/i.test(
+    /\b(?:nicht|nichts|nie|keinesfalls|keineswegs|mitnichten|kein(?:e|en|er|es)?|ohne)\b|\bauf\s+keinen\s+fall\b/i.test(
       relevantPrefix,
-    ) || /\?\s*nein\b/i.test(immediateSuffix)
+    ) || /(?:\?|[-–—])\s*(?:doch\s+)?(?:nicht|nein)\b/i.test(immediateSuffix)
   );
 }
 
@@ -396,7 +438,7 @@ function hasLocalUncertainty(source: string, index: number, matchText: string) {
     Math.max(clause.start, index - 24),
     index + matchText.length,
   );
-  return /\b(?:ca\.?|circa|etwa|ungefähr|vielleicht|unklar|möglicherweise|eventuell)\b/i.test(
+  return /\b(?:ca\.?|circa|etwa|ungefähr|vielleicht|unklar(?:e|er|es|en)?|möglicherweise|eventuell|wohl|vermut(?:et|ete|eter|etes|eten|lich)|wahrscheinlich|mutmasslich|mutmaßlich|schätzungsweise|angeblich|könnte|dürfte)\b/i.test(
     relevant,
   );
 }
@@ -461,16 +503,27 @@ function isFutureSameDayOccurrence(
 
 function hasNegatedAction(source: string, action: "physician" | "control") {
   const negation =
-    "(?:nicht|nie|keinesfalls|auf\\s+keinen\\s+fall|kein(?:e|en)?)";
-  return action === "physician"
-    ? new RegExp(
-        `(?:arzt|ärztin|ärztlich)[^.;]{0,35}\\b${negation}\\b[^.;]{0,35}\\b(?:informieren|benachrichtigen|fragen|nachricht|senden)\\b|\\b${negation}\\b[^.;]{0,35}\\b(?:arzt|ärztin)\\b|\\bkeine\\s+nachricht\\b[^.;]{0,35}\\b(?:arzt|ärztin)\\b`,
-        "i",
-      ).test(source)
-    : new RegExp(
-        `\\b${negation}\\b[^.;]{0,30}\\b(?:folgekontrolle|kontrolle|nachmessen|kontrollieren)\\b`,
-        "i",
-      ).test(source);
+    "(?:nicht|nie|keinesfalls|keineswegs|mitnichten|auf\\s+keinen\\s+fall|kein(?:e|en)?)";
+  const actionPattern =
+    action === "physician"
+      ? "(?:arzt|ärztin|ärztlich)[^.;!?]{0,35}(?:informieren|benachrichtigen|fragen|nachricht|senden)"
+      : "(?:folgekontrolle|kontrolle|nachmessen|kontrollieren)";
+  const negativeResponse = new RegExp(
+    `${actionPattern}[^\\n]{0,16}(?:\\?|[-–—,:])\\s*(?:doch\\s+)?(?:nicht|nein|keinesfalls|keineswegs|mitnichten)\\b`,
+    "i",
+  ).test(source);
+  return (
+    negativeResponse ||
+    (action === "physician"
+      ? new RegExp(
+          `(?:arzt|ärztin|ärztlich)[^.;!?]{0,35}\\b${negation}\\b[^.;!?]{0,35}\\b(?:informieren|benachrichtigen|fragen|nachricht|senden)\\b|\\b${negation}\\b[^.;!?]{0,35}\\b(?:arzt|ärztin)\\b|\\bkeine\\s+nachricht\\b[^.;!?]{0,35}\\b(?:arzt|ärztin)\\b|\\b(?:arzt|ärztin)[^.;!?]{0,35}\\b(?:informieren|benachrichtigen|fragen)\\b\\s*\\?\\s*nein\\b`,
+          "i",
+        ).test(source)
+      : new RegExp(
+          `\\b${negation}\\b[^.;]{0,30}\\b(?:folgekontrolle|kontrolle|nachmessen|kontrollieren)\\b`,
+          "i",
+        ).test(source))
+  );
 }
 
 export function verifyPlanSourceSpans(
@@ -576,17 +629,45 @@ export function requiresDedicatedClinicalWorkflow(source: string): boolean {
       ) ||
       (/\bstarten\b/i.test(clause) &&
         /\b(?:wund|therapie|behandlung|diagnos)\w*\b/i.test(clause));
+    const highRiskProcedure =
+      /\b(?:reanimier|defibrillier|sedier|intubier|fixier|fessel)\p{L}*\b/iu.test(
+        clause,
+      );
     // These domains are fail-closed unless the utterance is unmistakably a
     // completed report or descriptive state. This also catches terse orders
     // and unseen verbs without relying on an endless imperative denylist.
     return (
       (imperative && !completed) ||
+      (highRiskProcedure && !completed) ||
       modalCommand ||
       (imperativeSentenceShape && !allowedNonClinicalCommand && !completed) ||
       (targetedInfinitiveInstruction && !completed && !clearlyDescriptive) ||
       (safetySensitiveSubject && !completed && !clearlyDescriptive)
     );
   });
+}
+
+/**
+ * Narrow boundary for the generic task-creation API. Unlike the utterance
+ * compiler guard above, this deliberately permits normal basic-care and
+ * mobility assignments while rejecting domains that require their own
+ * medication, treatment, diagnostic, or emergency workflow.
+ */
+export function requiresDedicatedTaskWorkflow(source: string): boolean {
+  const sensitiveSubject =
+    /\b(?:medikament\w*|präparat\w*|tablette\w*|kapsel\w*|tropfen\w*|insulin|marcumar|morphin|heparin|antibiotik\w*|spritze\w*|injektion\w*|infusion\w*|\w*katheter\w*|sonde(?:n)?|drainage\w*|\w*kanül\w*|sauerstoff|o2|beatmung|wund(?:e|en|versorgung)?|verband\w*|therapie\w*|behandlung\w*|diagnos\w*|reanimier\w*|defibrillier\w*|sedier\w*|intubier\w*|fixier\w*)\b|\b\d+(?:[,.]\d+)?\s*(?:mg|ie|i\.e\.)\b/iu.test(
+      source,
+    );
+  const dedicatedVerb =
+    /\b(?:verabreich\p{L}*|absetz\p{L}*|injizier\p{L}*|applizier\p{L}*|titrier\p{L}*|verschreib\p{L}*|verordn\p{L}*)\b/iu.test(
+      source,
+    );
+  const unqualifiedGive =
+    /\b(?:geben|gib)\b/iu.test(source) &&
+    !/\b(?:essen|mahlzeit|trinken|getränk|wasser|tee|kaffee|nahrung|hilfestellung|hand)\b/iu.test(
+      source,
+    );
+  return sensitiveSubject || dedicatedVerb || unqualifiedGive;
 }
 
 export function explicitlyRefusesDocumentation(source: string): boolean {
@@ -603,6 +684,10 @@ export function explicitlyRefusesDocumentation(source: string): boolean {
     ).test(source) ||
     new RegExp(
       `\\b(?:auf\\s+keinen\\s+fall|keinesfalls|keine?\\s+(?:angaben?|information(?:en)?))\\b[^.;!?]{0,50}\\b${documentationVerb}\\b`,
+      "iu",
+    ).test(source) ||
+    new RegExp(
+      `^\\s*(?:nicht|keinesfalls|keineswegs)\\b[^.;!?]{0,60}\\b${documentationVerb}\\b`,
       "iu",
     ).test(source) ||
     /\bkeine?\s+(?:notiz|dokumentation|aufzeichnung|eintrag)\b/i.test(source) ||
@@ -1015,10 +1100,10 @@ export function deterministicAssistantProposal(
     const correctionStatus = reportingStatus(correctionContext);
     const correctionOccurrence = occurrenceText(correctionContext);
     if (
-      systolic >= 40 &&
-      systolic <= 300 &&
-      diastolic >= 20 &&
-      diastolic <= 200
+      systolic >= 1 &&
+      systolic <= 500 &&
+      diastolic >= 0 &&
+      diastolic <= 500
     ) {
       correctedMeasurementSpans.push(correctionSpan);
       corrections.push({
@@ -1102,12 +1187,12 @@ export function deterministicAssistantProposal(
     const correctionOccurrence = occurrenceText(correctionContext);
     const valid =
       code === "temperature"
-        ? newValue >= 25 && newValue <= 45
+        ? newValue >= -20 && newValue <= 60
         : code === "pulse"
-          ? newValue >= 20 && newValue <= 260
+          ? newValue >= 0 && newValue <= 500
           : code === "oxygen-saturation"
-            ? newValue >= 40 && newValue <= 100
-            : newValue >= 1 && newValue <= 400;
+            ? newValue >= 0 && newValue <= 100
+            : newValue >= 0 && newValue <= 1000;
     correctedMeasurementSpans.push(correctionSpan);
     if (valid) {
       corrections.push({
@@ -1191,27 +1276,27 @@ export function deterministicAssistantProposal(
       code: "blood-pressure" as const,
       unit: "mmHg" as const,
       regex:
-        /(?:blutdruck|\brr\b)[^0-9]{0,16}(\d{2,3})\s*(?:zu|\/|auf)\s*(\d{2,3})/gi,
+        /(?:blutdruck|\brr\b)[^0-9]{0,48}(\d{2,3})\s*(?:zu|\/|auf)\s*(?:(?:ca\.?|circa|etwa|ungefähr)\s*)?(\d{2,3})/gi,
     },
     {
       code: "temperature" as const,
       unit: "°C" as const,
-      regex: /(?:temperatur|\btemp\.?)[^0-9]{0,24}(\d{2}(?:[,.]\d)?)/gi,
+      regex: /(?:temperatur|\btemp\.?)[^0-9]{0,48}(\d{2}(?:[,.]\d)?)/gi,
     },
     {
       code: "pulse" as const,
       unit: "/min" as const,
-      regex: /\bpuls[^0-9]{0,24}(\d{2,3})/gi,
+      regex: /\bpuls[^0-9]{0,48}(\d{2,3})/gi,
     },
     {
       code: "oxygen-saturation" as const,
       unit: "%" as const,
-      regex: /(?:sättigung|spo2)[^0-9]{0,24}(\d{2,3})(?:\s*(?:prozent|%))?/gi,
+      regex: /(?:sättigung|spo2)[^0-9]{0,48}(\d{2,3})(?:\s*(?:prozent|%))?/gi,
     },
     {
       code: "weight" as const,
       unit: "kg" as const,
-      regex: /(?:gewicht)[^0-9]{0,24}(\d{2,3}(?:[,.]\d)?)(?:\s*kg)?/gi,
+      regex: /(?:gewicht)[^0-9]{0,48}(\d{2,3}(?:[,.]\d)?)(?:\s*kg)?/gi,
     },
   ];
   const executableObservationKeys = new Set(
@@ -1243,18 +1328,18 @@ export function deterministicAssistantProposal(
       const secondary = match[2] ? Number(match[2].replace(",", ".")) : null;
       const valid =
         spec.code === "blood-pressure"
-          ? value >= 40 &&
-            value <= 300 &&
+          ? value >= 1 &&
+            value <= 500 &&
             secondary !== null &&
-            secondary >= 20 &&
-            secondary <= 200
+            secondary >= 0 &&
+            secondary <= 500
           : spec.code === "temperature"
-            ? value >= 25 && value <= 45
+            ? value >= -20 && value <= 60
             : spec.code === "pulse"
-              ? value >= 20 && value <= 260
+              ? value >= 0 && value <= 500
               : spec.code === "oxygen-saturation"
-                ? value >= 40 && value <= 100
-                : value >= 1 && value <= 400;
+                ? value >= 0 && value <= 100
+                : value >= 0 && value <= 1000;
       if (!valid) {
         clarificationQuestions.push(`Messwert „${match[0]}“ prüfen.`);
         continue;
@@ -1274,7 +1359,9 @@ export function deterministicAssistantProposal(
         label: match[0],
         polarity: negated ? "negated" : "affirmed",
         certainty:
-          uncertain || localStatus === "uncertain" ? "uncertain" : "certain",
+          uncertain || localStatus === "uncertain" || localStatus === "reported"
+            ? "uncertain"
+            : "certain",
         reportingStatus: localStatus,
         value,
         unit: spec.unit,
@@ -1287,19 +1374,23 @@ export function deterministicAssistantProposal(
         );
         continue;
       }
-      if (uncertain || localStatus === "uncertain") {
+      if (
+        uncertain ||
+        localStatus === "uncertain" ||
+        localStatus === "reported"
+      ) {
         observations.push({
           actionId: null,
           code: spec.code,
           value,
           secondaryValue: secondary,
           unit: spec.unit,
-          reportingStatus: "uncertain",
+          reportingStatus: localStatus,
           certainty: "uncertain",
           sourceSpan,
         });
         clarificationQuestions.push(
-          `Ist „${match[0]}“ ein bestätigter Messwert?`,
+          `Ist „${match[0]}“ ein bestätigter aktueller Messwert?`,
         );
         continue;
       }
@@ -1455,12 +1546,17 @@ export function deterministicAssistantProposal(
     const s =
       firstSpan(
         source,
-        /(?:arzt|ärztin)[^.;]{0,60}(?:nicht|nie|keinesfalls|auf\s+keinen\s+fall|kein)[^.;]*/i,
+        /(?:arzt|ärztin)[^.;!?]{0,60}(?:nicht|nie|keinesfalls|keineswegs|mitnichten|auf\s+keinen\s+fall|kein)[^.;!?]*/i,
       ) ??
       firstSpan(
         source,
-        /(?:nicht|nie|keinesfalls|auf\s+keinen\s+fall|kein(?:e|en)?)[^.;]{0,60}(?:arzt|ärztin)[^.;]*/i,
-      );
+        /(?:nicht|nie|keinesfalls|keineswegs|mitnichten|auf\s+keinen\s+fall|kein(?:e|en)?)[^.;!?]{0,60}(?:arzt|ärztin)[^.;!?]*/i,
+      ) ??
+      firstSpan(
+        source,
+        /(?:arzt|ärztin)[^.;!?]{0,35}(?:informieren|benachrichtigen|fragen)\s*\?\s*nein\b/i,
+      ) ??
+      span(source, 0, source.length);
     if (s) {
       addFact({
         kind: "action",
@@ -1527,10 +1623,11 @@ export function deterministicAssistantProposal(
       source,
     );
   if (controlNegated) {
-    const s = firstSpan(
-      source,
-      /(?:keine?|nicht|nie|keinesfalls|auf\s+keinen\s+fall)[^.;]{0,30}(?:folgekontrolle|kontrolle|nachmessen|kontrollieren)/i,
-    );
+    const s =
+      firstSpan(
+        source,
+        /(?:keine?|nicht|nie|keinesfalls|keineswegs|mitnichten|auf\s+keinen\s+fall)[^.;]{0,30}(?:folgekontrolle|kontrolle|nachmessen|kontrollieren)/i,
+      ) ?? span(source, 0, source.length);
     if (s)
       addFact({
         kind: "action",
@@ -1637,17 +1734,36 @@ export function deterministicAssistantProposal(
     corrections.length > 0 &&
     actions.length > 0 &&
     actions.every((action) => action.type === "observation-proposal");
-  const pureUncertainMeasurements =
+  const pureUnresolvedMeasurements =
     actions.length === 0 &&
     observations.length > 0 &&
-    observations.every((observation) => observation.certainty === "uncertain");
+    observations.every((observation) => observation.actionId === null) &&
+    workPerformed.length === 0 &&
+    taskChanges.length === 0 &&
+    communications.length === 0 &&
+    facts.every((fact) => ["measurement", "time"].includes(fact.kind));
+  const pureNegatedMeasurements =
+    actions.length === 0 &&
+    facts.length > 0 &&
+    facts.every((fact) => ["measurement", "time"].includes(fact.kind)) &&
+    facts.some((fact) => fact.polarity === "negated");
+  const pureObservationOnly =
+    actions.length > 0 &&
+    actions.every((action) => action.type === "observation-proposal") &&
+    workPerformed.length === 0 &&
+    communications.length === 0 &&
+    taskChanges.length === 0 &&
+    facts.length > 0 &&
+    facts.every((fact) => fact.kind === "measurement");
   if (
     !pureIdentityCorrection &&
     !pureTimeCorrection &&
     !pureWorkflowChange &&
     !pureNegatedNoAction &&
     !pureMeasurementCorrection &&
-    !pureUncertainMeasurements &&
+    !pureUnresolvedMeasurements &&
+    !pureNegatedMeasurements &&
+    !pureObservationOnly &&
     !hasFutureOccurrenceAmbiguity
   ) {
     addAction({
@@ -1726,6 +1842,23 @@ export function deterministicAssistantProposal(
   });
 }
 
+export function completionEvidenceIsIncomplete(source: string): boolean {
+  if (requiresDedicatedClinicalWorkflow(source)) return true;
+  const meaning = deterministicAssistantProposal(source);
+  return Boolean(
+    meaning?.workPerformed.some((item) =>
+      ["partial", "not-performed", "planned-later", "uncertain"].includes(
+        item.status,
+      ),
+    ) ||
+    meaning?.actions.some(
+      (item) =>
+        item.type === "note-proposal" &&
+        ["partial", "not-performed"].includes(item.completionStatus),
+    ),
+  );
+}
+
 export function actionReviewLabel(action: ExecutableAssistantAction): string {
   const priority = (value: "routine" | "elevated" | "urgent") =>
     ({ routine: "normal", elevated: "erhöht", urgent: "dringend" })[value];
@@ -1733,7 +1866,7 @@ export function actionReviewLabel(action: ExecutableAssistantAction): string {
     case "note-proposal":
       return `Pflegedokumentation (${({ current: "aktuell", historical: "historisch", reported: "berichtet", uncertain: "unsicher" } as const)[action.reportingStatus]}): ${action.structuredText}`;
     case "observation-proposal":
-      return `${
+      return `${isDoubtfulObservation(action) ? "⚠ Ungewöhnlicher Messwert – Wert und Gerät einzeln prüfen · " : ""}${
         {
           "blood-pressure": "Blutdruck",
           temperature: "Temperatur",
@@ -1833,7 +1966,9 @@ function validateModelAction(
         action.reportingStatus !== reportingStatus(temporalContext) ||
         action.occurrenceText !== occurrenceText(temporalContext) ||
         isFutureSameDayOccurrence(action.occurrenceText, inputTimestamp) ||
-        /\b(?:ca\.?|circa|etwa|ungefähr|vielleicht|unklar)\b/i.test(grounded)
+        /\b(?:ca\.?|circa|etwa|ungefähr|vielleicht|unklar(?:e|er|es|en)?|möglicherweise|eventuell|wohl|vermut(?:et|ete|eter|etes|eten|lich)|wahrscheinlich|mutmasslich|mutmaßlich|schätzungsweise|angeblich|könnte|dürfte)\b/i.test(
+          grounded,
+        )
       )
         throw new Error("CLINICAL_PLAN_OBSERVATION_NOT_GROUNDED");
       if (
@@ -1984,7 +2119,9 @@ export function verifyModelProposalAgainstDeterministicCompiler(
         : candidate.ambiguities.length > 0
           ? "Eine kurze Rückfrage ist nötig"
           : "Verstanden; keine Änderung angefordert",
-    understoodFacts: candidate.understoodFacts.map((fact) => ({
+    understoodFacts: (
+      compiled?.understoodFacts ?? candidate.understoodFacts
+    ).map((fact) => ({
       ...fact,
       label: fact.sourceSpan.quote,
       polarity: hasLocalNegation(
@@ -1995,18 +2132,23 @@ export function verifyModelProposalAgainstDeterministicCompiler(
         ? ("negated" as const)
         : ("affirmed" as const),
     })),
-    workPerformed: candidate.workPerformed.map((work) => ({
+    workPerformed: (compiled?.workPerformed ?? []).map((work) => ({
       ...work,
       activity: work.sourceSpan.quote,
     })),
-    taskChanges: candidate.taskChanges.map((change) => ({
+    taskChanges: (compiled?.taskChanges ?? []).map((change) => ({
       ...change,
       taskLabel: change.sourceSpan.quote,
     })),
-    communications: candidate.communications.map((communication) => ({
-      ...communication,
-      message: communication.sourceSpan.quote,
-    })),
+    communications: (compiled?.communications ?? candidate.communications).map(
+      (communication) => ({
+        ...communication,
+        message: communication.sourceSpan.quote,
+      }),
+    ),
+    workflowActions: compiled?.workflowActions ?? candidate.workflowActions,
+    corrections: compiled?.corrections ?? candidate.corrections,
+    temporal: compiled?.temporal ?? candidate.temporal,
     clarificationQuestions:
       candidate.clarificationQuestions.length > 0
         ? [

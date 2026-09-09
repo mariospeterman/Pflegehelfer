@@ -445,7 +445,8 @@ input:focus-visible {
   font-size: 12px;
 }
 .no-patient-context button {
-  min-height: 32px;
+  min-height: 44px;
+  padding-inline: 8px;
   border: 0;
   background: transparent;
   color: var(--blue);
@@ -475,6 +476,32 @@ input:focus-visible {
   background: transparent;
   font-size: 20px;
   cursor: pointer;
+}
+.countersignature-panel {
+  width: min(760px, calc(100% - 32px));
+  margin: 12px auto 0;
+  padding: 14px;
+  border: 1px solid #d69b35;
+  border-radius: 16px;
+  background: #fff8e8;
+  color: #5d3b00;
+}
+.countersignature-panel > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+}
+.countersignature-panel button {
+  min-height: 44px;
+  white-space: nowrap;
+}
+@media (max-width: 620px) {
+  .countersignature-panel > div {
+    align-items: stretch;
+    flex-direction: column;
+  }
 }
 
 .conversation {
@@ -540,7 +567,7 @@ input:focus-visible {
 }
 .team-thread blockquote {
   padding: 9px 11px;
-  border-left: 3px solid var(--green);
+  border-left: 3px solid var(--success);
   background: var(--surface);
 }
 .team-thread-meta,
@@ -640,7 +667,7 @@ input:focus-visible {
 .assistant-coworker-message {
   max-width: 42rem;
   margin: 0.2rem 0 0.35rem;
-  color: var(--text);
+  color: var(--ink);
   font-size: 0.98rem;
   line-height: 1.55;
   white-space: pre-wrap;
