@@ -14,11 +14,11 @@ Scope: the active product contract, architecture, repository instructions and th
 
 ## Executed evidence
 
-- `pnpm verify`: formatting, ESLint, client/server typecheck, 272 passed unit/integration tests, 11 environment-gated skips, and a clean PWA/API production build.
+- `pnpm verify`: formatting, ESLint, client/server typecheck, 274 passed unit/integration tests, 11 environment-gated skips, and a clean PWA/API production build.
 - PostgreSQL operational suite with `.env.demo`: 11/11 passed after the idempotent migration, including actor independence, interruption, terminal finality, duplicate planned-work rejection, transfer receipt and durable one-use authority.
 - `pnpm verify:e2e`: 33/33 applicable journeys passed over 360 px, 390 px, tablet, 1024 px and 1440 px; 12 intentionally desktop-once duplicate state-transition cases skipped on the other profiles.
 - `pnpm verify:security`, `pnpm verify:ops`, `pnpm verify:airgap`: secrets/header checks, health/readiness, synthetic restore checksum and air-gap preflight passed.
-- Clean-export audit of implementation commit `fa7626c`: `git archive` into an empty temporary directory, `pnpm install --frozen-lockfile`, `pnpm demo:env`, full verification/build/security/ops/air-gap and the complete multi-viewport Playwright run all passed. This excludes stale local dependencies and generated build artifacts as an explanation for green results.
+- Clean-export audit of implementation commit `8ab53da`: `git archive` into `/tmp/pflegehelfer-final-audit.xaVyR9`, `pnpm install --frozen-lockfile`, `pnpm demo:env`, full 274-test verification/build/security/ops/air-gap and the complete 33-pass multi-viewport Playwright run all passed. This excludes stale local dependencies and generated build artifacts as an explanation for green results.
 - Independent architecture/provider, security/privacy/clinical-safety and GenUI/QA reviews reported no P0. Valid findings were fixed and retested; remaining architectural limits below were retained rather than relabelled complete.
 
 ## Remaining internal production blockers

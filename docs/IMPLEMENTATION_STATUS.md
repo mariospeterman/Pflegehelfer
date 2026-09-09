@@ -31,11 +31,11 @@ It is **not production-ready for real patient data or clinical use**. Remaining 
 ## Completion evidence (2026-09-09)
 
 - Pinned Node 24 typecheck and production build pass on the current source.
-- Unit/integration suite: 272 passed and 11 environment-gated tests skipped; the real PostgreSQL operational suite separately passed 11/11 after the idempotent migration.
-- Manual real-browser checks on the restarted Medplum-backed PWA: 390 px, 768 px and 1440 px have no horizontal overflow or visible/console errors. The browser completed patient handover acknowledgement, explicit patient selection, four-part natural-language review/approval and the explicit-negation/no-action case.
-- Medplum readiness reports server `5.1.37-82e609c`, transaction atomicity verified and seven fictional Patient/Encounter resources. The existing ngrok tunnel returns HTTP 200.
+- Unit/integration suite: 274 passed and 11 environment-gated tests skipped; the real PostgreSQL operational suite separately passed 11/11 after the idempotent migration.
+- Manual real-browser checks on the restarted Medplum-backed PWA: 390 px, 768 px and 1440 px have no horizontal overflow or visible/console errors. The browser completed patient handover acknowledgement, explicit patient selection, natural-language review/approval, explicit negation/no-action, and a mismatched spoken patient name that failed closed into a conscious context picker. Internal planner/model identifiers no longer leak into staff review cards.
+- Medplum readiness reports server `5.1.37-82e609c`, transaction atomicity verified and seven fictional Patient/Encounter resources. The Compose liveness probe, Medplum UI, local PWA, public ngrok home and public `/ready` all return healthy/HTTP 200. A durable demo reset retains accepted AuditEvent/Provenance evidence and no longer exceeds Medplum's transaction-entry limit.
 - Full format/lint/typecheck/build passed. Playwright passed 33 journeys across 360 px, 390 px, tablet, 1024 px and 1440 px; 12 duplicate state-transition journeys were deliberately desktop-only and skipped on other viewports. Security, ops, synthetic restore checksum and air-gap preflight passed.
-- Clean-export audit of implementation commit `fa7626c`: a fresh lockfile-strict install, generated mode-0600 demo environment, full 272-test verification/build, security/ops/air-gap checks and the complete 33-pass multi-viewport browser matrix all passed outside the development worktree.
+- Clean-export audit of implementation commit `8ab53da`: a fresh lockfile-strict install, generated mode-0600 demo environment, full 274-test verification/build, security/ops/air-gap checks and the complete 33-pass multi-viewport browser matrix all passed outside the development worktree at `/tmp/pflegehelfer-final-audit.xaVyR9`.
 - External model/ASR calls were not made because no developer key or validated local runtime is configured. This is an explicit limit, not a hidden fallback claim.
 
 The repository must not claim 100% production completion until every internal `PARTIAL` and required deployment acceptance gate is closed.
