@@ -91,7 +91,9 @@ describe("authorized model context boundary", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn((_url: string, init?: RequestInit) => {
-        const body = JSON.parse(String(init?.body)) as {
+        if (typeof init?.body !== "string")
+          throw new Error("Expected a serialized model request");
+        const body = JSON.parse(init.body) as {
           messages: Array<{ role: string; content: string }>;
         };
         const prompt = body.messages.find(

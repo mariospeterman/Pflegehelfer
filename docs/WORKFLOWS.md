@@ -25,7 +25,7 @@ The early-shift demo assigns six fictional patients to the care assistant and re
 
 ## Site and role configuration
 
-The selected immutable site pack owns institution/site/department identity, timezone, session TTL, shift windows and next responsible actor, provider-route intent, role-to-workflow/action profiles, staff-to-shift/patient assignment and demo responsibilities. `PFH_SITE_PACK_PATH` selects the pack at process start. Zod validation rejects missing workflow references, unknown actions, duplicate staff or patient assignments and references to unknown shifts/patients. Tests accept 2- and 12-patient assignments and load a second fictional institution without TypeScript changes. A governed published-configuration store and in-product Studio remain incomplete.
+The selected immutable site pack owns institution/site/department identity, timezone, session TTL, shift windows and next responsible actor, provider-route intent, role-to-workflow/action profiles, independent-review qualifications, staff-to-shift/patient assignment and demo responsibilities. `PFH_SITE_PACK_PATH` selects the pack at process start. Zod validation rejects missing workflow references, unknown actions, permission expansion beyond the centrally reviewed role ceiling, duplicate staff or patient assignments and references to unknown shifts/patients. Tests accept 2- and 12-patient assignments. The second fictional institution proves different shifts, provider routes, workflow version/language and a three-patient care-assistant assignment without TypeScript changes. A governed published-configuration store and in-product Studio remain incomplete.
 
 ## Physician and other roles
 

@@ -1,7 +1,7 @@
 # Implementation plan
 
 Last updated: 2026-09-09
-Baseline: `a197e0b816e4d7042a86abf4e9b8a8ab4c02331c`
+Consolidation baseline: `a197e0b816e4d7042a86abf4e9b8a8ab4c02331c`
 
 The product contract is `docs/PRODUCT_CONTRACT.md`. Work proceeds in six vertical slices on the existing modular monolith and one PWA. A table, migration or simulator alone does not complete a slice; each gate needs a real endpoint-to-storage-to-UI test.
 
@@ -27,16 +27,18 @@ This matrix reconciles the source audit of `a197e0b` with the active product con
 
 - Pinned Node 24.19.0 and pnpm 11.19.0; the local validation runtime is Node 24.18.0 and satisfies the pinned major/runtime constraints.
 - Generic proposal IR, independent model grounding, negation/temporal/partial/correction coverage and dedicated clinical-workflow rejection are implemented and regression tested.
+- Generic task creation rejects ambiguous `geben/gib` phrasing; padded unknown medication names cannot enter the ordinary task path.
 - The configured early shift supplies six assigned patients; handover acknowledgement, start/pause/interruption/resume/completion, episode draft, explicit defer and receiving-shift acknowledgement run in PostgreSQL and the PWA. This is the sole live responsibility authority.
-- Site timezone, shifts, provider routing, role permissions, workflows and staff assignment are runtime-loaded and strictly validated. `alpenblick-demo.json` and 2/12-assignment tests prove source-code-independent variation.
+- Site timezone, shifts, provider routing, role permissions, reviewer qualifications, workflows and staff assignment are runtime-loaded and strictly validated. Site actions cannot exceed central role ceilings. Alpenblick has different shifts/routes/workflow language and a three-patient assignment; 2/12-assignment tests prove source-code-independent sizing.
 - Workday access now fails closed when no exact actor+role assignment exists; older operational databases receive the `context_revision` compatibility upgrade idempotently.
 - Same-shift handovers are actor-owned, acknowledgements bind the exact handover/version, terminal episodes cannot be reopened, one planned responsibility cannot be duplicated and transferred shifts cannot restart. PostgreSQL and the executable demo store share these behavioral contracts.
-- Recent model context is patient-filtered and each completed response retains its origin patient/revision across slow in-flight context switches. The PWA locks chat/role/context controls until server-confirmed patient changes and autosaves episode drafts before reload.
+- Recent user and assistant turns are patient-filtered and each completed response retains its origin patient/revision across slow context switches. The PWA locks controls until server-confirmed context changes, uses safe one-tap query chips and reuses approved note/observation evidence in the matching active episode draft without auto-completing it.
 - The clinical compiler has a conservative generic imperative boundary, preserves scalar uncertainty and `nicht … sondern …` corrections, and keeps ambiguous physician timing in one concise clarification rather than inventing a deadline.
 - The patient profile includes safety, goals, medication read-only data, approved recent vitals and care protocol. Team questions render as shared patient-bound threads with narrow acknowledge/answer/close ownership and no first-user auto-assignment.
 - Hashed one-use assistant and voice authority is durable across API restart. Normal clinical review is locally final; doubtful measurements remain non-current until independent countersignature.
-- Provider simulators now receive note, Observation, Task and Communication commands and preserve business workflow state while acknowledgement is tracked separately.
-- Production local fast/deep/ASR model packs require immutable SHA-256 digest configuration; local endpoint redirects and link-local addresses fail closed. Hosted development remains explicit-consent, synthetic-only.
+- Provider simulators receive note, Observation, Task and Communication commands, persist acknowledged provider-side state, emit repeated-record updates through an append-only synthetic cursor log and reset deterministically.
+- Production local fast/deep/ASR model packs require immutable SHA-256 digest configuration; local endpoint redirects and link-local addresses fail closed. Hosted development is explicit-consent and synthetic-only, uses Responses structured output with `store:false`, and exposes a real non-writing model test. ASR testing requires explicit synthetic audio.
+- FHIR IDs, tags, cleanup, checkpoint and receipts are institution/site scoped. Legacy unscoped checkpoint import is default-denied and requires an exact active-site plus approved Binary SHA-256 manifest.
 - The remaining production acceptance work is concentrated in Slices C, E and F; it must not be relabelled as an external vendor gate.
 
 ## Slice A — clinical work compiler
@@ -74,7 +76,7 @@ Gate: restart, duplicate commands, two workers and ambiguous provider/FHIR ackno
 
 - Add one validated configuration schema for production-local and explicit synthetic-development AI. Keep credentials server-only and commit only empty placeholders.
 - Implement OpenAI Responses with `store:false` and structured proposal output, plus local OpenAI-compatible Chat Completions as a separate adapter.
-- Implement bounded microphone file upload to `/v1/audio/transcriptions`, configurable `gpt-transcribe`, and a separately gated realtime model setting. Validate codec, size, duration, cancellation and patient-bound receipt.
+- Implement bounded microphone file upload to `/v1/audio/transcriptions`, configurable `gpt-4o-transcribe`, and a separately gated realtime model setting. Validate codec, size, duration, cancellation and patient-bound receipt.
 - Default the balanced development route to `gpt-5.6-terra`; allow `gpt-5.6-sol` for quality evaluation. Production-local denies hosted fallback.
 - Add useful roster/work-plan/episode/trend/approval/thread/sync artifacts and fix textarea sizing, keyboard/safe-area layout, chips, icons, resolved picker, scroll preservation and light/dark/system themes.
 

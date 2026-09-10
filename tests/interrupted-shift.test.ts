@@ -680,10 +680,11 @@ describe("interrupted nursing shift", () => {
       url: "/api/v1/workday",
       headers,
     });
-    expect(workday.json().activeEpisode.draftText).toContain(
-      "Anna mobilisiert",
-    );
-    expect(workday.json().activeEpisode.draftText).toContain("128");
+    const activeEpisode = workday.json<{
+      activeEpisode: { draftText: string };
+    }>().activeEpisode;
+    expect(activeEpisode.draftText).toContain("Anna mobilisiert");
+    expect(activeEpisode.draftText).toContain("128");
   });
 
   it("lets natural conversation atomically pause current work and enter the next room", async () => {

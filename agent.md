@@ -21,6 +21,8 @@ Do not introduce `Focus`, module tabs, separate workflow pages, dashboard projec
 - Model-facing schemas never expose action tokens/routes, patient/source identifiers, authorization claims or clinical authority.
 - Models interpret/compose; deterministic server code authorizes, validates, versions and executes.
 - Writes requiring review remain draft until explicit approval and visibly pending until external acknowledgement.
+- Site packs may narrow centrally reviewed role ceilings and assign reviewer qualifications; they never grant new authority.
+- FHIR identifiers, tags, cleanup and legacy migrations are bound to institution/site. Unscoped legacy state is default-denied.
 
 The baseline excludes microservices, Flowable, NATS/Kafka, vector databases and Kubernetes without measured need/new ADR.
 
@@ -33,6 +35,8 @@ Handover acknowledgements bind the exact handover ID/version and responsible act
 `WorkflowTemplate` has immutable published versions. `WorkingSession` binds actor/role/organization, template version, assistant thread, step and context revision. Sign-in resumes/starts the active role workflow and places the next safe step in conversation. Workflow data is bounded and cannot execute code, grant policy, weaken approval, enable providers or auto-select patients.
 
 The model never diagnoses, prescribes, approves, signs, invents facts, chooses capabilities or bypasses policy. Internally it may propose meaning through a generic typed `AssistantProposal` containing understood facts, work performed, observations, task changes, communications, workflow actions, ambiguities and evidence. Specific deterministic sub-schemas alone can execute. Preserve negation, uncertainty, historical reporting, partial/deferred work, interruption, delegation, communication, corrections and occurrence time. Every read/action is tenant-, role-, purpose-, relationship-, state- and ownership-checked. One-use intent authority binds actor, organization, patient/encounter, session/thread, workflow and context/source/policy versions; store only a hash. Patient-context change is a server event that invalidates stale intent/voice authority. Raw audio is not persisted. Medication/treatment/diagnostic commands fail closed into separately governed workflows. Do not log clinical content, model output or secrets.
+
+Generic free-text task creation rejects ambiguous administration verbs such as `geben`; basic-care work uses unambiguous verbs such as unterstützen, helfen or begleiten. Approved chat evidence for the active patient/encounter is reused in the current care-episode draft so staff does not repeat documentation, but episode completion remains a separate explicit act.
 
 ## Provider honesty
 

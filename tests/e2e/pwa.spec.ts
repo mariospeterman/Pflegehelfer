@@ -261,7 +261,7 @@ test("named team-message review shows the exact bound recipient", async ({
   );
   const draft = page.locator(".assistant-draft");
   await expect(draft).toContainText("Samira Vogel");
-  await draft.getByRole("button", { name: "Auswahl bestätigen" }).click();
+  await draft.getByRole("button", { name: "Frage prüfen und senden" }).click();
   const dialog = page.getByRole("dialog", { name: "Teamfrage prüfen" });
   await expect(dialog).toContainText(
     "Empfänger: Samira Vogel (bewusst gewählte Person)",

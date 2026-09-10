@@ -323,19 +323,16 @@ describe("full provider simulator contract", () => {
       payload: { resourceType: "Patient", id: "sim-patient", active: false },
     });
     const updated = await simulator.pullChanges(initial.nextCursor!);
-    expect(updated.records).toEqual([
-      expect.objectContaining({
-        originVersion: "sim-v2",
-        payload: expect.objectContaining({ active: false }),
-      }),
-    ]);
+    expect(updated.records).toHaveLength(1);
+    expect(updated.records[0]?.originVersion).toBe("sim-v2");
+    expect(updated.records[0]?.payload).toMatchObject({ active: false });
     simulator.reset();
-    await expect(
-      simulator.read({ resourceType: "Patient", externalId: "sim-patient" }),
-    ).resolves.toMatchObject({
-      originVersion: "sim-v1",
-      payload: expect.objectContaining({ active: true }),
+    const resetRecord = await simulator.read({
+      resourceType: "Patient",
+      externalId: "sim-patient",
     });
+    expect(resetRecord.originVersion).toBe("sim-v1");
+    expect(resetRecord.payload).toMatchObject({ active: true });
   });
 
   it("classifies content rejection and version conflict separately", async () => {
