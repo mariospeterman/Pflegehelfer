@@ -196,7 +196,7 @@ describe("least-privilege policy", () => {
     expect(
       service.createTask("u-nurse", {
         patientId: "p-anna",
-        title: "Beim Essen und Trinken Hilfestellung geben",
+        title: "Beim Essen und Trinken unterstützen",
         reason: "Geplante Grundpflege",
         ownerRole: "care-assistant",
         priority: "routine",
@@ -210,6 +210,9 @@ describe("least-privilege policy", () => {
     "Torasemid mit Wasser geben",
     "Metoprolol zum Essen geben",
     "Bisoprolol mit Tee geben",
+    "Unterstützung bei Torasemid geben",
+    "Hilfestellung beim Metoprolol geben",
+    "Beim Essen Hilfestellung für Torasemid geben",
     "Metoprolol verabreichen",
     "Neues Präparat absetzen",
   ])("keeps %s out of the generic task workflow", (title) => {

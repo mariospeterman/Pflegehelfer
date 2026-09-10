@@ -662,19 +662,12 @@ export function requiresDedicatedTaskWorkflow(source: string): boolean {
     /\b(?:verabreich\p{L}*|absetz\p{L}*|injizier\p{L}*|applizier\p{L}*|titrier\p{L}*|verschreib\p{L}*|verordn\p{L}*)\b/iu.test(
       source,
     );
-  // "geben" is too ambiguous for a generic task. A medicine name can be
-  // padded with "Wasser" or "zum Essen" and must still fail closed. Permit
-  // only wording that explicitly describes assistance, not administration.
-  const explicitlyBasicCareHelp =
-    /\b(?:beim|zum)\s+(?:essen|trinken|ankleiden|aufstehen)\b[^.;]{0,80}\b(?:hilfe|hilfestellung|unterstützung|hand)\b[^.;]{0,30}\b(?:geben|gib)\b/iu.test(
-      source,
-    ) ||
-    /\b(?:hilfe|hilfestellung|unterstützung|hand)\b[^.;]{0,40}\b(?:geben|gib)\b/iu.test(
-      source,
-    );
-  const unqualifiedGive =
-    /\b(?:geben|gib)\b/iu.test(source) && !explicitlyBasicCareHelp;
-  return sensitiveSubject || dedicatedVerb || unqualifiedGive;
+  // "geben" can mean both harmless assistance and administration of an
+  // unknown medicine. Free text cannot prove which one was intended, so the
+  // generic task path rejects it consistently. Basic-care tasks stay natural
+  // with unambiguous verbs such as helfen, unterstützen or begleiten.
+  const ambiguousGive = /\b(?:geben|gib)\b/iu.test(source);
+  return sensitiveSubject || dedicatedVerb || ambiguousGive;
 }
 
 export function explicitlyRefusesDocumentation(source: string): boolean {
