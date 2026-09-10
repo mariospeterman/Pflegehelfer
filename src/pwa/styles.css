@@ -168,14 +168,6 @@ input:focus-visible {
   flex: 0 0 auto;
   fill: var(--blue);
 }
-.brand-mark .brand-conversation {
-  fill: white;
-}
-.brand-mark .brand-signal {
-  fill: var(--success);
-  stroke: var(--surface);
-  stroke-width: 1.5;
-}
 .patient-context-card p,
 .team-inbox-card p {
   white-space: pre-line;

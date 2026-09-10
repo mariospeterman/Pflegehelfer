@@ -1,5 +1,14 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Pflegehelfer Gesprächszeichen">
-  <rect width="128" height="128" rx="38" fill="#153f75"/>
-  <path d="M35 93V35h31c18 0 29 10 29 25S84 85 66 85H53v8H35Zm18-25h12c8 0 12-3 12-8s-4-8-12-8H53v16Z" fill="#fff"/>
-  <circle cx="100" cy="28" r="15" fill="#087a52" stroke="#f7f8fb" stroke-width="6"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Pflegehelfer Edelweiss-Zeichen">
+  <rect width="128" height="128" rx="34" fill="#153f75"/>
+  <g fill="#fff">
+    <path d="M64 14c13 10 16 22 10 35-4 9-16 9-20 0-6-13-3-25 10-35Z"/>
+    <path d="M114 64c-10 13-22 16-35 10-9-4-9-16 0-20 13-6 25-3 35 10Z"/>
+    <path d="M64 114c-13-10-16-22-10-35 4-9 16-9 20 0 6 13 3 25-10 35Z"/>
+    <path d="M14 64c10-13 22-16 35-10 9 4 9 16 0 20-13 6-25 3-35-10Z"/>
+    <path d="M28 28c16 1 26 7 31 20 3 9-5 17-14 14-13-5-19-15-17-34Z"/>
+    <path d="M100 28c2 16-4 26-17 31-9 3-17-5-14-14 5-13 15-19 31-17Z"/>
+    <path d="M100 100c-16 2-26-4-31-17-3-9 5-17 14-14 13 5 19 15 17 31Z"/>
+    <path d="M28 100c-2-16 4-26 17-31 9-3 17 5 14 14-5 13-15 19-31 17Z"/>
+  </g>
+  <path d="M56 45h16v11h11v16H72v11H56V72H45V56h11Z" fill="#153f75"/>
 </svg>

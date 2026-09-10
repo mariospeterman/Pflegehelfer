@@ -1,5 +1,11 @@
 const SHELL = "pflegehelfer-shell-v2";
-const ASSETS = ["/", "/manifest.webmanifest", "/icon.svg"];
+const ASSETS = [
+  "/",
+  "/manifest.webmanifest",
+  "/icon.svg",
+  "/logo-mark.svg",
+  "/logo-horizontal.svg",
+];
 
 async function precacheShell() {
   const cache = await caches.open(SHELL);

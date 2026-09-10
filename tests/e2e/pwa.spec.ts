@@ -44,8 +44,12 @@ test("is one responsive conversation with drawer context and no module dashboard
     page.getByRole("heading", { name: "Übergabe patientenweise übernehmen" }),
   ).toBeVisible();
   await expect(
-    page.getByText("Alle Personen und klinischen Daten sind frei erfunden."),
+    page.getByText(/Keine offizielle Tertianum-Installation/),
   ).toBeAttached();
+  await expect(
+    page.getByText(/Keine echten Patientendaten eingeben/),
+  ).toBeAttached();
+  await expect(page.locator(".brand-mark path")).toHaveCount(9);
   await expect(page.getByText("Kein Patient aktiv")).toBeVisible();
   await expect(page.locator('[data-nav="today"]')).toHaveCount(0);
   await expect(page.getByText("Meine Schicht", { exact: true })).toHaveCount(0);
@@ -244,6 +248,25 @@ test("physician role starts its own coworker journey without a nursing dashboard
     page.getByText("Anfragen → Evidenz → Entscheidung → Rückmeldung"),
   ).toBeVisible();
   await expect(page.getByText("Meine Schicht", { exact: true })).toHaveCount(0);
+});
+
+test("named team-message review shows the exact bound recipient", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "message is created once");
+  await choosePatient(page);
+  await ask(
+    page,
+    "Frage @Samira: Kannst du die Mobilisation später übernehmen?",
+  );
+  const draft = page.locator(".assistant-draft");
+  await expect(draft).toContainText("Samira Vogel");
+  await draft.getByRole("button", { name: "Auswahl bestätigen" }).click();
+  const dialog = page.getByRole("dialog", { name: "Teamfrage prüfen" });
+  await expect(dialog).toContainText(
+    "Empfänger: Samira Vogel (bewusst gewählte Person)",
+  );
+  await expect(dialog).not.toContainText("Empfänger: Ärztlicher Dienst");
 });
 
 test("offline state is explicit and blocks chat submission", async ({

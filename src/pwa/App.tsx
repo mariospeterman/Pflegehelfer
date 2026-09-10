@@ -216,12 +216,22 @@ function CountersignaturePanel({
 function PflegehelferMark() {
   return (
     <svg viewBox="0 0 40 40" aria-hidden="true" className="brand-mark">
-      <rect x="3" y="3" width="34" height="34" rx="12" />
-      <path
-        className="brand-conversation"
-        d="M12 28V12h8.7c5 0 8.1 2.7 8.1 7s-3.1 7-8.1 7H17v2h-5Zm5-7h3.5c2.1 0 3.2-.7 3.2-2s-1.1-2-3.2-2H17v4Z"
-      />
-      <circle className="brand-signal" cx="31" cy="9" r="4" />
+      <defs>
+        <mask id="pflegehelfer-edelweiss-cutout">
+          <rect width="40" height="40" fill="white" />
+          <path d="M17.5 13.5h5v4h4v5h-4v4h-5v-4h-4v-5h4z" fill="black" />
+        </mask>
+      </defs>
+      <g mask="url(#pflegehelfer-edelweiss-cutout)">
+        <path d="M20 2.5c4 3.3 5.1 7 3.2 11.2C21.9 16.5 18.1 16.5 16.8 13.7 14.9 9.5 16 5.8 20 2.5Z" />
+        <path d="M37.5 20c-3.3 4-7 5.1-11.2 3.2-2.8-1.3-2.8-5.1 0-6.4 4.2-1.9 7.9-.8 11.2 3.2Z" />
+        <path d="M20 37.5c-4-3.3-5.1-7-3.2-11.2 1.3-2.8 5.1-2.8 6.4 0 1.9 4.2.8 7.9-3.2 11.2Z" />
+        <path d="M2.5 20c3.3-4 7-5.1 11.2-3.2 2.8 1.3 2.8 5.1 0 6.4C9.5 25.1 5.8 24 2.5 20Z" />
+        <path d="M7.6 7.6c5.2.5 8.6 2.4 10.2 6.7 1.1 2.9-1.6 5.6-4.5 4.5-4.3-1.6-6.2-5-5.7-11.2Z" />
+        <path d="M32.4 7.6c.5 5.2-1.4 8.6-5.7 10.2-2.9 1.1-5.6-1.6-4.5-4.5 1.6-4.3 5-6.2 10.2-5.7Z" />
+        <path d="M32.4 32.4c-5.2.5-8.6-1.4-10.2-5.7-1.1-2.9 1.6-5.6 4.5-4.5 4.3 1.6 6.2 5 5.7 10.2Z" />
+        <path d="M7.6 32.4c-.5-5.2 1.4-8.6 5.7-10.2 2.9-1.1 5.6 1.6 4.5 4.5-1.6 4.3-5 6.2-10.2 5.7Z" />
+      </g>
     </svg>
   );
 }
@@ -356,8 +366,12 @@ function ContextPanel({
         </label>
         {snapshot.organization.dataClass === "synthetic-demo" ? (
           <>
-            <strong>Synthetische Demonstration</strong>
-            <span>Alle Personen und klinischen Daten sind frei erfunden.</span>
+            <strong>Synthetische Demonstrationsumgebung</strong>
+            <span>
+              Keine offizielle Tertianum-Installation. Keine echten
+              Patientendaten eingeben. Alle Personen und Datensätze sind frei
+              erfunden.
+            </span>
           </>
         ) : (
           <>
@@ -505,7 +519,7 @@ function DraftHandoffSheet({
           <p>{handoff.reason}</p>
           <small>
             {handoff.kind === "communication"
-              ? "Empfänger: Ärztlicher Dienst (keine Person automatisch gewählt). "
+              ? `Empfänger: ${handoff.recipientLabel ?? handoff.recipientRole ?? "ärztlicher Dienst"}${handoff.recipientId ? " (bewusst gewählte Person)" : " (zuständige Rollenwarteschlange)"}. `
               : ""}
             Patient, Empfänger und Inhalt werden beim Senden serverseitig erneut
             geprüft.
@@ -866,7 +880,7 @@ export function App() {
                 target="_blank"
                 rel="noreferrer"
               >
-                FHIR-Detail
+                Klinische Detailansicht
               </a>
             )}
             <label className="role-switcher">
