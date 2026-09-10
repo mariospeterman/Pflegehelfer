@@ -13,6 +13,7 @@ import type {
   Task,
 } from "@medplum/fhirtypes";
 import { observationToFhirR4, patientToFhirR4 } from "./fhir.js";
+import { siteConfiguration } from "./site-config.js";
 import type {
   ClinicalNote,
   ClinicalTask,
@@ -25,7 +26,9 @@ import type {
 
 export function fhirResourceId(resourceType: string, domainId: string): string {
   const hash = createHash("sha256")
-    .update(`pflegehelfer:${resourceType}:${domainId}`)
+    .update(
+      `pflegehelfer:${siteConfiguration.institutionId}:${siteConfiguration.siteId}:${resourceType}:${domainId}`,
+    )
     .digest("hex");
   return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-5${hash.slice(13, 16)}-8${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
 }
@@ -45,10 +48,17 @@ export interface CanonicalClinicalState {
 type DataClass = "synthetic-demo" | "institution-local";
 const dataClassificationSystem =
   "https://pflegehelfer.example.invalid/data-classification";
+export const tenantTagSystem =
+  "https://pflegehelfer.example.invalid/institution-site";
 
 const classificationTag = (dataClass: DataClass) => ({
   system: dataClassificationSystem,
   code: dataClass,
+});
+
+export const tenantTag = () => ({
+  system: tenantTagSystem,
+  code: `${siteConfiguration.institutionId}.${siteConfiguration.siteId}`,
 });
 
 const taskStatus: Record<ClinicalTask["state"], Task["status"]> = {
@@ -446,15 +456,15 @@ export function toFhirResourceSet(
   const wardLocations: Location[] = [
     {
       resourceType: "Location",
-      id: fhirResourceId("Location", "rehab-2"),
+      id: fhirResourceId("Location", siteConfiguration.department.id),
       identifier: [
         {
           system: "https://pflegehelfer.example.invalid/location-id",
-          value: "rehab-2",
+          value: siteConfiguration.department.id,
         },
       ],
       status: "active",
-      name: "Rehabilitation Station 2",
+      name: siteConfiguration.department.displayName,
       meta: { tag: [classificationTag(dataClass)] },
     },
   ];
@@ -524,5 +534,16 @@ export function toFhirResourceSet(
       .map(provenance)
       .filter((item): item is Provenance => item !== null),
     ...auditEntries.map((entry) => auditEventToFhirR4(entry, dataClass)),
-  ];
+  ].map((resource) => ({
+    ...resource,
+    meta: {
+      ...resource.meta,
+      tag: [
+        ...(resource.meta?.tag ?? []).filter(
+          (tag) => tag.system !== tenantTagSystem,
+        ),
+        tenantTag(),
+      ],
+    },
+  }));
 }

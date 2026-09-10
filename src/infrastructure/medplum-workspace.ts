@@ -15,7 +15,11 @@ import type {
 } from "@medplum/fhirtypes";
 import { z } from "zod";
 import { verifyAuditEntries } from "../core/audit.js";
-import { fhirResourceId } from "../core/fhir-resource-set.js";
+import {
+  fhirResourceId,
+  tenantTag,
+  tenantTagSystem,
+} from "../core/fhir-resource-set.js";
 import type { CommandReceipt, ServiceCheckpoint } from "../core/service.js";
 
 const checkpointId = fhirResourceId("Binary", "workflow-control-plane-v1");
@@ -180,6 +184,7 @@ export function serializeCheckpoint(
           system: "https://pflegehelfer.example.invalid/data-classification",
           code: checkpoint.dataClass,
         },
+        tenantTag(),
       ],
     },
     contentType: checkpointContentType,
@@ -356,6 +361,7 @@ export function serializeCommandReceipt(
           system: "https://pflegehelfer.example.invalid/control-plane",
           code: "command-receipt-v1",
         },
+        tenantTag(),
       ],
     },
     contentType: receiptContentType,
@@ -679,11 +685,12 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
       ),
     );
     const stale: Resource[] = [];
+    const scopedTenantTag = `${tenantTagSystem}|${tenantTag().code}`;
     for (const resourceType of managedClinicalResourceTypes) {
       for (const managedTag of managedTags) {
         const existing = await this.client.searchResources(
           resourceType,
-          `_tag=${encodeURIComponent(managedTag)}&_count=1000`,
+          `_tag=${encodeURIComponent(managedTag)}&_tag=${encodeURIComponent(scopedTenantTag)}&_count=1000`,
         );
         stale.push(
           ...existing.filter(

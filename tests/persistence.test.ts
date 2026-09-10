@@ -89,6 +89,10 @@ describe("durable workflow checkpoint", () => {
     const oldKey = "old-checkpoint-key-with-at-least-32-bytes";
     const nextKey = "next-checkpoint-key-with-at-least-32-bytes";
     const signed = serializeCheckpoint(checkpoint, oldKey);
+    expect(signed.meta?.tag).toContainEqual({
+      system: "https://pflegehelfer.example.invalid/institution-site",
+      code: "org-demo.rehab-2",
+    });
     expect(deserializeCheckpoint(signed, nextKey, [oldKey])).toEqual(
       checkpoint,
     );
@@ -107,6 +111,10 @@ describe("durable workflow checkpoint", () => {
       payload: '{"id":"task-signed"}',
     };
     const signed = serializeCommandReceipt(receipt, oldKey);
+    expect(signed.meta?.tag).toContainEqual({
+      system: "https://pflegehelfer.example.invalid/institution-site",
+      code: "org-demo.rehab-2",
+    });
     expect(
       deserializeCommandReceipt(signed, receipt.key, nextKey, [oldKey]),
     ).toEqual(receipt);

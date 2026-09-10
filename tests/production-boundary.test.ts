@@ -16,10 +16,18 @@ describe("production bootstrap boundary", () => {
     const resources = service.fhirResources();
     expect(JSON.stringify(resources)).not.toContain("synthetic-mrn");
     for (const resource of resources)
-      expect(resource.meta?.tag).toContainEqual({
-        system: "https://pflegehelfer.example.invalid/data-classification",
-        code: "institution-local",
-      });
+      expect(resource.meta?.tag).toEqual(
+        expect.arrayContaining([
+          {
+            system: "https://pflegehelfer.example.invalid/data-classification",
+            code: "institution-local",
+          },
+          {
+            system: "https://pflegehelfer.example.invalid/institution-site",
+            code: "org-demo.rehab-2",
+          },
+        ]),
+      );
   });
 
   it("starts an unconfigured production domain with zero synthetic clinical records", () => {
