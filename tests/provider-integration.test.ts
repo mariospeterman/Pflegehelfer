@@ -220,6 +220,19 @@ describe("full provider simulator contract", () => {
     const first = await simulator.executeCommand(prepared);
     const replay = await simulator.executeCommand(prepared);
     expect(replay.receiptId).toBe(first.receiptId);
+    await expect(
+      simulator.read({
+        resourceType: "Observation",
+        externalId: "observation-1",
+      }),
+    ).resolves.toMatchObject({
+      originVersion: "sim-v2",
+      payload: {
+        resourceType: "Observation",
+        id: "observation-1",
+        valueQuantity: { value: 37.8, code: "Cel" },
+      },
+    });
     const differentPayload = await simulator.prepareCommand({
       ...command("stable-key"),
       commandId: "different-command",
@@ -241,10 +254,50 @@ describe("full provider simulator contract", () => {
     );
     expect(pending.status).toBe("pending");
     await expect(
+      delayed.read({
+        resourceType: "Observation",
+        externalId: "observation-1",
+      }),
+    ).rejects.toThrow(/SIMULATOR_RECORD_NOT_FOUND/);
+    await expect(
       delayed.getCommandStatus(pending.receiptId),
     ).resolves.toMatchObject({
       status: "acknowledged",
       receiptId: pending.receiptId,
+    });
+    await expect(
+      delayed.read({
+        resourceType: "Observation",
+        externalId: "observation-1",
+      }),
+    ).resolves.toMatchObject({ originVersion: "sim-v2" });
+
+    delayed.injectInboundRecord({
+      reference: {
+        resourceType: "Observation",
+        externalId: "provider-follow-up",
+      },
+      originVersion: "sim-v3",
+      effectiveAt: now,
+      recordedAt: now,
+      receivedAt: now,
+      payload: {
+        resourceType: "Observation",
+        id: "provider-follow-up",
+        valueQuantity: { value: 151, unit: "mmHg" },
+      },
+    });
+    const inbound = await delayed.pullChanges();
+    expect(inbound.records.map((record) => record.reference.externalId)).toEqual(
+      ["observation-1", "provider-follow-up"],
+    );
+    expect(inbound.records[1]).toMatchObject({
+      originVersion: "sim-v3",
+      payload: {
+        resourceType: "Observation",
+        id: "provider-follow-up",
+        valueQuantity: { value: 151, unit: "mmHg" },
+      },
     });
   });
 

@@ -58,7 +58,12 @@ export class ProviderContractSimulator implements ProviderAdapter {
   private readonly records: ProviderRecord[];
   private readonly acknowledgements = new Map<
     string,
-    { payloadHash: string; acknowledgement: ProviderAcknowledgement }
+    {
+      payloadHash: string;
+      acknowledgement: ProviderAcknowledgement;
+      command: CanonicalClinicalCommand;
+      applied: boolean;
+    }
   >();
   private readonly receiptById = new Map<string, string>();
   private readonly now: () => string;
@@ -82,6 +87,17 @@ export class ProviderContractSimulator implements ProviderAdapter {
     this.mode = "normal";
     this.acknowledgements.clear();
     this.receiptById.clear();
+  }
+
+  /** Add a synthetic provider-side change so inbound polling can be tested. */
+  injectInboundRecord(record: ProviderRecord): void {
+    const existing = this.records.findIndex(
+      (candidate) =>
+        candidate.reference.resourceType === record.reference.resourceType &&
+        candidate.reference.externalId === record.reference.externalId,
+    );
+    if (existing >= 0) this.records[existing] = clone(record);
+    else this.records.push(clone(record));
   }
 
   manifest(): AdapterManifest {
@@ -252,8 +268,12 @@ export class ProviderContractSimulator implements ProviderAdapter {
     this.acknowledgements.set(prepared.command.idempotencyKey, {
       payloadHash: prepared.payloadHash,
       acknowledgement: clone(acknowledgement),
+      command: clone(prepared.command),
+      applied: false,
     });
     this.receiptById.set(receiptId, prepared.command.idempotencyKey);
+    if (acknowledgement.status === "acknowledged")
+      this.applyAcknowledgedWrite(prepared.command.idempotencyKey);
     return clone(acknowledgement);
   }
 
@@ -270,6 +290,8 @@ export class ProviderContractSimulator implements ProviderAdapter {
       acknowledgement.errorCode = null;
       acknowledgement.errorClassification = null;
     }
+    if (acknowledgement.status === "acknowledged")
+      this.applyAcknowledgedWrite(idempotencyKey!);
     return clone(acknowledgement);
   }
 
@@ -285,5 +307,28 @@ export class ProviderContractSimulator implements ProviderAdapter {
   private assertAvailable(): void {
     if (this.mode === "down")
       throw new ProviderTransportError("PROVIDER_UNAVAILABLE");
+  }
+
+  private applyAcknowledgedWrite(idempotencyKey: string): void {
+    const stored = this.acknowledgements.get(idempotencyKey);
+    if (!stored || stored.applied) return;
+    const { command, acknowledgement } = stored;
+    const timestamp = this.now();
+    this.injectInboundRecord({
+      reference: {
+        resourceType: command.resource.resourceType,
+        externalId: command.resource.id,
+      },
+      originVersion: acknowledgement.providerVersion ?? "sim-v1",
+      effectiveAt: command.approvedAt,
+      recordedAt: timestamp,
+      receivedAt: timestamp,
+      payload: {
+        resourceType: command.resource.resourceType,
+        id: command.resource.id,
+        ...clone(command.resource.body),
+      },
+    });
+    stored.applied = true;
   }
 }
