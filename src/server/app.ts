@@ -256,15 +256,31 @@ export function buildApp(
       actorId,
       actor.role,
     );
-    const recentPrompts = (
+    const recentTurns = (
       await operationalStore.loadConversation(
         actorId,
         actor.role,
         session.patientId,
       )
-    )
-      .slice(-6)
-      .map((turn) => turn.prompt);
+    ).slice(-4);
+    const recentPrompts = recentTurns.map((turn) => turn.prompt);
+    const recentConversation = recentTurns.flatMap((turn) => {
+      const response = turn.response as Partial<AssistantResponse> | null;
+      const assistantSummary = (response?.components ?? [])
+        .flatMap((component) => {
+          if (component.type === "AssistantText") return [component.message];
+          if (component.type === "DraftAction") return [component.preview];
+          return [];
+        })
+        .join(" · ")
+        .slice(0, 400);
+      return [
+        { role: "user" as const, text: turn.prompt },
+        ...(assistantSummary
+          ? [{ role: "assistant" as const, text: assistantSummary }]
+          : []),
+      ];
+    });
     const workday = ["care-assistant", "registered-nurse"].includes(actor.role)
       ? await operationalStore.getWorkday(actorId, actor.role)
       : null;
@@ -274,6 +290,7 @@ export function buildApp(
       activeEpisodePatientId: workday?.activeEpisode?.patientId ?? null,
       resumableEpisodePatientId: workday?.resumableEpisode?.patientId ?? null,
       recentPrompts,
+      recentConversation,
       organizationLabel: siteConfiguration.displayName,
       actorRole: actor.role,
       dataClass: effectiveDataClass(),

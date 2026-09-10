@@ -36,6 +36,10 @@ export interface AssistantRequest {
     activeEpisodePatientId: string | null;
     resumableEpisodePatientId: string | null;
     recentPrompts: string[];
+    recentConversation?: Array<{
+      role: "user" | "assistant";
+      text: string;
+    }>;
     organizationLabel: string;
     actorRole: string;
     dataClass: "synthetic-demo" | "institution-local";
@@ -351,6 +355,11 @@ export class AssistantService {
             workflowStep: request.workingContext.currentStepId,
             activeEpisodeTitle: request.workingContext.activeEpisodeTitle,
             recentPrompts: request.workingContext.recentPrompts,
+            ...(request.workingContext.recentConversation
+              ? {
+                  recentConversation: request.workingContext.recentConversation,
+                }
+              : {}),
             dataClass: request.workingContext.dataClass,
           }
         : undefined;

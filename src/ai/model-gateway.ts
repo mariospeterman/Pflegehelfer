@@ -70,6 +70,10 @@ export interface AuthorizedModelContext {
   workflowStep: string;
   activeEpisodeTitle: string | null;
   recentPrompts: string[];
+  recentConversation?: Array<{
+    role: "user" | "assistant";
+    text: string;
+  }>;
   dataClass: "synthetic-demo" | "institution-local";
 }
 
@@ -81,8 +85,13 @@ function boundedContext(context?: AuthorizedModelContext): string | null {
     workflowStep: context.workflowStep.slice(0, 80),
     activeEpisode: context.activeEpisodeTitle?.slice(0, 160) ?? null,
     recentConversation: context.recentPrompts
-      .slice(-6)
-      .map((prompt) => prompt.slice(0, 400)),
+      ? (
+          context.recentConversation ??
+          context.recentPrompts.map((text) => ({ role: "user", text }))
+        )
+          .slice(-8)
+          .map((turn) => ({ role: turn.role, text: turn.text.slice(0, 400) }))
+      : [],
     dataClass: context.dataClass,
   });
 }
@@ -545,7 +554,7 @@ export class ModelGateway {
     try {
       const contract = this.requestContract(
         [
-          "Act as a careful clinical coworker. Extract meaning, never invent it, into the supplied AssistantProposal schema. Keep natural work, observations, task changes, communications, workflow actions, ambiguities, and evidence separate. Copy note structuredText verbatim from its exact source span. Use exact zero-based source spans into the user text. Medication, treatment, and diagnostic commands are forbidden. Never convert mere mentions of doctor, control, medication, or task into actions; negation must remain negation. Do not add patient identity, provider targets, FHIR, diagnoses, prescriptions, URLs, approvals, or default actions. Return only schema-valid JSON.",
+          "Act as a careful clinical coworker. Extract meaning, never invent it, into the supplied AssistantProposal schema. Use the bounded conversation only to resolve references and corrections; the latest explicit user statement supersedes older conversational wording. Do not require information already present in that context. Keep natural work, observations, task changes, communications, workflow actions, ambiguities, and evidence separate. Copy note structuredText verbatim from its exact source span. Use exact zero-based source spans into the current user text. Medication, treatment, and diagnostic commands are forbidden. Never convert mere mentions of doctor, control, medication, or task into actions; negation must remain negation. Do not add patient identity, provider targets, FHIR, diagnoses, prescriptions, URLs, approvals, or default actions. Return only schema-valid JSON.",
           ...(boundedContext(context)
             ? [`Authorized bounded working context: ${boundedContext(context)}`]
             : []),

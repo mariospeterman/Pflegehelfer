@@ -11,6 +11,13 @@ const syntheticContext = {
   workflowStep: "document",
   activeEpisodeTitle: "Morgenpflege",
   recentPrompts: ["Mobilisation später durchführen."],
+  recentConversation: [
+    { role: "user" as const, text: "Mobilisation später durchführen." },
+    {
+      role: "assistant" as const,
+      text: "Verstanden, Mobilisation bleibt offen.",
+    },
+  ],
   dataClass: "synthetic-demo" as const,
 };
 
@@ -53,6 +60,7 @@ describe("authorized model context boundary", () => {
     );
     expect(result.intent).toBe("care-update");
     expect(requestBody).toContain("Mobilisation später durchführen");
+    expect(requestBody).toContain("Mobilisation bleibt offen");
     expect(requestBody).toContain("registered-nurse");
     expect(requestBody).not.toContain("intentToken");
     expect(requestBody).not.toContain("p-anna");
