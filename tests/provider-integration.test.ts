@@ -288,9 +288,9 @@ describe("full provider simulator contract", () => {
       },
     });
     const inbound = await delayed.pullChanges();
-    expect(inbound.records.map((record) => record.reference.externalId)).toEqual(
-      ["observation-1", "provider-follow-up"],
-    );
+    expect(
+      inbound.records.map((record) => record.reference.externalId),
+    ).toEqual(["observation-1", "provider-follow-up"]);
     expect(inbound.records[1]).toMatchObject({
       originVersion: "sim-v3",
       payload: {
