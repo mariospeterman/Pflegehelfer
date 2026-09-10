@@ -902,12 +902,13 @@ export function AssistantSurface({
     [cancelVoice],
   );
 
-  const ask = async (event?: FormEvent) => {
+  const ask = async (event?: FormEvent, directPrompt?: string) => {
     event?.preventDefault();
-    const submitted = prompt.trim();
+    const submitted = (directPrompt ?? prompt).trim();
     const submittedContextEpoch = contextEpoch.current;
     if (!online || submitted.length < 2 || workflowBusy) return;
     if (
+      !directPrompt &&
       voiceReview &&
       (!voiceReview.confirmed ||
         voiceReview.confirmedEntityIds.length !== voiceReview.entities.length)
@@ -934,10 +935,17 @@ export function AssistantSurface({
         body: JSON.stringify({
           prompt: submitted,
           patientId: patient?.id ?? null,
-          inputModality: voiceReview?.receiptId ? "voice" : "typed",
-          voiceTranscriptConfirmed: voiceReview?.confirmed ?? false,
-          voiceReceiptId: voiceReview?.receiptId ?? undefined,
-          voiceConfirmedEntityIds: voiceReview?.confirmedEntityIds,
+          inputModality:
+            !directPrompt && voiceReview?.receiptId ? "voice" : "typed",
+          voiceTranscriptConfirmed:
+            !directPrompt && (voiceReview?.confirmed ?? false),
+          voiceReceiptId:
+            !directPrompt && voiceReview?.receiptId
+              ? voiceReview.receiptId
+              : undefined,
+          voiceConfirmedEntityIds: !directPrompt
+            ? voiceReview?.confirmedEntityIds
+            : undefined,
         }),
         signal: controller.signal,
       });
@@ -1322,7 +1330,7 @@ export function AssistantSurface({
         "Was ist noch offen?",
         "Letzte Vitalwerte",
         "Patientenprofil",
-        "Frage an Arzt: Bitte aktuellen Zustand beurteilen",
+        "Offene Teamfragen",
       ]
     : ["Übergabe", "Meine offenen Aufgaben", "Was ist heute wichtig?"];
   const lastTurnId = [...messages]
@@ -1571,9 +1579,10 @@ export function AssistantSurface({
           {quickPrompts.map((label) => (
             <button
               key={label}
+              disabled={interactionBusy || !online}
               onClick={() => {
-                setPrompt(label);
                 setVoiceReview(null);
+                void ask(undefined, label);
               }}
             >
               {label}
