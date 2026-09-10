@@ -13,21 +13,21 @@
   "shifts": {
     "early": {
       "name": "Frühdienst",
-      "startsAt": "06:30",
-      "endsAt": "14:30",
+      "startsAt": "07:00",
+      "endsAt": "15:00",
       "nextResponsibleActorId": "u-nurse-evening"
     },
     "late": {
       "name": "Spätdienst",
-      "startsAt": "14:00",
-      "endsAt": "22:00",
+      "startsAt": "14:30",
+      "endsAt": "22:30",
       "nextResponsibleActorId": "u-nurse"
     }
   },
   "providerRoutes": {
     "patientRead": "wicare",
-    "careDocumentation": "carecoach",
-    "observations": "device-gateway",
+    "careDocumentation": "wicare",
+    "observations": "sap-vitals",
     "administration": "sap"
   },
   "staffAssignments": [
@@ -35,27 +35,13 @@
       "actorId": "u-assistant",
       "role": "care-assistant",
       "shiftId": "early",
-      "patientIds": [
-        "p-anna",
-        "p-luca",
-        "p-ruth",
-        "p-peter",
-        "p-sofia",
-        "p-emil"
-      ]
+      "patientIds": ["p-anna", "p-luca", "p-ruth"]
     },
     {
       "actorId": "u-nurse",
       "role": "registered-nurse",
       "shiftId": "early",
-      "patientIds": [
-        "p-anna",
-        "p-luca",
-        "p-ruth",
-        "p-peter",
-        "p-sofia",
-        "p-emil"
-      ]
+      "patientIds": ["p-peter", "p-sofia", "p-emil"]
     },
     {
       "actorId": "u-nurse-evening",
@@ -238,21 +224,21 @@
     "nursing-day": {
       "name": "Pflegetag",
       "eligibleRoles": ["care-assistant", "registered-nurse"],
-      "version": 2,
+      "version": 3,
       "definition": {
         "schemaVersion": 1,
         "steps": [
           {
             "id": "handover",
             "kind": "handover",
-            "title": "Teamübergabe",
-            "prompt": "Übergabe für mein Team"
+            "title": "Wohnbereichsrapport",
+            "prompt": "Rapport für Wohnbereich A"
           },
           {
             "id": "prioritize",
             "kind": "work-queue",
-            "title": "Mein Tagesplan",
-            "prompt": "Zeig mir meine sechs Patientinnen und Patienten"
+            "title": "Meine Bezugspersonen",
+            "prompt": "Zeig mir meine heutige Zuteilung"
           },
           {
             "id": "patient",

@@ -58,6 +58,17 @@ describe("versioned site-pack configuration", () => {
     );
     expect(parsed.institutionId).toBe("org-alpenblick-demo");
     expect(parsed.displayName).toContain("Alpenblick");
+    expect(parsed.shifts.early?.startsAt).toBe("07:00");
+    expect(parsed.providerRoutes).toMatchObject({
+      careDocumentation: "wicare",
+      observations: "sap-vitals",
+    });
+    expect(
+      parsed.staffAssignments.find(
+        (assignment) => assignment.actorId === "u-assistant",
+      )?.patientIds,
+    ).toHaveLength(3);
+    expect(parsed.workflows["nursing-day"]?.version).toBe(3);
   });
 
   it("prevents a site pack from expanding the centrally reviewed role ceiling", () => {
