@@ -14,6 +14,7 @@ import {
 } from "../src/infrastructure/medplum-workspace.js";
 import { buildApp } from "../src/server/app.js";
 import { InMemoryOperationalStore } from "../src/infrastructure/operational-store.js";
+import { legacyFhirResourceId } from "../src/core/fhir-resource-set.js";
 
 class RecordingWorkspace implements ClinicalWorkspace {
   readonly mode = "medplum" as const;
@@ -98,6 +99,65 @@ describe("durable workflow checkpoint", () => {
     );
     expect(() => deserializeCheckpoint(signed, nextKey)).toThrow(
       /authenticity validation/,
+    );
+  });
+
+  it("does not read an unscoped legacy checkpoint without an approved manifest", async () => {
+    const workspace = new MedplumClinicalWorkspace(
+      "http://127.0.0.1:8103/",
+      "test-client",
+      "test-secret",
+      "http://127.0.0.1:3001/",
+    );
+    const reads: string[] = [];
+    const internals = workspace as unknown as {
+      client: {
+        startClientLogin: () => Promise<void>;
+        readResource: (type: string, id: string) => Promise<never>;
+      };
+    };
+    internals.client.startClientLogin = () => Promise.resolve();
+    internals.client.readResource = (_type, id) => {
+      reads.push(id);
+      return Promise.reject(new Error("404 not found"));
+    };
+    await expect(workspace.loadCheckpoint()).resolves.toBeNull();
+    expect(reads).toHaveLength(1);
+    expect(reads).not.toContain(
+      legacyFhirResourceId("Binary", "workflow-control-plane-v1"),
+    );
+  });
+
+  it("rejects a legacy checkpoint that differs from its approved digest", async () => {
+    const checkpoint = new PflegehelferService().checkpoint();
+    const legacy = serializeCheckpoint(checkpoint, null);
+    legacy.id = legacyFhirResourceId("Binary", "workflow-control-plane-v1");
+    const workspace = new MedplumClinicalWorkspace(
+      "http://127.0.0.1:8103/",
+      "test-client",
+      "test-secret",
+      "http://127.0.0.1:3001/",
+      null,
+      [],
+      {
+        expectedInstitutionId: "org-demo",
+        expectedSiteId: "rehab-2",
+        expectedBinarySha256: "0".repeat(64),
+      },
+    );
+    const internals = workspace as unknown as {
+      client: {
+        startClientLogin: () => Promise<void>;
+        readResource: (type: string, id: string) => Promise<typeof legacy>;
+      };
+    };
+    internals.client.startClientLogin = () => Promise.resolve();
+    internals.client.readResource = (_type, id) =>
+      id === legacy.id
+        ? Promise.resolve(legacy)
+        : Promise.reject(new Error("404 not found"));
+    await expect(workspace.loadCheckpoint()).rejects.toThrow(
+      /approved migration manifest/,
     );
   });
 

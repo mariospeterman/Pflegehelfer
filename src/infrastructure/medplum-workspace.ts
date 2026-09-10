@@ -17,12 +17,18 @@ import { z } from "zod";
 import { verifyAuditEntries } from "../core/audit.js";
 import {
   fhirResourceId,
+  legacyFhirResourceId,
   tenantTag,
   tenantTagSystem,
 } from "../core/fhir-resource-set.js";
+import { siteConfiguration } from "../core/site-config.js";
 import type { CommandReceipt, ServiceCheckpoint } from "../core/service.js";
 
 const checkpointId = fhirResourceId("Binary", "workflow-control-plane-v1");
+const legacyCheckpointId = legacyFhirResourceId(
+  "Binary",
+  "workflow-control-plane-v1",
+);
 const checkpointContentType =
   "application/vnd.pflegehelfer.workflow-state+json+gzip";
 const legacyCheckpointContentType =
@@ -468,6 +474,7 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
   private readonly client: MedplumClient;
   private login: Promise<unknown> | null = null;
   private checkpointVersionId: string | null = null;
+  private legacyCheckpointReferenceToDelete: string | null = null;
   private statusCache: {
     expiresAt: number;
     value: ClinicalWorkspaceStatus;
@@ -482,6 +489,11 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
     private readonly appBaseUrl: string,
     private readonly checkpointHmacKey: string | null = null,
     private readonly previousCheckpointHmacKeys: string[] = [],
+    private readonly legacyMigration: {
+      expectedInstitutionId: string;
+      expectedSiteId: string;
+      expectedBinarySha256: string;
+    } | null = null,
   ) {
     this.client = new MedplumClient({
       baseUrl,
@@ -621,7 +633,13 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
         ? [serializeCommandReceipt(commandReceipt, this.checkpointHmacKey)]
         : []),
     ];
-    const entryCount = synchronizedResources.length + removedReferences.length;
+    const referencesToRemove = [
+      ...removedReferences,
+      ...(checkpoint && this.legacyCheckpointReferenceToDelete
+        ? [this.legacyCheckpointReferenceToDelete]
+        : []),
+    ];
+    const entryCount = synchronizedResources.length + referencesToRemove.length;
     if (entryCount > 500)
       throw new Error("MEDPLUM_TRANSACTION_ENTRY_LIMIT_EXCEEDED");
     const transaction: Bundle = {
@@ -640,7 +658,7 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
               : {}),
           },
         })),
-        ...removedReferences.map((reference) => ({
+        ...referencesToRemove.map((reference) => ({
           request: { method: "DELETE" as const, url: reference },
         })),
       ],
@@ -663,6 +681,7 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
         /W\/"([^"]+)"/.exec(metadata?.etag ?? "") ??
         /\/_history\/([^/]+)$/.exec(metadata?.location ?? "");
       this.checkpointVersionId = versionMatch?.[1] ?? null;
+      this.legacyCheckpointReferenceToDelete = null;
     }
   }
 
@@ -736,8 +755,37 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
         this.previousCheckpointHmacKeys,
       );
     } catch (error) {
-      if (isNotFoundError(error)) return null;
-      throw error;
+      if (!isNotFoundError(error)) throw error;
+      if (
+        !this.legacyMigration ||
+        this.legacyMigration.expectedInstitutionId !==
+          siteConfiguration.institutionId ||
+        this.legacyMigration.expectedSiteId !== siteConfiguration.siteId
+      )
+        return null;
+      try {
+        const legacy = await this.client.readResource(
+          "Binary",
+          legacyCheckpointId,
+        );
+        const actualBinarySha256 = createHash("sha256")
+          .update(legacy.data ?? "")
+          .digest("hex");
+        if (actualBinarySha256 !== this.legacyMigration.expectedBinarySha256)
+          throw new Error(
+            "Legacy checkpoint does not match the approved migration manifest.",
+          );
+        this.checkpointVersionId = null;
+        this.legacyCheckpointReferenceToDelete = `Binary/${legacyCheckpointId}`;
+        return deserializeCheckpoint(
+          legacy,
+          this.checkpointHmacKey,
+          this.previousCheckpointHmacKeys,
+        );
+      } catch (legacyError) {
+        if (isNotFoundError(legacyError)) return null;
+        throw legacyError;
+      }
     }
   }
 
@@ -850,6 +898,16 @@ export function clinicalWorkspaceFromEnvironment(): ClinicalWorkspace {
     .split(",")
     .map((key) => key.trim())
     .filter(Boolean);
+  const legacyMigration =
+    process.env.PFH_ALLOW_LEGACY_UNSCOPED_MIGRATION === "true"
+      ? {
+          expectedInstitutionId:
+            process.env.PFH_LEGACY_MIGRATION_INSTITUTION_ID ?? "",
+          expectedSiteId: process.env.PFH_LEGACY_MIGRATION_SITE_ID ?? "",
+          expectedBinarySha256:
+            process.env.PFH_LEGACY_CHECKPOINT_BINARY_SHA256 ?? "",
+        }
+      : null;
   if (!baseUrl || !clientId || !clientSecret || !appBaseUrl)
     throw new Error(
       "Medplum mode requires FHIR/app base URLs and generated client credentials.",
@@ -870,6 +928,16 @@ export function clinicalWorkspaceFromEnvironment(): ClinicalWorkspace {
     throw new Error(
       "Every PFH_CHECKPOINT_HMAC_PREVIOUS_KEYS entry must contain at least 32 bytes.",
     );
+  if (
+    legacyMigration &&
+    (legacyMigration.expectedInstitutionId !==
+      siteConfiguration.institutionId ||
+      legacyMigration.expectedSiteId !== siteConfiguration.siteId ||
+      !/^[a-f0-9]{64}$/.test(legacyMigration.expectedBinarySha256))
+  )
+    throw new Error(
+      "Legacy migration requires the exact active institution/site and approved Binary SHA-256 manifest.",
+    );
   return new MedplumClinicalWorkspace(
     baseUrl,
     clientId,
@@ -877,5 +945,6 @@ export function clinicalWorkspaceFromEnvironment(): ClinicalWorkspace {
     appBaseUrl,
     checkpointHmacKey,
     previousCheckpointHmacKeys,
+    legacyMigration,
   );
 }

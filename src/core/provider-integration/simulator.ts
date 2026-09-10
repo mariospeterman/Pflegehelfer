@@ -55,7 +55,9 @@ function nextVersion(expected: string | null): string {
  */
 export class ProviderContractSimulator implements ProviderAdapter {
   private readonly adapterManifest: AdapterManifest;
+  private readonly initialRecords: ProviderRecord[];
   private readonly records: ProviderRecord[];
+  private readonly changeLog: ProviderRecord[];
   private readonly acknowledgements = new Map<
     string,
     {
@@ -74,7 +76,9 @@ export class ProviderContractSimulator implements ProviderAdapter {
     this.adapterManifest = adapterManifestSchema.parse(manifest);
     if (this.adapterManifest.profile !== "synthetic-simulator")
       throw new Error("SIMULATOR_REQUIRES_SYNTHETIC_PROFILE");
-    this.records = clone(options.records ?? []);
+    this.initialRecords = clone(options.records ?? []);
+    this.records = clone(this.initialRecords);
+    this.changeLog = clone(this.initialRecords);
     this.now = options.now ?? (() => new Date().toISOString());
     this.createId = options.createId ?? randomUUID;
   }
@@ -87,6 +91,12 @@ export class ProviderContractSimulator implements ProviderAdapter {
     this.mode = "normal";
     this.acknowledgements.clear();
     this.receiptById.clear();
+    this.records.splice(0, this.records.length, ...clone(this.initialRecords));
+    this.changeLog.splice(
+      0,
+      this.changeLog.length,
+      ...clone(this.initialRecords),
+    );
   }
 
   /** Add a synthetic provider-side change so inbound polling can be tested. */
@@ -98,6 +108,7 @@ export class ProviderContractSimulator implements ProviderAdapter {
     );
     if (existing >= 0) this.records[existing] = clone(record);
     else this.records.push(clone(record));
+    this.changeLog.push(clone(record));
   }
 
   manifest(): AdapterManifest {
@@ -136,12 +147,12 @@ export class ProviderContractSimulator implements ProviderAdapter {
     this.assertAvailable();
     const offset = parseCursor(cursor);
     const pageSize = 50;
-    const records = this.records.slice(offset, offset + pageSize);
+    const records = this.changeLog.slice(offset, offset + pageSize);
     const nextOffset = offset + records.length;
     return {
       records: clone(records),
       nextCursor: { value: `sim:${nextOffset}` },
-      hasMore: nextOffset < this.records.length,
+      hasMore: nextOffset < this.changeLog.length,
     };
   }
 

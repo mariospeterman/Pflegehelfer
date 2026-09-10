@@ -301,6 +301,43 @@ describe("full provider simulator contract", () => {
     });
   });
 
+  it("emits an updated provider record after the previously returned cursor", async () => {
+    const manifest = providerRegistryFixtures.simulatorManifest("wicare");
+    const first = {
+      reference: { resourceType: "Patient", externalId: "sim-patient" },
+      originVersion: "sim-v1",
+      effectiveAt: now,
+      recordedAt: now,
+      receivedAt: now,
+      payload: { resourceType: "Patient", id: "sim-patient", active: true },
+    };
+    const simulator = new ProviderContractSimulator(manifest, {
+      records: [first],
+      now: () => now,
+    });
+    const initial = await simulator.pullChanges();
+    expect(initial.records).toHaveLength(1);
+    simulator.injectInboundRecord({
+      ...first,
+      originVersion: "sim-v2",
+      payload: { resourceType: "Patient", id: "sim-patient", active: false },
+    });
+    const updated = await simulator.pullChanges(initial.nextCursor!);
+    expect(updated.records).toEqual([
+      expect.objectContaining({
+        originVersion: "sim-v2",
+        payload: expect.objectContaining({ active: false }),
+      }),
+    ]);
+    simulator.reset();
+    await expect(
+      simulator.read({ resourceType: "Patient", externalId: "sim-patient" }),
+    ).resolves.toMatchObject({
+      originVersion: "sim-v1",
+      payload: expect.objectContaining({ active: true }),
+    });
+  });
+
   it("classifies content rejection and version conflict separately", async () => {
     const manifest =
       providerRegistryFixtures.simulatorManifest("device-gateway");

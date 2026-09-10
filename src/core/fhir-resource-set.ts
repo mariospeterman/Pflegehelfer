@@ -33,6 +33,17 @@ export function fhirResourceId(resourceType: string, domainId: string): string {
   return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-5${hash.slice(13, 16)}-8${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
 }
 
+/** Previous unscoped ID algorithm, retained only for one-way upgrade reads. */
+export function legacyFhirResourceId(
+  resourceType: string,
+  domainId: string,
+): string {
+  const hash = createHash("sha256")
+    .update(`pflegehelfer:${resourceType}:${domainId}`)
+    .digest("hex");
+  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-5${hash.slice(13, 16)}-8${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
+}
+
 const ref = (resourceType: string, domainId: string): string =>
   `${resourceType}/${fhirResourceId(resourceType, domainId)}`;
 
