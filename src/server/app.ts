@@ -1614,6 +1614,34 @@ export function buildApp(
             : {}),
         });
         if (
+          result &&
+          typeof result === "object" &&
+          "episodeEvidence" in result &&
+          typeof result.episodeEvidence === "string"
+        ) {
+          const workday = await operationalStore.getWorkday(
+            actorId,
+            actor.role,
+          );
+          const active = workday.activeEpisode;
+          if (
+            active &&
+            active.patientId === execution.patientId &&
+            active.encounterId === execution.encounterId
+          ) {
+            const existing = active.draftText?.trim() ?? "";
+            const addition = result.episodeEvidence.trim();
+            const draftText = existing.includes(addition)
+              ? existing
+              : [existing, addition].filter(Boolean).join("\n").slice(0, 1200);
+            await operationalStore.applyWorkdayCommand(actorId, actor.role, {
+              type: "save-episode-draft",
+              episodeId: active.id,
+              draftText,
+            });
+          }
+        }
+        if (
           !result ||
           typeof result !== "object" ||
           !("workflowActions" in result)

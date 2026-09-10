@@ -1542,8 +1542,24 @@ export class AssistantService {
                 Number(completeLinkedTask),
             },
           });
+          const episodeEvidence = [
+            ...selected.flatMap((action) =>
+              action.type === "note-proposal"
+                ? [action.structuredText]
+                : action.type === "observation-proposal"
+                  ? [actionReviewLabel(action)]
+                  : [],
+            ),
+            ...(completeLinkedTask && intent.payload.linkedTaskLabel
+              ? [`Aufgabe abgeschlossen: ${intent.payload.linkedTaskLabel}`]
+              : []),
+          ]
+            .filter((value, index, values) => values.indexOf(value) === index)
+            .join("\n")
+            .slice(0, 1200);
           return {
             bundle: results,
+            ...(episodeEvidence ? { episodeEvidence } : {}),
             itemStates: results.map((result) =>
               typeof result === "object" && result
                 ? "status" in result

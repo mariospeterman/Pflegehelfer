@@ -612,6 +612,80 @@ describe("interrupted nursing shift", () => {
     });
   });
 
+  it("reuses approved chat documentation as the active episode draft", async () => {
+    const app = buildApp(undefined, { demoMode: true });
+    apps.push(app);
+    const user = "u-nurse";
+    const headers = { "x-demo-user": user };
+    await acknowledgeApiHandover(app, user);
+    await app.inject({
+      method: "POST",
+      url: "/api/v1/assistant/context",
+      headers: { ...headers, "x-command-id": crypto.randomUUID() },
+      payload: { patientId: "p-anna" },
+    });
+    await app.inject({
+      method: "POST",
+      url: "/api/v1/workday",
+      headers: { ...headers, "x-command-id": crypto.randomUUID() },
+      payload: {
+        type: "start-episode",
+        patientId: "p-anna",
+        encounterId: "enc-anna-2026",
+        kind: "planned",
+        title: "Morgenpflege",
+      },
+    });
+    const query = await app.inject({
+      method: "POST",
+      url: "/api/v1/assistant/query",
+      headers: { ...headers, "x-command-id": crypto.randomUUID() },
+      payload: {
+        prompt: "Anna mobilisiert, Blutdruck 128/76.",
+        patientId: "p-anna",
+        inputModality: "typed",
+      },
+    });
+    const response = query.json<{
+      patientContext: {
+        patientId: string;
+        encounterId: string;
+        resourceVersion: number;
+      };
+      components: Array<{
+        type: string;
+        intentToken?: string;
+        reviewItems?: Array<{ id: string }>;
+      }>;
+    }>();
+    const review = response.components.find(
+      (component) => component.type === "DraftAction",
+    );
+    const execution = await app.inject({
+      method: "POST",
+      url: `/api/v1/assistant/intents/${review!.intentToken}/execute`,
+      headers: { ...headers, "x-command-id": crypto.randomUUID() },
+      payload: {
+        patientId: response.patientContext.patientId,
+        encounterId: response.patientContext.encounterId,
+        resourceVersion: response.patientContext.resourceVersion,
+        purpose: "direct-care",
+        explicitlyConfirmed: true,
+        reviewedActionIds: review!.reviewItems!.map((item) => item.id),
+      },
+    });
+    expect(execution.statusCode).toBe(200);
+    const workday = await app.inject({
+      method: "GET",
+      url: "/api/v1/workday",
+      headers,
+    });
+    expect(workday.json().activeEpisode.draftText).toContain(
+      "Anna mobilisiert",
+    );
+    expect(workday.json().activeEpisode.draftText).toContain("128");
+  });
+
   it("lets natural conversation atomically pause current work and enter the next room", async () => {
     const app = buildApp(undefined, { demoMode: true });
     apps.push(app);
