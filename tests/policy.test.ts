@@ -207,6 +207,9 @@ describe("least-privilege policy", () => {
 
   it.each([
     "Torasemid geben",
+    "Torasemid mit Wasser geben",
+    "Metoprolol zum Essen geben",
+    "Bisoprolol mit Tee geben",
     "Metoprolol verabreichen",
     "Neues Präparat absetzen",
   ])("keeps %s out of the generic task workflow", (title) => {

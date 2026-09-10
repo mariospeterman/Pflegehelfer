@@ -662,11 +662,18 @@ export function requiresDedicatedTaskWorkflow(source: string): boolean {
     /\b(?:verabreich\p{L}*|absetz\p{L}*|injizier\p{L}*|applizier\p{L}*|titrier\p{L}*|verschreib\p{L}*|verordn\p{L}*)\b/iu.test(
       source,
     );
-  const unqualifiedGive =
-    /\b(?:geben|gib)\b/iu.test(source) &&
-    !/\b(?:essen|mahlzeit|trinken|getränk|wasser|tee|kaffee|nahrung|hilfestellung|hand)\b/iu.test(
+  // "geben" is too ambiguous for a generic task. A medicine name can be
+  // padded with "Wasser" or "zum Essen" and must still fail closed. Permit
+  // only wording that explicitly describes assistance, not administration.
+  const explicitlyBasicCareHelp =
+    /\b(?:beim|zum)\s+(?:essen|trinken|ankleiden|aufstehen)\b[^.;]{0,80}\b(?:hilfe|hilfestellung|unterstützung|hand)\b[^.;]{0,30}\b(?:geben|gib)\b/iu.test(
+      source,
+    ) ||
+    /\b(?:hilfe|hilfestellung|unterstützung|hand)\b[^.;]{0,40}\b(?:geben|gib)\b/iu.test(
       source,
     );
+  const unqualifiedGive =
+    /\b(?:geben|gib)\b/iu.test(source) && !explicitlyBasicCareHelp;
   return sensitiveSubject || dedicatedVerb || unqualifiedGive;
 }
 
