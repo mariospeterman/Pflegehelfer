@@ -973,6 +973,18 @@ export class PflegehelferService {
         403,
       );
     }
+    if (requiresIndependent && record.approvals.length === 1) {
+      const requiredQualification =
+        type === "observation"
+          ? "clinical-observation-independent-review"
+          : "clinical-note-independent-review";
+      if (!user.qualificationIds?.includes(requiredQualification))
+        throw new DomainError(
+          "AUTH_DENIED",
+          "Die unabhängige Freigabe benötigt die dafür konfigurierte fachliche Qualifikation.",
+          403,
+        );
+    }
     record.approvals.push(user.id);
     if (requiresIndependent && record.approvals.length < 2) {
       record.status = "reviewed";

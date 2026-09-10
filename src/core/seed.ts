@@ -11,9 +11,11 @@ import type {
   RoundAction,
   SourceMeta,
 } from "./types.js";
-import { nursingPatientIds } from "./site-config.js";
+import { nursingPatientIds, siteConfiguration } from "./site-config.js";
 
 const allClinicalPatientIds = [...nursingPatientIds, "p-mei"];
+const qualificationsFor = (actorId: string): string[] =>
+  siteConfiguration.actorQualifications[actorId] ?? [];
 
 export const DEMO_NOW = "2026-09-05T08:00:00.000Z";
 
@@ -44,6 +46,7 @@ export const users: DemoUser[] = [
     patientIds: nursingPatientIds,
     managedDevice: true,
     defaultPurpose: "direct-care",
+    qualificationIds: qualificationsFor("u-assistant"),
   },
   {
     id: "u-nurse",
@@ -53,6 +56,7 @@ export const users: DemoUser[] = [
     patientIds: allClinicalPatientIds,
     managedDevice: true,
     defaultPurpose: "direct-care",
+    qualificationIds: qualificationsFor("u-nurse"),
   },
   {
     id: "u-nurse-evening",
@@ -62,6 +66,7 @@ export const users: DemoUser[] = [
     patientIds: allClinicalPatientIds,
     managedDevice: true,
     defaultPurpose: "direct-care",
+    qualificationIds: qualificationsFor("u-nurse-evening"),
   },
   {
     id: "u-physician",
@@ -71,6 +76,7 @@ export const users: DemoUser[] = [
     patientIds: allClinicalPatientIds,
     managedDevice: true,
     defaultPurpose: "direct-care",
+    qualificationIds: qualificationsFor("u-physician"),
   },
   {
     id: "u-physician-evening",
@@ -80,6 +86,7 @@ export const users: DemoUser[] = [
     patientIds: allClinicalPatientIds,
     managedDevice: true,
     defaultPurpose: "direct-care",
+    qualificationIds: qualificationsFor("u-physician-evening"),
   },
   {
     id: "u-pharmacy",

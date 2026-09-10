@@ -124,6 +124,38 @@ describe("deterministic clinical workflows", () => {
     expect(second.approvals).toEqual(["u-nurse", "u-physician"]);
   });
 
+  it("requires a configured qualification for independent observation review", () => {
+    const service = new PflegehelferService();
+    const draft = service.createObservationDraft("u-nurse", {
+      patientId: "p-anna",
+      code: "oxygen-saturation",
+      value: 35,
+      effectiveAt: "2026-09-05T09:00:00.000Z",
+    });
+    service.approve("u-nurse", "observation", draft.id, {
+      expectedVersion: 1,
+      patientMrn: "SH-260901-001",
+      patientBirthDate: "1941-03-18",
+      reviewedDiff: true,
+    });
+    expect(() =>
+      service.approve("u-assistant", "observation", draft.id, {
+        expectedVersion: 1,
+        patientMrn: "SH-260901-001",
+        patientBirthDate: "1941-03-18",
+        reviewedDiff: true,
+      }),
+    ).toThrow(/fachliche Qualifikation/);
+    expect(
+      service.approve("u-physician", "observation", draft.id, {
+        expectedVersion: 1,
+        patientMrn: "SH-260901-001",
+        patientBirthDate: "1941-03-18",
+        reviewedDiff: true,
+      }).status,
+    ).toBe("pending-provider");
+  });
+
   it("keeps provider failure visible and recovers without duplicate commands", async () => {
     const service = new PflegehelferService();
     const draft = service.createNoteDraft("u-nurse", {

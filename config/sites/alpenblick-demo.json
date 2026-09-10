@@ -71,6 +71,24 @@
       ]
     }
   ],
+  "actorQualifications": {
+    "u-nurse": [
+      "clinical-observation-independent-review",
+      "clinical-note-independent-review"
+    ],
+    "u-nurse-evening": [
+      "clinical-observation-independent-review",
+      "clinical-note-independent-review"
+    ],
+    "u-physician": [
+      "clinical-observation-independent-review",
+      "clinical-note-independent-review"
+    ],
+    "u-physician-evening": [
+      "clinical-observation-independent-review",
+      "clinical-note-independent-review"
+    ]
+  },
   "roleProfiles": {
     "care-assistant": {
       "workflowId": "nursing-day",

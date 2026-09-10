@@ -59,4 +59,12 @@ describe("versioned site-pack configuration", () => {
     expect(parsed.institutionId).toBe("org-alpenblick-demo");
     expect(parsed.displayName).toContain("Alpenblick");
   });
+
+  it("prevents a site pack from expanding the centrally reviewed role ceiling", () => {
+    const pack = structuredClone(siteConfiguration);
+    pack.roleProfiles.management.actions.push("patient:read");
+    expect(() => parseSiteConfiguration(pack)).toThrow(
+      /cannot grant patient:read to management/i,
+    );
+  });
 });

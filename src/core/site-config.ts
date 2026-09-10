@@ -28,6 +28,122 @@ export const actionSchema = z.enum([
 ]);
 export type Action = z.infer<typeof actionSchema>;
 
+/** Site packs may narrow these centrally reviewed maxima, never expand them. */
+export const ROLE_ACTION_CEILINGS: Record<Role, readonly Action[]> = {
+  "care-assistant": [
+    "patient:read",
+    "task:read",
+    "task:update",
+    "task:create",
+    "observation:draft",
+    "observation:approve",
+    "note:draft",
+    "note:approve",
+    "communication:read",
+    "communication:create",
+    "communication:respond",
+    "handover:read",
+    "handover:acknowledge",
+    "round:read",
+  ],
+  "registered-nurse": [
+    "patient:read",
+    "task:read",
+    "task:update",
+    "task:create",
+    "observation:draft",
+    "observation:approve",
+    "note:draft",
+    "note:approve",
+    "communication:read",
+    "communication:create",
+    "communication:respond",
+    "handover:read",
+    "handover:acknowledge",
+    "round:read",
+    "intake:read",
+    "intake:update",
+  ],
+  physician: [
+    "patient:read",
+    "task:read",
+    "task:update",
+    "task:create",
+    "observation:draft",
+    "observation:approve",
+    "note:draft",
+    "note:approve",
+    "communication:read",
+    "communication:create",
+    "communication:respond",
+    "handover:read",
+    "round:read",
+    "round:decide",
+    "intake:read",
+    "intake:update",
+  ],
+  pharmacy: [
+    "patient:read",
+    "task:read",
+    "task:update",
+    "task:create",
+    "communication:read",
+    "communication:create",
+    "communication:respond",
+    "handover:read",
+    "round:read",
+    "round:decide",
+    "intake:read",
+    "intake:update",
+  ],
+  physiotherapy: [
+    "patient:read",
+    "task:read",
+    "task:update",
+    "task:create",
+    "note:draft",
+    "note:approve",
+    "communication:read",
+    "communication:create",
+    "communication:respond",
+    "handover:read",
+    "round:read",
+    "round:decide",
+  ],
+  "occupational-therapy": [
+    "patient:read",
+    "task:read",
+    "task:update",
+    "task:create",
+    "note:draft",
+    "note:approve",
+    "communication:read",
+    "communication:create",
+    "communication:respond",
+    "handover:read",
+    "round:read",
+    "round:decide",
+  ],
+  transport: ["task:read", "task:update"],
+  service: ["task:read", "task:update"],
+  administration: [
+    "patient:administrative-read",
+    "task:read",
+    "task:update",
+    "intake:read",
+    "intake:update",
+  ],
+  management: ["analytics:aggregate"],
+  hr: [],
+  it: ["provider:operate", "audit:verify"],
+  "quality-safety": ["audit:verify", "analytics:aggregate"],
+};
+
+export const qualificationSchema = z.enum([
+  "clinical-observation-independent-review",
+  "clinical-note-independent-review",
+]);
+
 const roleSchema = z.enum([
   "care-assistant",
   "registered-nurse",
@@ -149,6 +265,12 @@ export const siteConfigurationSchema = z
         })
         .strict(),
     ),
+    actorQualifications: z
+      .record(
+        z.string().regex(/^[a-z0-9-]+$/),
+        z.array(qualificationSchema).max(20),
+      )
+      .default({}),
     roleProfiles: z.record(
       roleSchema,
       z
@@ -189,6 +311,14 @@ export const siteConfigurationSchema = z
           path: ["roleProfiles", role, "workflowId"],
           message: "Role must reference an eligible published workflow.",
         });
+      const ceiling = new Set(ROLE_ACTION_CEILINGS[role as Role]);
+      for (const [index, action] of profile.actions.entries())
+        if (!ceiling.has(action))
+          context.addIssue({
+            code: "custom",
+            path: ["roleProfiles", role, "actions", index],
+            message: `Site policy cannot grant ${action} to ${role}.`,
+          });
     }
     const patientIds = configuration.nursingAssignments.map(
       (assignment) => assignment.patientId,

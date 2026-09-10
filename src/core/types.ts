@@ -50,6 +50,7 @@ export interface DemoUser {
   patientIds: string[];
   managedDevice: boolean;
   defaultPurpose: Purpose;
+  qualificationIds?: string[];
 }
 
 export interface SourceMeta {
