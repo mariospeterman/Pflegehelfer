@@ -30,7 +30,7 @@ try {
       "# Recommended economical router: gpt-5.6-terra; deeper knowledge selector: gpt-5.6-sol.",
       "# PFH_LLM_MODEL=gpt-5.6-terra",
       "# PFH_DEEP_LLM_MODEL=gpt-5.6-sol",
-      "# PFH_ASR_MODEL=gpt-transcribe",
+      "# PFH_ASR_MODEL=gpt-4o-transcribe",
     );
   }
   if (additions.length)

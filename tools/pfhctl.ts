@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
+import { AsrGateway } from "../src/ai/asr-gateway.js";
+import { parseSiteConfiguration } from "../src/core/site-config.js";
 
 const [group = "help", action = ""] = process.argv.slice(2);
 const baseUrl = process.env.PFH_BASE_URL ?? "http://127.0.0.1:4173";
@@ -77,13 +79,52 @@ else if (
   if (exitCode !== 0) process.exitCode = exitCode;
 } else if (group === "model" && action === "list")
   console.log(JSON.stringify(await request("/api/v1/ai/status"), null, 2));
-else if (group === "backup" && action === "restore-test")
+else if (group === "model" && action === "test")
+  console.log(
+    JSON.stringify(
+      await request("/api/v1/ai/model-test", { method: "POST", body: "{}" }),
+      null,
+      2,
+    ),
+  );
+else if (group === "asr" && action === "test") {
+  const audioPath = process.env.PFH_ASR_TEST_AUDIO;
+  if (!audioPath)
+    throw new Error(
+      "PFH_ASR_TEST_AUDIO muss auf eine eindeutig synthetische WAV/WebM-Testaufnahme zeigen.",
+    );
+  const audio = new Uint8Array(await readFile(audioPath));
+  const mimeType = audioPath.toLowerCase().endsWith(".wav")
+    ? "audio/wav"
+    : "audio/webm";
+  console.log(
+    JSON.stringify(
+      await new AsrGateway().transcribe(audio, mimeType, "synthetic-demo"),
+      null,
+      2,
+    ),
+  );
+} else if (group === "site" && action === "validate") {
+  const files = [
+    "config/sites/tertianum-kronenhof.json",
+    "config/sites/alpenblick-demo.json",
+  ];
+  const validated = await Promise.all(
+    files.map(async (file) => ({
+      file,
+      site: parseSiteConfiguration(
+        JSON.parse(await readFile(file, "utf8")) as unknown,
+      ).displayName,
+    })),
+  );
+  console.log(JSON.stringify({ validated }, null, 2));
+} else if (group === "backup" && action === "restore-test")
   console.log(
     "Run `pnpm build && pnpm verify:ops` for the isolated synthetic restore-integrity test.",
   );
 else {
   console.log(
-    "Usage: pfhctl preflight | status | provider list|test | demo reset | fhir import|verify|validate | model list | backup restore-test",
+    "Usage: pfhctl preflight | status | provider list|test | demo reset | fhir import|verify|validate | model list|test | asr test | site validate | backup restore-test",
   );
   if (group !== "help") process.exitCode = 2;
 }

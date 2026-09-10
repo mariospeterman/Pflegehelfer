@@ -55,6 +55,15 @@ export interface ClinicalPlanResult {
   degraded: boolean;
 }
 
+export interface ModelSyntheticTestResult {
+  ready: boolean;
+  mode: AiRuntimeMode;
+  model: string;
+  latencyMs: number;
+  dataBoundary: ModelRuntimeStatus["dataBoundary"];
+  message: string;
+}
+
 export interface AuthorizedModelContext {
   organizationLabel: string;
   actorRole: string;
@@ -76,6 +85,21 @@ function boundedContext(context?: AuthorizedModelContext): string | null {
       .map((prompt) => prompt.slice(0, 400)),
     dataClass: context.dataClass,
   });
+}
+
+function responseText(body: unknown): string | null {
+  if (!body || typeof body !== "object") return null;
+  const value = body as {
+    output_text?: unknown;
+    output?: Array<{ content?: Array<{ text?: unknown }> }>;
+    choices?: Array<{ message?: { content?: unknown } }>;
+  };
+  if (typeof value.output_text === "string") return value.output_text;
+  for (const item of value.output ?? [])
+    for (const content of item.content ?? [])
+      if (typeof content.text === "string") return content.text;
+  const chatContent = value.choices?.[0]?.message?.content;
+  return typeof chatContent === "string" ? chatContent : null;
 }
 
 function deterministicIntent(prompt: string): AssistantIntent {
@@ -249,6 +273,97 @@ export class ModelGateway {
     );
   }
 
+  private requestContract(
+    systemPrompts: string[],
+    userPrompt: string,
+    name: string,
+    schema: Record<string, unknown>,
+    maxOutputTokens: number,
+  ): { path: string; body: Record<string, unknown> } {
+    if (this.mode === "hosted-test")
+      return {
+        path: "/responses",
+        body: {
+          model: this.model,
+          store: false,
+          max_output_tokens: maxOutputTokens,
+          input: [
+            ...systemPrompts.map((prompt) => ({
+              role: "system",
+              content: [{ type: "input_text", text: prompt }],
+            })),
+            {
+              role: "user",
+              content: [{ type: "input_text", text: userPrompt }],
+            },
+          ],
+          text: {
+            format: { type: "json_schema", name, strict: true, schema },
+          },
+        },
+      };
+    return {
+      path: "/chat/completions",
+      body: {
+        model: this.model,
+        temperature: 0,
+        max_tokens: maxOutputTokens,
+        response_format: {
+          type: "json_schema",
+          json_schema: { name, strict: true, schema },
+        },
+        messages: [
+          ...systemPrompts.map((content) => ({ role: "system", content })),
+          { role: "user", content: userPrompt },
+        ],
+      },
+    };
+  }
+
+  async testSynthetic(): Promise<ModelSyntheticTestResult> {
+    const started = performance.now();
+    const dataBoundary: ModelRuntimeStatus["dataBoundary"] =
+      this.mode === "hosted-test"
+        ? "synthetic-hosted"
+        : this.mode === "local-openai"
+          ? "local-network"
+          : this.mode === "deterministic"
+            ? "deterministic"
+            : "none";
+    if (!["hosted-test", "local-openai"].includes(this.mode))
+      return {
+        ready: false,
+        mode: this.mode,
+        model: this.model,
+        latencyMs: Math.round(performance.now() - started),
+        dataBoundary,
+        message:
+          "Kein aufrufbares Sprachmodell für einen echten Test konfiguriert.",
+      };
+    const result = await this.planCareUpdate(
+      "Luca mobilisiert, fast alles gegessen, ca. 200 ml getrunken.",
+      {
+        organizationLabel: "Synthetische Testinstitution",
+        actorRole: "registered-nurse",
+        workflowStep: "document",
+        activeEpisodeTitle: "Synthetischer Funktionstest",
+        recentPrompts: [],
+        dataClass: "synthetic-demo",
+      },
+    );
+    const ready = !result.degraded && result.plan !== null;
+    return {
+      ready,
+      mode: this.mode,
+      model: result.model,
+      latencyMs: Math.round(performance.now() - started),
+      dataBoundary,
+      message: ready
+        ? "Echter synthetischer Strukturierungstest erfolgreich; keine Daten wurden geschrieben."
+        : "Sprachmodelltest fehlgeschlagen; deterministischer Fallback blieb aktiv.",
+    };
+  }
+
   async status(): Promise<ModelRuntimeStatus> {
     if (this.mode === "disabled")
       return {
@@ -353,45 +468,33 @@ export class ModelGateway {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
+      const contract = this.requestContract(
+        [
+          'Classify the user\'s German clinical workflow request. Reply with exactly one JSON object in the exact shape {"intent":"patient-summary"}. The object must contain only the intent key. Replace the example value with exactly one of: patient-summary, open-tasks, latest-vitals, handover, team-inbox, sync-status, draft-note, draft-physician-question, draft-task, care-update, knowledge-query, medication-request, unknown. No explanation, no other keys, no arrays. Never diagnose, prescribe, approve, or invent patient facts.',
+          ...(boundedContext(context)
+            ? [`Authorized bounded working context: ${boundedContext(context)}`]
+            : []),
+        ],
+        prompt.slice(0, 1200),
+        "assistant_intent_v1",
+        z.toJSONSchema(assistantIntentSchema),
+        40,
+      );
       const response = await fetch(
-        `${this.baseUrl!.replace(/\/$/, "")}/chat/completions`,
+        `${this.baseUrl!.replace(/\/$/, "")}${contract.path}`,
         {
           method: "POST",
           headers: {
             "content-type": "application/json",
             ...(this.apiKey ? { authorization: `Bearer ${this.apiKey}` } : {}),
           },
-          body: JSON.stringify({
-            model: this.model,
-            temperature: 0,
-            max_tokens: 40,
-            response_format: { type: "json_object" },
-            messages: [
-              {
-                role: "system",
-                content:
-                  'Classify the user\'s German clinical workflow request. Reply with exactly one JSON object in the exact shape {"intent":"patient-summary"}. The object must contain only the intent key. Replace the example value with exactly one of: patient-summary, open-tasks, latest-vitals, handover, team-inbox, sync-status, draft-note, draft-physician-question, draft-task, care-update, knowledge-query, medication-request, unknown. No explanation, no other keys, no arrays. Never diagnose, prescribe, approve, or invent patient facts.',
-              },
-              ...(boundedContext(context)
-                ? [
-                    {
-                      role: "system",
-                      content: `Authorized bounded working context: ${boundedContext(context)}`,
-                    },
-                  ]
-                : []),
-              { role: "user", content: prompt.slice(0, 1200) },
-            ],
-          }),
+          body: JSON.stringify(contract.body),
           signal: controller.signal,
           redirect: "error",
         },
       );
       if (!response.ok) throw new Error(`model-http-${response.status}`);
-      const body = (await response.json()) as {
-        choices?: { message?: { content?: string } }[];
-      };
-      const content = body.choices?.[0]?.message?.content;
+      const content = responseText(await response.json());
       if (!content) throw new Error("model-empty");
       const jsonStart = content.indexOf("{");
       const jsonEnd = content.lastIndexOf("}");
@@ -440,52 +543,33 @@ export class ModelGateway {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
+      const contract = this.requestContract(
+        [
+          "Act as a careful clinical coworker. Extract meaning, never invent it, into the supplied AssistantProposal schema. Keep natural work, observations, task changes, communications, workflow actions, ambiguities, and evidence separate. Copy note structuredText verbatim from its exact source span. Use exact zero-based source spans into the user text. Medication, treatment, and diagnostic commands are forbidden. Never convert mere mentions of doctor, control, medication, or task into actions; negation must remain negation. Do not add patient identity, provider targets, FHIR, diagnoses, prescriptions, URLs, approvals, or default actions. Return only schema-valid JSON.",
+          ...(boundedContext(context)
+            ? [`Authorized bounded working context: ${boundedContext(context)}`]
+            : []),
+        ],
+        prompt.slice(0, 1200),
+        "assistant_proposal_v3",
+        z.toJSONSchema(assistantProposalSchema),
+        1200,
+      );
       const response = await fetch(
-        `${this.baseUrl!.replace(/\/$/, "")}/chat/completions`,
+        `${this.baseUrl!.replace(/\/$/, "")}${contract.path}`,
         {
           method: "POST",
           headers: {
             "content-type": "application/json",
             ...(this.apiKey ? { authorization: `Bearer ${this.apiKey}` } : {}),
           },
-          body: JSON.stringify({
-            model: this.model,
-            temperature: 0,
-            max_tokens: 1200,
-            response_format: {
-              type: "json_schema",
-              json_schema: {
-                name: "assistant_proposal_v3",
-                strict: true,
-                schema: z.toJSONSchema(assistantProposalSchema),
-              },
-            },
-            messages: [
-              {
-                role: "system",
-                content:
-                  "Act as a careful clinical coworker. Extract meaning, never invent it, into the supplied AssistantProposal schema. Keep natural work, observations, task changes, communications, workflow actions, ambiguities, and evidence separate. Copy note structuredText verbatim from its exact source span. Use exact zero-based source spans into the user text. Medication, treatment, and diagnostic commands are forbidden. Never convert mere mentions of doctor, control, medication, or task into actions; negation must remain negation. Do not add patient identity, provider targets, FHIR, diagnoses, prescriptions, URLs, approvals, or default actions. Return only schema-valid JSON.",
-              },
-              ...(boundedContext(context)
-                ? [
-                    {
-                      role: "system",
-                      content: `Authorized bounded working context: ${boundedContext(context)}`,
-                    },
-                  ]
-                : []),
-              { role: "user", content: prompt.slice(0, 1200) },
-            ],
-          }),
+          body: JSON.stringify(contract.body),
           signal: controller.signal,
           redirect: "error",
         },
       );
       if (!response.ok) throw new Error(`model-http-${response.status}`);
-      const body = (await response.json()) as {
-        choices?: { message?: { content?: string } }[];
-      };
-      const content = body.choices?.[0]?.message?.content;
+      const content = responseText(await response.json());
       if (!content) throw new Error("model-empty");
       return {
         plan: verifyModelProposalAgainstDeterministicCompiler(

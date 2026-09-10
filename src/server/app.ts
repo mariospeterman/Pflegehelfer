@@ -995,6 +995,18 @@ export function buildApp(
     };
   });
 
+  app.post("/api/v1/ai/model-test", async (request) => {
+    await persistenceQueue;
+    const actor = service.user(userId(request));
+    if (!["it", "quality-safety"].includes(actor.role))
+      throw new DomainError(
+        "AUTH_DENIED",
+        "Der Modell-Funktionstest ist nur für IT oder Qualität freigegeben.",
+        403,
+      );
+    return models.testSynthetic();
+  });
+
   app.get("/api/v1/assistant/conversation", async (request) => {
     await persistenceQueue;
     const actorId = userId(request);

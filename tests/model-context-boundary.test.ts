@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ModelGateway } from "../src/ai/model-gateway.js";
 import { validateLocalAiEndpoint } from "../src/ai/local-endpoint-policy.js";
+import { deterministicAssistantProposal } from "../src/ai/assistant-proposal.js";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -31,9 +32,7 @@ describe("authorized model context boundary", () => {
         requestBody = typeof init?.body === "string" ? init.body : "";
         return Promise.resolve(
           new Response(
-            JSON.stringify({
-              choices: [{ message: { content: '{"intent":"care-update"}' } }],
-            }),
+            JSON.stringify({ output_text: '{"intent":"care-update"}' }),
             { status: 200, headers: { "content-type": "application/json" } },
           ),
         );
@@ -57,6 +56,8 @@ describe("authorized model context boundary", () => {
     expect(requestBody).toContain("registered-nurse");
     expect(requestBody).not.toContain("intentToken");
     expect(requestBody).not.toContain("p-anna");
+    expect(requestBody).toContain('"store":false');
+    expect(requestBody).toContain('"input"');
   });
 
   it("refuses hosted inference without synthetic runtime provenance", async () => {
@@ -76,5 +77,47 @@ describe("authorized model context boundary", () => {
     });
     expect(result).toMatchObject({ intent: "unknown", degraded: true });
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("runs a real, non-writing synthetic model contract test", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: string, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body)) as {
+          messages: Array<{ role: string; content: string }>;
+        };
+        const prompt = body.messages.find(
+          (message) => message.role === "user",
+        )?.content;
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              choices: [
+                {
+                  message: {
+                    content: JSON.stringify(
+                      deterministicAssistantProposal(prompt ?? ""),
+                    ),
+                  },
+                },
+              ],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        );
+      }),
+    );
+    const result = await new ModelGateway({
+      PFH_AI_MODE: "local-openai",
+      PFH_DEMO_MODE: "true",
+      PFH_LLM_BASE_URL: "http://127.0.0.1:11434/v1",
+      PFH_LLM_MODEL: "local-test-model",
+    }).testSynthetic();
+    expect(result).toMatchObject({
+      ready: true,
+      mode: "local-openai",
+      model: "local-test-model",
+      dataBoundary: "local-network",
+    });
   });
 });

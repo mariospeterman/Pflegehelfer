@@ -58,7 +58,7 @@ export class AsrGateway {
     this.model =
       env.PFH_ASR_MODEL ??
       (this.mode === "hosted-test"
-        ? "gpt-transcribe"
+        ? "gpt-4o-transcribe"
         : "whisper-large-v3-turbo");
     this.baseUrl =
       this.mode === "local-openai"
