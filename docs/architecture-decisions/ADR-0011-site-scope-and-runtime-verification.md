@@ -20,6 +20,7 @@ Local OpenAI-compatible models retain `/chat/completions`. Synthetic hosted test
 
 - New FHIR projections and cleanup are site isolated even in a shared Medplum project.
 - Unsafe implicit legacy import is impossible; migration is deliberate, hash-bound and auditable by deployment procedure.
+- A verified legacy import forces full scoped resource reconciliation and replaces the old checkpoint Binary in the scoped-checkpoint transaction; loading legacy state alone is never treated as completed migration.
 - A configuration author cannot turn a support role into a clinical reader or bypass independent-review qualification.
 - Runtime probes state what was truly called. No key, local runtime or synthetic audio means the corresponding validation remains incomplete.
 - Resource-scoped Medplum reconstruction, PostgreSQL RLS, production OIDC and atomic cross-store acceptance remain separate documented blockers.

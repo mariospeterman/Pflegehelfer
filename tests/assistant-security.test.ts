@@ -169,6 +169,7 @@ describe("assistant action gateway", () => {
       bundle: [expect.objectContaining({ status: "reviewed" })],
       itemStates: ["reviewed"],
     });
+    expect(result).not.toHaveProperty("episodeEvidence");
   });
 
   it("does not bind a named patient statement to the wrong open chart", async () => {

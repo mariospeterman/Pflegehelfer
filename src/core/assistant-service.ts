@@ -1546,7 +1546,8 @@ export class AssistantService {
             ...selected.flatMap((action) =>
               action.type === "note-proposal"
                 ? [action.structuredText]
-                : action.type === "observation-proposal"
+                : action.type === "observation-proposal" &&
+                    !isDoubtfulObservation(action)
                   ? [actionReviewLabel(action)]
                   : [],
             ),

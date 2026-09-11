@@ -1601,8 +1601,9 @@ export function buildApp(
         403,
       );
     assistant.restoreDurableIntent(token, durableIntent);
+    let executedResult: unknown;
     try {
-      return await persist(async () => {
+      executedResult = await persist(async () => {
         const result = assistant.executeIntent(actorId, token, {
           patientId: execution.patientId,
           encounterId: execution.encounterId,
@@ -1613,34 +1614,6 @@ export function buildApp(
             ? { reviewedActionIds: execution.reviewedActionIds }
             : {}),
         });
-        if (
-          result &&
-          typeof result === "object" &&
-          "episodeEvidence" in result &&
-          typeof result.episodeEvidence === "string"
-        ) {
-          const workday = await operationalStore.getWorkday(
-            actorId,
-            actor.role,
-          );
-          const active = workday.activeEpisode;
-          if (
-            active &&
-            active.patientId === execution.patientId &&
-            active.encounterId === execution.encounterId
-          ) {
-            const existing = active.draftText?.trim() ?? "";
-            const addition = result.episodeEvidence.trim();
-            const draftText = existing.includes(addition)
-              ? existing
-              : [existing, addition].filter(Boolean).join("\n").slice(0, 1200);
-            await operationalStore.applyWorkdayCommand(actorId, actor.role, {
-              type: "save-episode-draft",
-              episodeId: active.id,
-              draftText,
-            });
-          }
-        }
         if (
           !result ||
           typeof result !== "object" ||
@@ -1720,6 +1693,45 @@ export function buildApp(
       assistant.restoreDurableIntent(token, durableIntent);
       throw error;
     }
+    // Episode drafts are an operational convenience derived from an accepted
+    // clinical write. Persist them only after Medplum/checkpoint acceptance so
+    // a rejected clinical transaction can never leave executable evidence.
+    if (
+      executedResult &&
+      typeof executedResult === "object" &&
+      "episodeEvidence" in executedResult &&
+      typeof executedResult.episodeEvidence === "string"
+    ) {
+      try {
+        const workday = await operationalStore.getWorkday(actorId, actor.role);
+        const active = workday.activeEpisode;
+        if (
+          active &&
+          active.patientId === execution.patientId &&
+          active.encounterId === execution.encounterId
+        ) {
+          const existing = active.draftText?.trim() ?? "";
+          const addition = executedResult.episodeEvidence.trim();
+          const draftText = existing.includes(addition)
+            ? existing
+            : [existing, addition].filter(Boolean).join("\n").slice(0, 1200);
+          await operationalStore.applyWorkdayCommand(actorId, actor.role, {
+            type: "save-episode-draft",
+            episodeId: active.id,
+            draftText,
+          });
+          publishInvalidation();
+        }
+      } catch {
+        // The clinical command is already durably accepted. A convenience
+        // draft failure must not reopen one-use authority or report rollback.
+        app.log.warn(
+          { actorId },
+          "accepted assistant evidence could not be copied to work episode",
+        );
+      }
+    }
+    return executedResult;
   });
 
   app.post("/api/v1/tasks", async (request, reply) => {

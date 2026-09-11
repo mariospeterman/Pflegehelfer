@@ -14,7 +14,10 @@ import {
 } from "../src/infrastructure/medplum-workspace.js";
 import { buildApp } from "../src/server/app.js";
 import { InMemoryOperationalStore } from "../src/infrastructure/operational-store.js";
-import { legacyFhirResourceId } from "../src/core/fhir-resource-set.js";
+import {
+  fhirResourceId,
+  legacyFhirResourceId,
+} from "../src/core/fhir-resource-set.js";
 
 class RecordingWorkspace implements ClinicalWorkspace {
   readonly mode = "medplum" as const;
@@ -159,6 +162,103 @@ describe("durable workflow checkpoint", () => {
     await expect(workspace.loadCheckpoint()).rejects.toThrow(
       /approved migration manifest/,
     );
+  });
+
+  it("materializes a verified legacy checkpoint into the scoped projection", async () => {
+    const service = new PflegehelferService();
+    const checkpoint = service.checkpoint();
+    const legacy = serializeCheckpoint(checkpoint, null);
+    legacy.id = legacyFhirResourceId("Binary", "workflow-control-plane-v1");
+    legacy.meta = {
+      tag: [
+        {
+          system: "https://pflegehelfer.example.invalid/data-classification",
+          code: "synthetic",
+        },
+      ],
+    };
+    const workspace = new MedplumClinicalWorkspace(
+      "http://127.0.0.1:8103/",
+      "test-client",
+      "test-secret",
+      "http://127.0.0.1:3001/",
+      null,
+      [],
+      {
+        expectedInstitutionId: "org-demo",
+        expectedSiteId: "rehab-2",
+        expectedBinarySha256: createHash("sha256")
+          .update(legacy.data ?? "")
+          .digest("hex"),
+      },
+    );
+    const acceptedTransactions: Bundle[] = [];
+    const internals = workspace as unknown as {
+      client: {
+        startClientLogin: () => Promise<void>;
+        readResource: (type: string, id: string) => Promise<Resource>;
+        executeBatch: (bundle: Bundle) => Promise<Bundle>;
+        searchResources: () => Promise<Resource[]>;
+      };
+    };
+    internals.client.startClientLogin = () => Promise.resolve();
+    internals.client.readResource = (type, id) =>
+      type === "Binary" && id === legacy.id
+        ? Promise.resolve(legacy)
+        : Promise.reject(new Error("404 not found"));
+    internals.client.executeBatch = (bundle) => {
+      if (
+        bundle.entry?.some((entry) =>
+          entry.resource?.id?.startsWith("invalid-"),
+        )
+      )
+        return Promise.reject(new Error("expected atomicity rejection"));
+      acceptedTransactions.push(structuredClone(bundle));
+      return Promise.resolve({
+        resourceType: "Bundle",
+        type: "transaction-response",
+        entry: (bundle.entry ?? []).map((entry) => ({
+          response: {
+            status: entry.request?.method === "DELETE" ? "204" : "200",
+            etag: 'W/"1"',
+          },
+        })),
+      });
+    };
+    internals.client.searchResources = () => Promise.resolve([]);
+
+    const restored = await workspace.loadCheckpoint();
+    expect(restored).toEqual(checkpoint);
+    const patient = service
+      .fhirResources()
+      .find((resource) => resource.resourceType === "Patient")!;
+    await workspace.initialize([patient], restored!, { reconcile: false });
+
+    const entries = acceptedTransactions.flatMap(
+      (transaction) => transaction.entry ?? [],
+    );
+    expect(
+      entries.some(
+        (entry) =>
+          entry.request?.method === "PUT" &&
+          entry.request.url ===
+            `Binary/${fhirResourceId("Binary", "workflow-control-plane-v1")}`,
+      ),
+    ).toBe(true);
+    expect(
+      entries.some(
+        (entry) =>
+          entry.request?.method === "DELETE" &&
+          entry.request.url === `Binary/${legacy.id}`,
+      ),
+    ).toBe(true);
+    expect(
+      entries.some(
+        (entry) =>
+          entry.request?.method === "PUT" &&
+          entry.request.url === `Patient/${patient.id}`,
+      ),
+    ).toBe(true);
   });
 
   it("authenticates durable receipts across rotation and rejects tampering", () => {
@@ -698,5 +798,87 @@ describe("durable workflow checkpoint", () => {
     });
     expect(replay.statusCode).toBe(403);
     await restarted.close();
+  });
+
+  it("does not copy assistant evidence when the clinical workspace rejects execution", async () => {
+    const service = new PflegehelferService();
+    const workspace = new RecordingWorkspace();
+    const operationalStore = new InMemoryOperationalStore();
+    const app = buildApp(service, {
+      demoMode: true,
+      workspace,
+      operationalStore,
+    });
+    const actorId = "u-nurse";
+    const role = "registered-nurse" as const;
+    const headers = { "x-demo-user": actorId };
+    let workday = await operationalStore.getWorkday(actorId, role);
+    for (const patientId of workday.handover.patientIds)
+      workday = await operationalStore.applyWorkdayCommand(actorId, role, {
+        type: "acknowledge-handover",
+        handoverId: workday.handover.id,
+        patientId,
+        version: workday.handover.version,
+      });
+    await app.inject({
+      method: "POST",
+      url: "/api/v1/assistant/context",
+      headers: { ...headers, "x-command-id": crypto.randomUUID() },
+      payload: { patientId: "p-anna" },
+    });
+    const started = await operationalStore.applyWorkdayCommand(actorId, role, {
+      type: "start-episode",
+      patientId: "p-anna",
+      encounterId: "enc-anna-2026",
+      kind: "planned",
+      title: "Morgenpflege",
+    });
+    const episodeId = started.activeEpisode!.id;
+    const query = await app.inject({
+      method: "POST",
+      url: "/api/v1/assistant/query",
+      headers: { ...headers, "x-command-id": crypto.randomUUID() },
+      payload: {
+        prompt: "Anna mobilisiert, Blutdruck 128/76.",
+        patientId: "p-anna",
+        inputModality: "typed",
+      },
+    });
+    const response = query.json<{
+      patientContext: {
+        patientId: string;
+        encounterId: string;
+        resourceVersion: number;
+      };
+      components: Array<{
+        type: string;
+        intentToken?: string;
+        reviewItems?: Array<{ id: string }>;
+      }>;
+    }>();
+    const review = response.components.find(
+      (component) => component.type === "DraftAction",
+    )!;
+    workspace.failNext = true;
+    const execution = await app.inject({
+      method: "POST",
+      url: `/api/v1/assistant/intents/${review.intentToken}/execute`,
+      headers: { ...headers, "x-command-id": crypto.randomUUID() },
+      payload: {
+        patientId: response.patientContext.patientId,
+        encounterId: response.patientContext.encounterId,
+        resourceVersion: response.patientContext.resourceVersion,
+        purpose: "direct-care",
+        explicitlyConfirmed: true,
+        reviewedActionIds: review.reviewItems!.map((item) => item.id),
+      },
+    });
+    expect(execution.statusCode).toBe(500);
+    expect(
+      (await operationalStore.getWorkday(actorId, role)).episodes.find(
+        (episode) => episode.id === episodeId,
+      )?.draftText,
+    ).toBe("");
+    await app.close();
   });
 });

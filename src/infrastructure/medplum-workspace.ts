@@ -536,7 +536,10 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
     // A loaded, authenticated checkpoint already names the committed
     // projection. Replaying it during a rolling restart could overwrite a
     // newer replica's FHIR resources before checkpoint CAS detects the race.
-    if (!options.reconcile) return;
+    // A verified legacy checkpoint is not yet a committed scoped projection.
+    // Its migration must materialize the complete site-scoped resource set and
+    // atomically replace the legacy Binary even though startup did load state.
+    if (!options.reconcile && !this.legacyCheckpointReferenceToDelete) return;
     // Medplum also limits request-body bytes, not only the FHIR Bundle entry
     // count. A restored checkpoint can grow independently from the current
     // materialized clinical resources, so never combine it with the boot-time
