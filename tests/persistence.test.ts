@@ -6,6 +6,7 @@ import { PflegehelferService } from "../src/core/service.js";
 import {
   deserializeCheckpoint,
   deserializeCommandReceipt,
+  legacyMigrationResourceReferencesSha256,
   MedplumClinicalWorkspace,
   serializeCheckpoint,
   serializeCommandReceipt,
@@ -131,10 +132,112 @@ describe("durable workflow checkpoint", () => {
     );
   });
 
+  it("rejects legacy migration without an exact inventory and elapsed receipt gate", () => {
+    const reference = `Patient/${legacyFhirResourceId("Patient", "p-anna")}`;
+    const baseManifest = {
+      expectedInstitutionId: "org-demo",
+      expectedSiteId: "rehab-2",
+      expectedBinarySha256: "a".repeat(64),
+      legacyResourceReferences: [reference],
+      expectedResourceReferencesSha256: legacyMigrationResourceReferencesSha256(
+        [reference],
+      ),
+      receiptRetentionExpiredAt: "2026-09-01T00:00:00.000Z",
+    };
+    expect(
+      () =>
+        new MedplumClinicalWorkspace(
+          "http://127.0.0.1:8103/",
+          "test-client",
+          "test-secret",
+          "http://127.0.0.1:3001/",
+          null,
+          [],
+          { ...baseManifest, legacyResourceReferences: [] },
+        ),
+    ).toThrow(/digest-bound resource inventory/);
+    expect(
+      () =>
+        new MedplumClinicalWorkspace(
+          "http://127.0.0.1:8103/",
+          "test-client",
+          "test-secret",
+          "http://127.0.0.1:3001/",
+          null,
+          [],
+          {
+            ...baseManifest,
+            receiptRetentionExpiredAt: "2999-01-01T00:00:00.000Z",
+          },
+        ),
+    ).toThrow(/elapsed command-receipt retention gate/);
+    const provenanceReference = `Provenance/${legacyFhirResourceId("Provenance", "evidence")}`;
+    expect(
+      () =>
+        new MedplumClinicalWorkspace(
+          "http://127.0.0.1:8103/",
+          "test-client",
+          "test-secret",
+          "http://127.0.0.1:3001/",
+          null,
+          [],
+          {
+            ...baseManifest,
+            legacyResourceReferences: [provenanceReference],
+            expectedResourceReferencesSha256:
+              legacyMigrationResourceReferencesSha256([provenanceReference]),
+          },
+        ),
+    ).toThrow(/digest-bound resource inventory/);
+  });
+
+  it("rejects a legacy inventory overlap before the first FHIR write", async () => {
+    const service = new PflegehelferService();
+    const patient = service
+      .fhirResources()
+      .find((resource) => resource.resourceType === "Patient")!;
+    const workspace = new MedplumClinicalWorkspace(
+      "http://127.0.0.1:8103/",
+      "test-client",
+      "test-secret",
+      "http://127.0.0.1:3001/",
+    );
+    let writeCount = 0;
+    const internals = workspace as unknown as {
+      legacyCheckpointReferenceToDelete: string | null;
+      legacyResourceReferencesToDelete: string[];
+      client: {
+        startClientLogin: () => Promise<void>;
+        executeBatch: () => Promise<Bundle>;
+      };
+    };
+    internals.legacyCheckpointReferenceToDelete = "Binary/legacy-checkpoint";
+    internals.legacyResourceReferencesToDelete = [
+      `${patient.resourceType}/${patient.id}`,
+    ];
+    internals.client.startClientLogin = () => Promise.resolve();
+    internals.client.executeBatch = () => {
+      writeCount += 1;
+      return Promise.resolve({
+        resourceType: "Bundle",
+        type: "transaction-response",
+      });
+    };
+    await expect(
+      workspace.initialize([patient], service.checkpoint(), {
+        reconcile: false,
+      }),
+    ).rejects.toThrow(/overlaps the active site-scoped projection/);
+    expect(writeCount).toBe(0);
+  });
+
   it("rejects a legacy checkpoint that differs from its approved digest", async () => {
     const checkpoint = new PflegehelferService().checkpoint();
     const legacy = serializeCheckpoint(checkpoint, null);
     legacy.id = legacyFhirResourceId("Binary", "workflow-control-plane-v1");
+    const legacyResourceReferences = [
+      `Patient/${legacyFhirResourceId("Patient", "p-anna")}`,
+    ];
     const workspace = new MedplumClinicalWorkspace(
       "http://127.0.0.1:8103/",
       "test-client",
@@ -146,6 +249,10 @@ describe("durable workflow checkpoint", () => {
         expectedInstitutionId: "org-demo",
         expectedSiteId: "rehab-2",
         expectedBinarySha256: "0".repeat(64),
+        legacyResourceReferences,
+        expectedResourceReferencesSha256:
+          legacyMigrationResourceReferencesSha256(legacyResourceReferences),
+        receiptRetentionExpiredAt: "2026-09-01T00:00:00.000Z",
       },
     );
     const internals = workspace as unknown as {
@@ -167,6 +274,14 @@ describe("durable workflow checkpoint", () => {
   it("materializes a verified legacy checkpoint into the scoped projection", async () => {
     const service = new PflegehelferService();
     const checkpoint = service.checkpoint();
+    checkpoint.commandReceipts = [
+      {
+        key: "legacy-receipt",
+        requestHash: "a".repeat(64),
+        statusCode: 201,
+        payload: '{"id":"legacy"}',
+      },
+    ];
     const legacy = serializeCheckpoint(checkpoint, null);
     legacy.id = legacyFhirResourceId("Binary", "workflow-control-plane-v1");
     legacy.meta = {
@@ -177,6 +292,8 @@ describe("durable workflow checkpoint", () => {
         },
       ],
     };
+    const legacyPatientReference = `Patient/${legacyFhirResourceId("Patient", "p-anna")}`;
+    const legacyResourceReferences = [legacyPatientReference];
     const workspace = new MedplumClinicalWorkspace(
       "http://127.0.0.1:8103/",
       "test-client",
@@ -190,6 +307,10 @@ describe("durable workflow checkpoint", () => {
         expectedBinarySha256: createHash("sha256")
           .update(legacy.data ?? "")
           .digest("hex"),
+        legacyResourceReferences,
+        expectedResourceReferencesSha256:
+          legacyMigrationResourceReferencesSha256(legacyResourceReferences),
+        receiptRetentionExpiredAt: "2026-09-01T00:00:00.000Z",
       },
     );
     const acceptedTransactions: Bundle[] = [];
@@ -243,6 +364,21 @@ describe("durable workflow checkpoint", () => {
           entry.request?.method === "PUT" &&
           entry.request.url ===
             `Binary/${fhirResourceId("Binary", "workflow-control-plane-v1")}`,
+      ),
+    ).toBe(true);
+    expect(
+      entries.some(
+        (entry) =>
+          entry.request?.method === "DELETE" &&
+          entry.request.url === legacyPatientReference,
+      ),
+    ).toBe(true);
+    expect(
+      entries.some(
+        (entry) =>
+          entry.request?.method === "DELETE" &&
+          entry.request.url ===
+            `Binary/${legacyFhirResourceId("Binary", "command-receipt:legacy-receipt")}`,
       ),
     ).toBe(true);
     expect(

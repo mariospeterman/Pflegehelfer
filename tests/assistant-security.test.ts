@@ -172,6 +172,32 @@ describe("assistant action gateway", () => {
     expect(result).not.toHaveProperty("episodeEvidence");
   });
 
+  it("does not launder a doubtful measurement through mixed note evidence", async () => {
+    const { assistant } = fixture();
+    const response = await assistant.query("u-nurse", {
+      prompt: "Anna mobilisiert, SpO2 35 Prozent.",
+      patientId: "p-anna",
+      purpose: "direct-care",
+    });
+    const action = draftAction(response);
+    expect(action.reviewItems).toHaveLength(2);
+    const result = assistant.executeIntent(
+      "u-nurse",
+      action.intentToken,
+      executionContext(response),
+    );
+    expect(result).toMatchObject({
+      bundle: [
+        expect.objectContaining({ status: "pending-provider" }),
+        expect.objectContaining({ status: "reviewed" }),
+      ],
+      episodeEvidence: "Durchgeführt: mobilisiert",
+    });
+    expect(
+      (result as { episodeEvidence?: string }).episodeEvidence,
+    ).not.toContain("35");
+  });
+
   it("does not bind a named patient statement to the wrong open chart", async () => {
     const { assistant } = fixture();
     const response = await assistant.query("u-nurse", {

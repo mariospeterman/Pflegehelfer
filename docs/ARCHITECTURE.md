@@ -115,7 +115,7 @@ The model may interpret “Dokumentiere RR 128/76, Mobilisation erledigt und fra
 
 Every executable intent is one-use, short-lived, stored as a cryptographic hash, and bound to organization, actor, role, purpose, patient/encounter, session/thread, workflow version/step, context revision, proposal hash, policy version and resource versions. Consumption and command acceptance are atomic.
 
-Normal note/measurement review produces a locally approved record whose external acknowledgement remains visible. A clinically doubtful measurement uses `high-assurance`: the first review only creates a reviewed record, current-vitals queries exclude it, and a reachable independent countersignature is required before provider delivery.
+Normal note/measurement review produces a locally approved record whose external acknowledgement remains visible. A clinically doubtful measurement uses `high-assurance`: the first review only creates a reviewed record, current-vitals queries exclude it, and a reachable independent countersignature is required before provider delivery. Episode and linked-task completion evidence is a separate trust boundary: deterministic code derives it only from current, certain structured work spans and independently accepted observations, never from the surrounding free-text note. A mixed note therefore cannot launder a pending high-assurance value into completable work evidence.
 
 High-risk/irreversible actions use purpose-built review forms. Medication support remains read-only/communication-oriented until separately governed.
 

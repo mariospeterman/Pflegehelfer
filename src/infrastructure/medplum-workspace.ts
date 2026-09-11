@@ -38,7 +38,11 @@ const checkpointUncompressedByteLimit = 32 * 1024 * 1024;
 const receiptContentType = "application/vnd.pflegehelfer.command-receipt+json";
 const managedClinicalResourceTypes = [
   "Patient",
+  "Practitioner",
+  "Location",
   "Encounter",
+  "CarePlan",
+  "Goal",
   "Task",
   "Observation",
   "Communication",
@@ -46,6 +50,26 @@ const managedClinicalResourceTypes = [
 ] satisfies ResourceType[];
 const dataClassificationSystem =
   "https://pflegehelfer.example.invalid/data-classification";
+const legacyResourceReferencePattern = new RegExp(
+  `^(?:${managedClinicalResourceTypes.join("|")})/[A-Za-z0-9.-]{1,64}$`,
+);
+
+export function legacyMigrationResourceReferencesSha256(
+  references: readonly string[],
+): string {
+  return createHash("sha256")
+    .update(JSON.stringify([...references].sort()))
+    .digest("hex");
+}
+
+interface LegacyMigrationManifest {
+  expectedInstitutionId: string;
+  expectedSiteId: string;
+  expectedBinarySha256: string;
+  legacyResourceReferences: string[];
+  expectedResourceReferencesSha256: string;
+  receiptRetentionExpiredAt: string;
+}
 function isNotFoundError(error: unknown): boolean {
   return (
     (typeof error === "object" &&
@@ -475,6 +499,7 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
   private login: Promise<unknown> | null = null;
   private checkpointVersionId: string | null = null;
   private legacyCheckpointReferenceToDelete: string | null = null;
+  private legacyResourceReferencesToDelete: string[] = [];
   private statusCache: {
     expiresAt: number;
     value: ClinicalWorkspaceStatus;
@@ -489,17 +514,34 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
     private readonly appBaseUrl: string,
     private readonly checkpointHmacKey: string | null = null,
     private readonly previousCheckpointHmacKeys: string[] = [],
-    private readonly legacyMigration: {
-      expectedInstitutionId: string;
-      expectedSiteId: string;
-      expectedBinarySha256: string;
-    } | null = null,
+    private readonly legacyMigration: LegacyMigrationManifest | null = null,
   ) {
     this.client = new MedplumClient({
       baseUrl,
       cacheTime: 0,
       maxRetries: 2,
     });
+    if (legacyMigration) {
+      const references = legacyMigration.legacyResourceReferences;
+      const retentionExpiredAt = Date.parse(
+        legacyMigration.receiptRetentionExpiredAt,
+      );
+      if (
+        references.length === 0 ||
+        references.length > 2_000 ||
+        new Set(references).size !== references.length ||
+        references.some(
+          (reference) => !legacyResourceReferencePattern.test(reference),
+        ) ||
+        legacyMigrationResourceReferencesSha256(references) !==
+          legacyMigration.expectedResourceReferencesSha256 ||
+        !Number.isFinite(retentionExpiredAt) ||
+        retentionExpiredAt > Date.now()
+      )
+        throw new Error(
+          "Legacy migration requires an exact digest-bound resource inventory and an elapsed command-receipt retention gate.",
+        );
+    }
   }
 
   detailUrl(resourceReference = ""): string | null {
@@ -532,6 +574,8 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
     options: { reconcile: boolean } = { reconcile: true },
   ): Promise<void> {
     await this.connect();
+    if (this.legacyCheckpointReferenceToDelete)
+      this.assertLegacyInventoryDoesNotOverlap(resources);
     await this.verifyTransactionAtomicity();
     // A loaded, authenticated checkpoint already names the committed
     // projection. Replaying it during a rolling restart could overwrite a
@@ -547,8 +591,56 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
     // common reverse-proxy limits while each batch remains atomic.
     for (let offset = 0; offset < resources.length; offset += 40)
       await this.synchronize(resources.slice(offset, offset + 40));
+    if (this.legacyCheckpointReferenceToDelete)
+      await this.removeApprovedLegacyResources();
     if (checkpoint) await this.synchronize([], checkpoint);
     await this.removeStaleManagedResources(resources);
+  }
+
+  private async removeApprovedLegacyResources(): Promise<void> {
+    for (
+      let offset = 0;
+      offset < this.legacyResourceReferencesToDelete.length;
+      offset += 40
+    ) {
+      const chunk = this.legacyResourceReferencesToDelete.slice(
+        offset,
+        offset + 40,
+      );
+      const transaction: Bundle = {
+        resourceType: "Bundle",
+        type: "transaction",
+        entry: chunk.map((reference) => ({
+          request: { method: "DELETE", url: reference },
+        })),
+      };
+      const response = await this.client.executeBatch(transaction);
+      const failed = response.entry?.find(
+        (entry) => !/^2\d\d(?:\s|$)/.test(entry.response?.status ?? ""),
+      );
+      if (failed)
+        throw new Error(
+          `Medplum legacy-resource cleanup rejected: ${failed.response?.status ?? "missing status"}`,
+        );
+    }
+  }
+
+  private assertLegacyInventoryDoesNotOverlap(
+    scopedResources: Resource[],
+  ): void {
+    const scopedReferences = new Set(
+      scopedResources
+        .filter((resource) => resource.id)
+        .map((resource) => `${resource.resourceType}/${resource.id}`),
+    );
+    if (
+      this.legacyResourceReferencesToDelete.some((reference) =>
+        scopedReferences.has(reference),
+      )
+    )
+      throw new Error(
+        "Legacy migration inventory overlaps the active site-scoped projection.",
+      );
   }
 
   private async verifyTransactionAtomicity(): Promise<void> {
@@ -685,6 +777,7 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
         /\/_history\/([^/]+)$/.exec(metadata?.location ?? "");
       this.checkpointVersionId = versionMatch?.[1] ?? null;
       this.legacyCheckpointReferenceToDelete = null;
+      this.legacyResourceReferencesToDelete = [];
     }
   }
 
@@ -778,13 +871,24 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
           throw new Error(
             "Legacy checkpoint does not match the approved migration manifest.",
           );
-        this.checkpointVersionId = null;
-        this.legacyCheckpointReferenceToDelete = `Binary/${legacyCheckpointId}`;
-        return deserializeCheckpoint(
+        const restored = deserializeCheckpoint(
           legacy,
           this.checkpointHmacKey,
           this.previousCheckpointHmacKeys,
         );
+        this.checkpointVersionId = null;
+        this.legacyCheckpointReferenceToDelete = `Binary/${legacyCheckpointId}`;
+        this.legacyResourceReferencesToDelete = [
+          ...this.legacyMigration.legacyResourceReferences,
+          ...(restored.commandReceipts ?? []).map(
+            (receipt) =>
+              `Binary/${legacyFhirResourceId("Binary", `command-receipt:${receipt.key}`)}`,
+          ),
+        ].filter(
+          (reference, index, references) =>
+            references.indexOf(reference) === index,
+        );
+        return restored;
       } catch (legacyError) {
         if (isNotFoundError(legacyError)) return null;
         throw legacyError;
@@ -909,6 +1013,16 @@ export function clinicalWorkspaceFromEnvironment(): ClinicalWorkspace {
           expectedSiteId: process.env.PFH_LEGACY_MIGRATION_SITE_ID ?? "",
           expectedBinarySha256:
             process.env.PFH_LEGACY_CHECKPOINT_BINARY_SHA256 ?? "",
+          legacyResourceReferences: (
+            process.env.PFH_LEGACY_MIGRATION_RESOURCE_REFERENCES ?? ""
+          )
+            .split(",")
+            .map((reference) => reference.trim())
+            .filter(Boolean),
+          expectedResourceReferencesSha256:
+            process.env.PFH_LEGACY_MIGRATION_RESOURCE_REFERENCES_SHA256 ?? "",
+          receiptRetentionExpiredAt:
+            process.env.PFH_LEGACY_RECEIPT_RETENTION_EXPIRED_AT ?? "",
         }
       : null;
   if (!baseUrl || !clientId || !clientSecret || !appBaseUrl)
@@ -936,10 +1050,11 @@ export function clinicalWorkspaceFromEnvironment(): ClinicalWorkspace {
     (legacyMigration.expectedInstitutionId !==
       siteConfiguration.institutionId ||
       legacyMigration.expectedSiteId !== siteConfiguration.siteId ||
-      !/^[a-f0-9]{64}$/.test(legacyMigration.expectedBinarySha256))
+      !/^[a-f0-9]{64}$/.test(legacyMigration.expectedBinarySha256) ||
+      !/^[a-f0-9]{64}$/.test(legacyMigration.expectedResourceReferencesSha256))
   )
     throw new Error(
-      "Legacy migration requires the exact active institution/site and approved Binary SHA-256 manifest.",
+      "Legacy migration requires the exact active institution/site and approved checkpoint/resource-inventory SHA-256 manifest.",
     );
   return new MedplumClinicalWorkspace(
     baseUrl,

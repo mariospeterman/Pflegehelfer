@@ -1377,6 +1377,43 @@ export class AssistantService {
         const completeLinkedTask = Boolean(
           linkedTaskActionId && reviewed.has(linkedTaskActionId),
         );
+        const selectedNote = selected.some(
+          (action) => action.type === "note-proposal",
+        );
+        const doubtfulObservationSpans = plan.actions
+          .filter(
+            (
+              action,
+            ): action is Extract<
+              ExecutableAssistantAction,
+              { type: "observation-proposal" }
+            > =>
+              action.type === "observation-proposal" &&
+              isDoubtfulObservation(action),
+          )
+          .map((action) => action.sourceSpan);
+        // Episode/task completion evidence is a separate trust boundary from
+        // the clinical note. Derive it only from current, certain work spans;
+        // never copy the free-form note, and fail closed if a work span also
+        // contains an uncountersigned high-assurance measurement.
+        const safeWorkEvidence = plan.workPerformed
+          .filter(
+            (work) =>
+              ["performed", "partial"].includes(work.status) &&
+              work.reportingStatus === "current" &&
+              work.certainty === "certain" &&
+              !doubtfulObservationSpans.some(
+                (span) =>
+                  work.sourceSpan.start < span.end &&
+                  work.sourceSpan.end > span.start,
+              ),
+          )
+          .map((work) =>
+            work.status === "partial"
+              ? `Teilweise durchgeführt: ${work.sourceSpan.quote}`
+              : `Durchgeführt: ${work.sourceSpan.quote}`,
+          )
+          .filter((value, index, values) => values.indexOf(value) === index);
         const workflow = selected.filter(
           (action) => action.type === "workflow-proposal",
         );
@@ -1519,11 +1556,7 @@ export class AssistantService {
             results.push(
               this.clinical.updateTask(userId, taskId, "complete", {
                 purpose: intent.purpose,
-                evidence:
-                  plan.actions
-                    .filter((action) => action.type === "note-proposal")
-                    .map((action) => action.structuredText)
-                    .join("\n") || plan.summary,
+                evidence: safeWorkEvidence.join("\n"),
               }),
             );
           }
@@ -1543,13 +1576,12 @@ export class AssistantService {
             },
           });
           const episodeEvidence = [
+            ...(selectedNote || completeLinkedTask ? safeWorkEvidence : []),
             ...selected.flatMap((action) =>
-              action.type === "note-proposal"
-                ? [action.structuredText]
-                : action.type === "observation-proposal" &&
-                    !isDoubtfulObservation(action)
-                  ? [actionReviewLabel(action)]
-                  : [],
+              action.type === "observation-proposal" &&
+              !isDoubtfulObservation(action)
+                ? [actionReviewLabel(action)]
+                : [],
             ),
             ...(completeLinkedTask && intent.payload.linkedTaskLabel
               ? [`Aufgabe abgeschlossen: ${intent.payload.linkedTaskLabel}`]

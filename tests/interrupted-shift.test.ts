@@ -683,8 +683,101 @@ describe("interrupted nursing shift", () => {
     const activeEpisode = workday.json<{
       activeEpisode: { draftText: string };
     }>().activeEpisode;
-    expect(activeEpisode.draftText).toContain("Anna mobilisiert");
+    expect(activeEpisode.draftText).toContain("mobilisiert");
     expect(activeEpisode.draftText).toContain("128");
+  });
+
+  it("keeps uncountersigned measurements out of completable episode evidence", async () => {
+    const app = buildApp(undefined, { demoMode: true });
+    apps.push(app);
+    const user = "u-nurse";
+    const headers = { "x-demo-user": user };
+    await acknowledgeApiHandover(app, user);
+    await app.inject({
+      method: "POST",
+      url: "/api/v1/assistant/context",
+      headers: { ...headers, "x-command-id": crypto.randomUUID() },
+      payload: { patientId: "p-anna" },
+    });
+    await app.inject({
+      method: "POST",
+      url: "/api/v1/workday",
+      headers: { ...headers, "x-command-id": crypto.randomUUID() },
+      payload: {
+        type: "start-episode",
+        patientId: "p-anna",
+        encounterId: "enc-anna-2026",
+        kind: "planned",
+        title: "Morgenpflege",
+      },
+    });
+    const query = await app.inject({
+      method: "POST",
+      url: "/api/v1/assistant/query",
+      headers: { ...headers, "x-command-id": crypto.randomUUID() },
+      payload: {
+        prompt: "Anna mobilisiert, SpO2 35 Prozent.",
+        patientId: "p-anna",
+        inputModality: "typed",
+      },
+    });
+    const response = query.json<{
+      patientContext: {
+        patientId: string;
+        encounterId: string;
+        resourceVersion: number;
+      };
+      components: Array<{
+        type: string;
+        intentToken?: string;
+        reviewItems?: Array<{ id: string }>;
+      }>;
+    }>();
+    const review = response.components.find(
+      (component) => component.type === "DraftAction",
+    )!;
+    const execution = await app.inject({
+      method: "POST",
+      url: `/api/v1/assistant/intents/${review.intentToken}/execute`,
+      headers: { ...headers, "x-command-id": crypto.randomUUID() },
+      payload: {
+        patientId: response.patientContext.patientId,
+        encounterId: response.patientContext.encounterId,
+        resourceVersion: response.patientContext.resourceVersion,
+        purpose: "direct-care",
+        explicitlyConfirmed: true,
+        reviewedActionIds: review.reviewItems!.map((item) => item.id),
+      },
+    });
+    expect(execution.statusCode).toBe(200);
+    expect(execution.json<{ itemStates: string[] }>().itemStates).toContain(
+      "reviewed",
+    );
+    const beforeCompletion = (
+      await app.inject({
+        method: "GET",
+        url: "/api/v1/workday",
+        headers,
+      })
+    ).json<{
+      activeEpisode: { id: string; draftText: string };
+    }>().activeEpisode;
+    expect(beforeCompletion.draftText).toContain("mobilisiert");
+    expect(beforeCompletion.draftText).not.toContain("35");
+    const completed = await app.inject({
+      method: "POST",
+      url: "/api/v1/workday",
+      headers: { ...headers, "x-command-id": crypto.randomUUID() },
+      payload: {
+        type: "complete-episode",
+        episodeId: beforeCompletion.id,
+        evidence: beforeCompletion.draftText,
+      },
+    });
+    expect(completed.statusCode).toBe(200);
+    expect(
+      completed.json<{ activeEpisode: { id: string } | null }>().activeEpisode,
+    ).toBeNull();
   });
 
   it("lets natural conversation atomically pause current work and enter the next room", async () => {

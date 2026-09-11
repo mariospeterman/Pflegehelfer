@@ -10,7 +10,7 @@ FHIR resource IDs and cleanup previously used only domain identifiers and the da
 
 ## Decision
 
-All Pflegehelfer-generated FHIR identifiers include institution and site. Every projected resource, workflow checkpoint and command receipt carries a separate institution/site tag; stale cleanup requires both that tag and the data-classification tag. The original unscoped checkpoint is never read by default. Its one-way migration requires an explicit flag, exact active institution/site and an operator-approved SHA-256 of the legacy Binary before HMAC/schema validation; legacy command receipts are not implicitly imported.
+All Pflegehelfer-generated FHIR identifiers include institution and site. Every projected resource, workflow checkpoint and command receipt carries a separate institution/site tag; stale cleanup requires both that tag and the data-classification tag. The original unscoped checkpoint is never read by default. Its one-way migration requires an explicit flag, exact active institution/site, an operator-approved SHA-256 of the legacy Binary, an exact digest-bound list of legacy clinical resource references, and an already elapsed legacy command-receipt retention timestamp before HMAC/schema validation. Inventory overlap is rejected before the first clinical write; append-only AuditEvent/Provenance evidence is never accepted as a deletion target. Listed resources and the receipts still named by the authenticated checkpoint are deleted before the scoped checkpoint replaces the old Binary; unknown older receipts are treated as expired authority, not imported authority.
 
 Site packs may narrow a centrally reviewed per-role action ceiling but cannot expand it. Independent high-assurance review additionally requires an explicit actor qualification from the active pack.
 
@@ -19,8 +19,8 @@ Local OpenAI-compatible models retain `/chat/completions`. Synthetic hosted test
 ## Consequences
 
 - New FHIR projections and cleanup are site isolated even in a shared Medplum project.
-- Unsafe implicit legacy import is impossible; migration is deliberate, hash-bound and auditable by deployment procedure.
-- A verified legacy import forces full scoped resource reconciliation and replaces the old checkpoint Binary in the scoped-checkpoint transaction; loading legacy state alone is never treated as completed migration.
+- Unsafe implicit legacy import is impossible; migration is deliberate, checkpoint- and resource-inventory-hash-bound, retention-gated and auditable by deployment procedure.
+- A verified legacy import forces full scoped resource reconciliation, deletes only the exact approved legacy inventory plus checkpoint-known receipts, and replaces the old checkpoint Binary in the scoped-checkpoint transaction; loading legacy state alone is never treated as completed migration.
 - A configuration author cannot turn a support role into a clinical reader or bypass independent-review qualification.
 - Runtime probes state what was truly called. No key, local runtime or synthetic audio means the corresponding validation remains incomplete.
 - Resource-scoped Medplum reconstruction, PostgreSQL RLS, production OIDC and atomic cross-store acceptance remain separate documented blockers.

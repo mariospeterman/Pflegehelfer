@@ -22,11 +22,11 @@ Do not introduce `Focus`, module tabs, separate workflow pages, dashboard projec
 - Models interpret/compose; deterministic server code authorizes, validates, versions and executes.
 - Writes requiring review remain draft until explicit approval and visibly pending until external acknowledgement.
 - Site packs may narrow centrally reviewed role ceilings and assign reviewer qualifications; they never grant new authority.
-- FHIR identifiers, tags, cleanup and legacy migrations are bound to institution/site. Unscoped legacy state is default-denied.
+- FHIR identifiers, tags, cleanup and legacy migrations are bound to institution/site. Unscoped legacy state is default-denied; a one-way import additionally needs an exact digest-bound resource inventory and an elapsed old-receipt retention gate.
 
 The baseline excludes microservices, Flowable, NATS/Kafka, vector databases and Kubernetes without measured need/new ADR.
 
-There is one live responsibility authority: the PostgreSQL workday with explicit patient acknowledgement, patient/encounter-bound episodes and receiving-shift receipts. Imported provider documents can be source evidence but never a mutable or fallback handover state. Role-addressed team work remains unassigned until claimed; array order is never identity or delegation policy. A `high-assurance` observation remains `reviewed`, is excluded from current-vitals queries and needs an independent authorized countersignature before approval/provider delivery.
+There is one live responsibility authority: the PostgreSQL workday with explicit patient acknowledgement, patient/encounter-bound episodes and receiving-shift receipts. Imported provider documents can be source evidence but never a mutable or fallback handover state. Role-addressed team work remains unassigned until claimed; array order is never identity or delegation policy. A `high-assurance` observation remains `reviewed`, is excluded from current-vitals queries and needs an independent authorized countersignature before approval/provider delivery. Episode/task completion evidence is derived only from current, certain structured work and independently accepted observations; never copy a free-text note that can carry a still-pending high-assurance value.
 
 Handover acknowledgements bind the exact handover ID/version and responsible actor. Completed episodes, resolved planned responsibility and transferred shifts are terminal. Recent model context is filtered to the active authorized patient and retains the patient/context revision captured when each turn began.
 
