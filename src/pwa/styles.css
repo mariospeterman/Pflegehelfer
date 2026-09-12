@@ -843,6 +843,34 @@ input:focus-visible {
   border-color: color-mix(in srgb, var(--blue) 23%, var(--line));
   padding: 20px;
 }
+
+.handover-readout {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-soft);
+}
+
+.handover-readout button,
+.handover-readout select {
+  min-height: 44px;
+}
+
+.handover-readout label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.handover-readout small {
+  flex-basis: 100%;
+  color: var(--muted);
+}
 .workday-list {
   display: grid;
   gap: 8px;

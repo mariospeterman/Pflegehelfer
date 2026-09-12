@@ -130,6 +130,23 @@ describe("local ASR privacy boundary", () => {
       "http://127.0.0.1:9000/v1/audio/transcriptions",
       expect.any(Object),
     );
+    expect(gateway.status()).toMatchObject({
+      ready: true,
+      acceptance: "accepted",
+    });
     expect([...bytes]).toEqual([0, 0, 0]);
+  });
+
+  it("does not claim a browser engine was accepted before a real browser test", () => {
+    expect(
+      new AsrGateway({
+        PFH_ASR_MODE: "browser-demo",
+        PFH_DEMO_MODE: "true",
+      }).status(),
+    ).toMatchObject({
+      ready: true,
+      configured: true,
+      acceptance: "ready-for-test",
+    });
   });
 });

@@ -26,11 +26,12 @@ try {
       "# External AI stays off until a developer explicitly enables the synthetic-only profile.",
       "PFH_ALLOW_EXTERNAL_AI=false",
       "OPENAI_API_" + "KEY=",
-      "# Set PFH_AI_MODE/PFH_DEEP_LLM_MODE/PFH_ASR_MODE to hosted-test when wanted.",
+      "# Set PFH_AI_MODE/PFH_DEEP_LLM_MODE/PFH_ASR_MODE/PFH_TTS_MODE to hosted-test when wanted.",
       "# Recommended economical router: gpt-5.6-terra; deeper knowledge selector: gpt-5.6-sol.",
       "# PFH_LLM_MODEL=gpt-5.6-terra",
       "# PFH_DEEP_LLM_MODEL=gpt-5.6-sol",
       "# PFH_ASR_MODEL=gpt-4o-transcribe",
+      "# PFH_TTS_MODEL=gpt-4o-mini-tts",
     );
   }
   if (additions.length)
@@ -68,6 +69,7 @@ const content = [
   "PFH_DEEP_LLM_MODEL=qwen2.5:0.5b",
   "PFH_DEEP_LLM_TIMEOUT_MS=15000",
   "PFH_ASR_MODE=browser-demo",
+  "PFH_TTS_MODE=browser-demo",
   "",
 ].join("\n");
 

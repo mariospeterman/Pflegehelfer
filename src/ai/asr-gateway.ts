@@ -97,10 +97,10 @@ export class AsrGateway {
         model: "browser-speech-recognition",
         ready: true,
         configured: true,
-        acceptance: "accepted",
+        acceptance: "ready-for-test",
         dataBoundary: "synthetic-browser",
         message:
-          "Nur synthetische Demo: Push-to-talk wird vom Browser transkribiert.",
+          "Nur synthetische Demo: Browser-Spracheingabe ist verfügbar; die konkrete Browser-Engine ist nicht serverseitig abgenommen.",
       };
     if (this.mode === "local-openai")
       return {
@@ -126,8 +126,11 @@ export class AsrGateway {
         model: this.model,
         ready: this.verifiedAt !== null,
         configured: Boolean(this.baseUrl && this.apiKey),
-        acceptance:
-          this.baseUrl && this.apiKey ? "ready-for-test" : "not-configured",
+        acceptance: this.verifiedAt
+          ? "accepted"
+          : this.baseUrl && this.apiKey
+            ? "ready-for-test"
+            : "not-configured",
         dataBoundary: "synthetic-hosted",
         message: this.apiKey
           ? this.verifiedAt

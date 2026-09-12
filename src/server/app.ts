@@ -13,6 +13,7 @@ import {
 } from "../core/assistant-service.js";
 import { fhirResourceId } from "../core/fhir-resource-set.js";
 import { AsrGateway } from "../ai/asr-gateway.js";
+import { TtsGateway } from "../ai/tts-gateway.js";
 import { ModelGateway } from "../ai/model-gateway.js";
 import { ApprovedKnowledgeService } from "../ai/approved-knowledge.js";
 import {
@@ -247,6 +248,7 @@ export function buildApp(
     options.operationalStore ?? new InMemoryOperationalStore();
   const models = new ModelGateway();
   const asr = new AsrGateway();
+  const tts = new TtsGateway();
   const knowledge = new ApprovedKnowledgeService();
   const assistant = new AssistantService(service, models, knowledge);
   const effectiveDataClass = () =>
@@ -1025,6 +1027,7 @@ export function buildApp(
       llm: await models.status(),
       deepLlmAndKnowledge: knowledge.status(),
       asr: asr.status(),
+      tts: tts.status(),
       clinicalCoreRequiresAi: false,
     };
   });
@@ -1039,6 +1042,46 @@ export function buildApp(
         403,
       );
     return models.testSynthetic();
+  });
+
+  app.post("/api/v1/ai/tts-test", async (request) => {
+    await persistenceQueue;
+    const actor = service.user(userId(request));
+    if (!["it", "quality-safety"].includes(actor.role))
+      throw new DomainError(
+        "AUTH_DENIED",
+        "Der Sprach-Funktionstest ist nur für IT oder Qualität freigegeben.",
+        403,
+      );
+    const startedAt = Date.now();
+    const result = await tts.synthesize(
+      "Synthetischer Pflegehelfer-Test. Keine Patientendaten.",
+      "synthetic-demo",
+    );
+    return {
+      ready: true,
+      model: result.model,
+      voice: result.voice,
+      latencyMs: Date.now() - startedAt,
+      audioBytes: result.audio.byteLength,
+      audioRetained: result.audioRetained,
+      status: tts.status(),
+    };
+  });
+
+  app.post("/api/v1/assistant/speech", async (request, reply) => {
+    await persistenceQueue;
+    service.user(userId(request));
+    const body = z
+      .object({ text: z.string().trim().min(1).max(2400) })
+      .strict()
+      .parse(request.body);
+    const result = await tts.synthesize(body.text, effectiveDataClass());
+    return reply
+      .header("content-type", result.contentType)
+      .header("cache-control", "no-store")
+      .header("x-content-type-options", "nosniff")
+      .send(Buffer.from(result.audio));
   });
 
   app.get("/api/v1/assistant/conversation", async (request) => {

@@ -212,6 +212,10 @@ function WorkdayCard({
   fail: (message: string) => void;
 }) {
   const activeControlsRef = useRef<HTMLElement | null>(null);
+  const [readoutState, setReadoutState] = useState<
+    "idle" | "playing" | "paused"
+  >("idle");
+  const [readoutRate, setReadoutRate] = useState(1);
   const patientFor = (patientId: string) =>
     patients.find((candidate) => candidate.id === patientId) ?? null;
   const perform = (command: WorkdayCommand, fallback: string) => {
@@ -241,6 +245,44 @@ function WorkdayCard({
     workday.activeEpisode?.patientId === "p-anna"
       ? (patients.find((candidate) => candidate.id === "p-luca") ?? null)
       : null;
+
+  const handoverReadout = [
+    `Schichtübergabe. Eingefrorener Stand ${new Date(workday.handover.cutoffAt).toLocaleString("de-CH")}.`,
+    ...workday.plan.map((item) => {
+      const listedPatient = patientFor(item.patientId);
+      return `${listedPatient ? `${listedPatient.displayName}, Zimmer ${listedPatient.room}` : item.patientId}: ${item.title}. ${item.reason}.`;
+    }),
+  ].join(" ");
+
+  const startReadout = () => {
+    if (!("speechSynthesis" in window)) return;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(handoverReadout);
+    utterance.lang = "de-CH";
+    utterance.rate = readoutRate;
+    utterance.onend = () => setReadoutState("idle");
+    utterance.onerror = () => setReadoutState("idle");
+    window.speechSynthesis.speak(utterance);
+    setReadoutState("playing");
+  };
+
+  const toggleReadout = () => {
+    if (readoutState === "idle") return startReadout();
+    if (readoutState === "playing") {
+      window.speechSynthesis.pause();
+      setReadoutState("paused");
+    } else {
+      window.speechSynthesis.resume();
+      setReadoutState("playing");
+    }
+  };
+
+  useEffect(
+    () => () => {
+      if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!workday.activeEpisode) return;
@@ -279,59 +321,102 @@ function WorkdayCard({
           </header>
 
           {workday.stage === "handover" && (
-            <div className="workday-list" aria-label="Übergabe-Roster">
-              {workday.handover.patientIds.map((patientId) => {
-                const listedPatient = patientFor(patientId);
-                const plannedCare = workday.plan.find(
-                  (item) => item.patientId === patientId,
-                );
-                const acknowledged =
-                  workday.handover.acknowledgedPatientIds.includes(patientId);
-                if (!listedPatient) return null;
-                return (
-                  <section className="workday-row" key={patientId}>
-                    <button
-                      className="workday-patient"
-                      disabled={busy}
-                      onClick={() => selectPatient(patientId)}
-                    >
-                      <strong>
-                        {listedPatient.room} · {listedPatient.displayName}
-                      </strong>
-                      <span>
-                        {plannedCare?.title ?? "Pflegeplanung prüfen"}
-                      </span>
-                      <small>
-                        {plannedCare?.reason ?? "Keine offene Begründung"} ·
-                        Risiken: {listedPatient.risks.join(", ") || "keine"} ·
-                        Stand {workday.handover.shiftKey}, Version{" "}
-                        {workday.handover.version}
-                      </small>
-                    </button>
-                    <button
-                      className={
-                        acknowledged ? "status-button done" : "status-button"
-                      }
-                      disabled={busy || acknowledged}
-                      aria-label={`${acknowledged ? "Übergabe geprüft" : "Gelesen und übernehmen"}: Zimmer ${listedPatient.room}, ${listedPatient.displayName}`}
-                      onClick={() =>
-                        perform(
-                          {
-                            type: "acknowledge-handover",
-                            handoverId: workday.handover.id,
-                            patientId,
-                            version: workday.handover.version,
-                          },
-                          "Übergabe konnte nicht bestätigt werden.",
-                        )
-                      }
-                    >
-                      {acknowledged ? "Geprüft" : "Gelesen & übernehmen"}
-                    </button>
-                  </section>
-                );
-              })}
-            </div>
+            <>
+              <div className="handover-readout" aria-label="Übergabe vorlesen">
+                <button type="button" onClick={toggleReadout} disabled={busy}>
+                  {readoutState === "idle"
+                    ? "Übergabe vorlesen"
+                    : readoutState === "playing"
+                      ? "Pause"
+                      : "Weiterlesen"}
+                </button>
+                <label>
+                  Tempo
+                  <select
+                    value={readoutRate}
+                    onChange={(event) => {
+                      window.speechSynthesis.cancel();
+                      setReadoutState("idle");
+                      setReadoutRate(Number(event.target.value));
+                    }}
+                  >
+                    <option value={0.8}>0,8×</option>
+                    <option value={1}>1×</option>
+                    <option value={1.2}>1,2×</option>
+                  </select>
+                </label>
+                {readoutState !== "idle" && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      window.speechSynthesis.cancel();
+                      setReadoutState("idle");
+                    }}
+                  >
+                    Stop
+                  </button>
+                )}
+                <small>
+                  Nur in geschützter Umgebung abspielen. Inhalt entspricht exakt
+                  dem eingefrorenen Übergabestand.
+                </small>
+              </div>
+              <div className="workday-list" aria-label="Übergabe-Roster">
+                {workday.handover.patientIds.map((patientId) => {
+                  const listedPatient = patientFor(patientId);
+                  const plannedCare = workday.plan.find(
+                    (item) => item.patientId === patientId,
+                  );
+                  const acknowledged =
+                    workday.handover.acknowledgedPatientIds.includes(patientId);
+                  if (!listedPatient) return null;
+                  return (
+                    <section className="workday-row" key={patientId}>
+                      <button
+                        className="workday-patient"
+                        disabled={busy}
+                        onClick={() => selectPatient(patientId)}
+                      >
+                        <strong>
+                          {listedPatient.room} · {listedPatient.displayName}
+                        </strong>
+                        <span>
+                          {plannedCare?.title ?? "Pflegeplanung prüfen"}
+                        </span>
+                        <small>
+                          {plannedCare?.reason ?? "Keine offene Begründung"} ·
+                          Eingefroren{" "}
+                          {new Date(workday.handover.cutoffAt).toLocaleString(
+                            "de-CH",
+                          )}
+                          , Version {workday.handover.version}
+                        </small>
+                      </button>
+                      <button
+                        className={
+                          acknowledged ? "status-button done" : "status-button"
+                        }
+                        disabled={busy || acknowledged}
+                        aria-label={`${acknowledged ? "Übergabe geprüft" : "Gelesen und übernehmen"}: Zimmer ${listedPatient.room}, ${listedPatient.displayName}`}
+                        onClick={() =>
+                          perform(
+                            {
+                              type: "acknowledge-handover",
+                              handoverId: workday.handover.id,
+                              patientId,
+                              version: workday.handover.version,
+                            },
+                            "Übergabe konnte nicht bestätigt werden.",
+                          )
+                        }
+                      >
+                        {acknowledged ? "Geprüft" : "Gelesen & übernehmen"}
+                      </button>
+                    </section>
+                  );
+                })}
+              </div>
+            </>
           )}
 
           {workday.stage !== "handover" && workday.stage !== "closed" && (
