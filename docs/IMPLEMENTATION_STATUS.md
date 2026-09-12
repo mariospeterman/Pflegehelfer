@@ -30,13 +30,14 @@ It is **not production-ready for real patient data or clinical use**. Remaining 
 
 The legacy `QuestionnaireResponse` to `DocumentReference` note projection also still needs a captured previous-release fixture, stronger source-identity verification and migration-time provenance before it can be treated as a production migration. The compatibility path is deliberately narrow and is not completion evidence for that P1.
 
-## Current patient-workspace evidence (2026-09-12, final SHA pending)
+## Current patient-workspace evidence (2026-09-12, implementation SHA `8db8e13`)
 
 - Current full repository verification: formatting, zero-warning lint, both TypeScript builds, 298/298 enabled tests and the complete production build passed; 11 environment-gated tests were explicitly skipped. A post-change targeted policy/workflow/API/collaboration/persistence run separately passed 80/80.
 - Real operational PostgreSQL suite: 11/11 passed with unchanged assertions and a 60-second timing allowance on the heavily loaded development host. Immutable numbered migration/checksum handling remains P1 and is not claimed complete.
 - Live restarted Medplum-backed PWA/API and ngrok returned HTTP 200. The API exposes `configured` and `acceptance` rather than treating `/models` or a configured endpoint as successful model/audio validation.
 - Browser inspection at 390 × 844 and 1440 × 1000 showed zero horizontal overflow, 44 px topic/tab targets and no console errors. The final current Playwright matrix passed all 39 enabled journeys across 360 px, 390 px, tablet, 1024 px and 1440 px; 16 deliberately duplicated state-changing journeys were skipped outside their designated viewport. This includes isolated Anna/Luca transcripts, direct patient lenses, distinct composer-draft restoration and stable post-approval confirmation after snapshot refresh.
 - Model/ASR connected tests remain not run because no key or accepted local runtime is configured. Patient-team threads, secure library/media, OIDC/RLS, relational workers, resource-native reconstruction and real restore remain declared internal P1.
+- A detached clean source worktree at `8db8e13` installed with the frozen lockfile under Node 24.18.0/pnpm 11.19.0, repeated the 298-test verification/build, security/ops/air-gap checks, synthetic restore checksum, all 39 enabled multi-viewport browser journeys and the real PostgreSQL 11/11 suite. The Medplum integration was verified on the restarted local deployment rather than by creating a second competing Docker stack; a production clean-environment restore/rollback drill remains an explicit deployment gate.
 
 ## Historical completion evidence (2026-09-11, superseded and not valid for this worktree)
 
