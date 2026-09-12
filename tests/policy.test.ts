@@ -30,7 +30,8 @@ describe("least-privilege policy", () => {
     ).toBe("in-progress");
     expect(
       service.updateTask("u-transport", "t-transport-luca", "complete", {
-        evidence: "Übergabe an Radiologie bestätigt.",
+        evidence:
+          "Transport zur Radiologie durchgeführt und persönliche Übergabe bestätigt.",
       }).state,
     ).toBe("completed");
   });

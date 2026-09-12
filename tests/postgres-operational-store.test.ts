@@ -2,6 +2,7 @@ import pg from "pg";
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { PostgresOperationalStore } from "../src/infrastructure/operational-store.js";
+import { patients } from "../src/core/seed.js";
 
 const databaseUrl = process.env.PFH_OPERATIONAL_DATABASE_URL;
 const { Pool } = pg;
@@ -12,6 +13,21 @@ async function acknowledgeHandover(
   role: "care-assistant" | "registered-nurse",
 ) {
   let workday = await store.getWorkday(actorId, role);
+  if (!workday.handover.clinicalBound)
+    workday = await store.bindHandoverClinicalSnapshot(
+      actorId,
+      role,
+      workday.handover.id,
+      workday.handover.version,
+      workday.handover.patientIds.map((patientId) => ({
+        patientId,
+        encounterId: patients.find((patient) => patient.id === patientId)!
+          .encounterId,
+        currentImportant: ["Synthetischer Testhinweis"],
+        recentChanges: [],
+        openQuestions: [],
+      })),
+    );
   for (const patientId of workday.handover.patientIds)
     workday = await store.applyWorkdayCommand(actorId, role, {
       type: "acknowledge-handover",
@@ -53,7 +69,21 @@ describe.runIf(Boolean(databaseUrl))("PostgreSQL operational store", () => {
     try {
       await store.initialize();
       await store.resetDemoState();
-      const workday = await store.getWorkday("u-assistant", "care-assistant");
+      let workday = await store.getWorkday("u-assistant", "care-assistant");
+      workday = await store.bindHandoverClinicalSnapshot(
+        "u-assistant",
+        "care-assistant",
+        workday.handover.id,
+        workday.handover.version,
+        workday.handover.patientIds.map((patientId) => ({
+          patientId,
+          encounterId: patients.find((patient) => patient.id === patientId)!
+            .encounterId,
+          currentImportant: [],
+          recentChanges: [],
+          openQuestions: [],
+        })),
+      );
       await inspectionPool.query(
         `UPDATE handover_snapshots
          SET content=jsonb_set(content, '{0,title}', '"Geänderter Auftrag"')

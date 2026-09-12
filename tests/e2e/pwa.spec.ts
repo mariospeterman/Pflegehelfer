@@ -344,3 +344,36 @@ test("keyboard focus and accessible landmarks remain usable", async ({
     "button",
   );
 });
+
+test("handover readout uses explicit controllable browser speech", async ({
+  page,
+}) => {
+  const readout = page.getByRole("button", {
+    name: "Übergabe vorlesen",
+    exact: true,
+  });
+  await expect(readout).toBeVisible();
+  await readout.click();
+  await expect(page.getByRole("button", { name: "Pause" })).toBeVisible();
+  await page.getByRole("button", { name: "Stop" }).click();
+  await expect(readout).toBeVisible();
+  await expect(
+    page.getByText(/Inhalt entspricht exakt dem eingefrorenen/),
+  ).toBeVisible();
+});
+
+test("general assistant navigation leaves the patient thread explicitly", async ({
+  page,
+}) => {
+  await choosePatient(page);
+  const menu = page.getByRole("button", {
+    name: "Kontext und Verlauf öffnen",
+  });
+  if (await menu.isVisible()) await menu.click();
+  await page
+    .getByRole("button", { name: /Mein Assistent im Gespräch anzeigen/ })
+    .click();
+  await expect(page.getByText("Kein Patient aktiv")).toBeVisible();
+  await expect(page.getByLabel("Aktiver Patientenkontext")).toHaveCount(0);
+  await expect(page.getByPlaceholder("Patienten suchen")).toHaveCount(1);
+});

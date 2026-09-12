@@ -12,6 +12,8 @@ describe("immutable migration ledger", () => {
       { version: 2, name: "002_immutable_migration_history.sql" },
       { version: 3, name: "003_immutable_handover_content.sql" },
       { version: 4, name: "004_zero_assignment_handover.sql" },
+      { version: 5, name: "005_clinical_handover_snapshot.sql" },
+      { version: 6, name: "006_single_handover_authority.sql" },
     ]);
     expect(
       migrations.every(({ checksum }) => /^[a-f0-9]{64}$/.test(checksum)),

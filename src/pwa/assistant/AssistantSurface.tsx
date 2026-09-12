@@ -250,7 +250,16 @@ function WorkdayCard({
     `Schichtübergabe. Eingefrorener Stand ${new Date(workday.handover.cutoffAt).toLocaleString("de-CH")}.`,
     ...workday.plan.map((item) => {
       const listedPatient = patientFor(item.patientId);
-      return `${listedPatient ? `${listedPatient.displayName}, Zimmer ${listedPatient.room}` : item.patientId}: ${item.title}. ${item.reason}.`;
+      const frozen = workday.handover.items.find(
+        (candidate) => candidate.patientId === item.patientId,
+      );
+      return [
+        `${listedPatient ? `${listedPatient.displayName}, Zimmer ${listedPatient.room}` : item.patientId}.`,
+        `Seit letzter Übergabe: ${frozen?.recentChanges.join("; ") || "keine neuen Einträge"}.`,
+        `Aktuell wichtig: ${frozen?.currentImportant.join("; ") || "keine besonderen Hinweise"}.`,
+        `Heute geplant: ${item.title}. ${item.reason}.`,
+        `Offene Fragen: ${frozen?.openQuestions.join("; ") || "keine"}.`,
+      ].join(" ");
     }),
   ].join(" ");
 
@@ -367,6 +376,9 @@ function WorkdayCard({
                   const plannedCare = workday.plan.find(
                     (item) => item.patientId === patientId,
                   );
+                  const frozen = workday.handover.items.find(
+                    (item) => item.patientId === patientId,
+                  );
                   const acknowledged =
                     workday.handover.acknowledgedPatientIds.includes(patientId);
                   if (!listedPatient) return null;
@@ -380,11 +392,37 @@ function WorkdayCard({
                         <strong>
                           {listedPatient.room} · {listedPatient.displayName}
                         </strong>
-                        <span>
-                          {plannedCare?.title ?? "Pflegeplanung prüfen"}
-                        </span>
+                        <dl className="handover-sections">
+                          <div>
+                            <dt>Seit letzter Übergabe</dt>
+                            <dd>
+                              {frozen?.recentChanges.join(" · ") ||
+                                "Keine neuen Einträge"}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>Aktuell wichtig</dt>
+                            <dd>
+                              {frozen?.currentImportant.join(" · ") ||
+                                "Keine besonderen Hinweise"}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>Heute geplant</dt>
+                            <dd>
+                              {plannedCare?.title ?? "Pflegeplanung prüfen"} ·{" "}
+                              {plannedCare?.reason ?? "Keine offene Begründung"}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>Offene Fragen</dt>
+                            <dd>
+                              {frozen?.openQuestions.join(" · ") || "Keine"}
+                            </dd>
+                          </div>
+                        </dl>
                         <small>
-                          {plannedCare?.reason ?? "Keine offene Begründung"} ·
+                          Fall {frozen?.encounterId ?? "nicht gebunden"} ·
                           Eingefroren{" "}
                           {new Date(workday.handover.cutoffAt).toLocaleString(
                             "de-CH",

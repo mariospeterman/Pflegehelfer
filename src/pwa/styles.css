@@ -901,6 +901,29 @@ input:focus-visible {
   color: var(--muted);
   font-size: 11px;
 }
+.handover-sections {
+  display: grid;
+  gap: 7px;
+  margin: 7px 0;
+}
+.handover-sections > div {
+  display: grid;
+  grid-template-columns: minmax(112px, 0.32fr) minmax(0, 1fr);
+  gap: 8px;
+}
+.handover-sections dt {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 780;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.handover-sections dd {
+  margin: 0;
+  color: var(--ink);
+  font-size: 11px;
+  line-height: 1.4;
+}
 .status-button {
   min-height: 44px;
   border: 1px solid var(--blue);
@@ -1414,6 +1437,40 @@ button:disabled {
   }
 }
 
+@media (prefers-reduced-transparency: reduce) {
+  .coworker-header {
+    background: var(--surface);
+    backdrop-filter: none;
+  }
+
+  .drawer-scrim,
+  .offline-lock {
+    background: var(--canvas);
+  }
+}
+
+@media (prefers-contrast: more) {
+  :root {
+    --line: #667085;
+    --line-strong: #344054;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    border-width: 2px;
+  }
+}
+
+@media (forced-colors: active) {
+  .sync-indicator::before,
+  .room-dot,
+  .assistant-avatar {
+    forced-color-adjust: none;
+  }
+}
+
 @media (max-width: 900px) {
   .clinical-coworker-shell {
     display: block;
@@ -1573,6 +1630,10 @@ button:disabled {
   }
   .workday-row {
     grid-template-columns: minmax(0, 1fr);
+  }
+  .handover-sections > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
   }
   .status-button,
   .episode-state {

@@ -42,6 +42,18 @@ interface HandoverContentItem {
   title: string;
   reason: string;
   window: string;
+  encounterId: string | null;
+  currentImportant: string[];
+  recentChanges: string[];
+  openQuestions: string[];
+}
+
+export interface HandoverClinicalSnapshotItem {
+  patientId: string;
+  encounterId: string;
+  currentImportant: string[];
+  recentChanges: string[];
+  openQuestions: string[];
 }
 
 function handoverContent(patientIds: readonly string[]): HandoverContentItem[] {
@@ -54,6 +66,10 @@ function handoverContent(patientIds: readonly string[]): HandoverContentItem[] {
       title: assignment?.title ?? "Individueller Pflegeauftrag",
       reason: assignment?.reason ?? "Gemäss freigegebenem Pflegeplan",
       window: assignment?.window ?? "Im Schichtverlauf",
+      encounterId: null,
+      currentImportant: [],
+      recentChanges: [],
+      openQuestions: [],
     };
   });
 }
@@ -78,6 +94,10 @@ function handoverSourceHash(input: {
             item.title,
             item.reason,
             item.window,
+            item.encounterId,
+            [...item.currentImportant],
+            [...item.recentChanges],
+            [...item.openQuestions],
           ]),
       }),
     )
@@ -228,6 +248,13 @@ export interface OperationalStore {
   ): Promise<void>;
   clearConversation(actorId: string, role: Role): Promise<void>;
   getWorkday(actorId: string, role: Role): Promise<WorkdayView>;
+  bindHandoverClinicalSnapshot(
+    actorId: string,
+    role: Role,
+    handoverId: string,
+    version: number,
+    items: HandoverClinicalSnapshotItem[],
+  ): Promise<WorkdayView>;
   applyWorkdayCommand(
     actorId: string,
     role: Role,
@@ -296,6 +323,10 @@ export class InMemoryOperationalStore implements OperationalStore {
   >();
   private readonly transfers: ResponsibilityTransferView[] = [];
   private readonly uiEvents: Array<DurableUiEvent & { actorId: string }> = [];
+  private readonly handoverClinical = new Map<
+    string,
+    HandoverClinicalSnapshotItem[]
+  >();
   private readonly authorities = new Map<
     string,
     {
@@ -500,7 +531,39 @@ export class InMemoryOperationalStore implements OperationalStore {
       session,
       this.transfers,
       this.receivedMemoryHandover(actorId) ?? session,
+      this.handoverClinical.get(
+        (this.receivedMemoryHandover(actorId) ?? session).handoverId,
+      ),
     );
+  }
+  async bindHandoverClinicalSnapshot(
+    actorId: string,
+    role: Role,
+    handoverId: string,
+    version: number,
+    items: HandoverClinicalSnapshotItem[],
+  ): Promise<WorkdayView> {
+    const workday = await this.getWorkday(actorId, role);
+    if (workday.handover.id !== handoverId)
+      throw new Error("HANDOVER_VERSION_STALE");
+    if (!workday.handover.clinicalBound) {
+      if (workday.handover.version !== version)
+        throw new Error("HANDOVER_VERSION_STALE");
+      const expected = new Set(workday.handover.patientIds);
+      if (
+        items.length !== expected.size ||
+        items.some(
+          (item) =>
+            !expected.has(item.patientId) ||
+            !item.encounterId ||
+            items.filter((candidate) => candidate.patientId === item.patientId)
+              .length !== 1,
+        )
+      )
+        throw new Error("HANDOVER_CONTENT_MISMATCH");
+      this.handoverClinical.set(handoverId, structuredClone(items));
+    }
+    return this.getWorkday(actorId, role);
   }
   async applyWorkdayCommand(
     actorId: string,
@@ -515,11 +578,14 @@ export class InMemoryOperationalStore implements OperationalStore {
       const handover = [...this.sessions.values()].find(
         (candidate) => candidate.handoverId === command.handoverId,
       );
+      const handoverVersion = this.handoverClinical.has(command.handoverId)
+        ? 2
+        : 1;
       if (
         !handover ||
         (handover.actorId !== actorId &&
           handover.receivingActorId !== actorId) ||
-        command.version !== 1 ||
+        command.version !== handoverVersion ||
         !workdayConfiguration(
           handover.actorId,
           handover.effectiveRole,
@@ -544,7 +610,13 @@ export class InMemoryOperationalStore implements OperationalStore {
     } else if (command.type === "start-episode") {
       if (command.kind === "planned") {
         const handover = this.receivedMemoryHandover(actorId) ?? session;
-        if (session.acknowledgedHandoverKey !== `${handover.handoverId}:1`)
+        const handoverVersion = this.handoverClinical.has(handover.handoverId)
+          ? 2
+          : 1;
+        if (
+          session.acknowledgedHandoverKey !==
+          `${handover.handoverId}:${handoverVersion}`
+        )
           throw new Error("HANDOVER_ACKNOWLEDGEMENT_REQUIRED");
         const assignedPatientIds = workdayConfiguration(
           handover.actorId,
@@ -755,6 +827,9 @@ export class InMemoryOperationalStore implements OperationalStore {
       session,
       this.transfers,
       this.receivedMemoryHandover(actorId) ?? session,
+      this.handoverClinical.get(
+        (this.receivedMemoryHandover(actorId) ?? session).handoverId,
+      ),
     );
   }
   private receivedMemoryHandover(actorId: string): MemorySession | undefined {
@@ -793,7 +868,9 @@ export class InMemoryOperationalStore implements OperationalStore {
       this.uiEvents
         .filter((event) => event.actorId === actorId && event.id > afterId)
         .slice(0, limit)
-        .map(({ actorId: _actorId, ...event }) => structuredClone(event)),
+        .map(({ id, eventType, payload, occurredAt }) =>
+          structuredClone({ id, eventType, payload, occurredAt }),
+        ),
     );
   }
   storeIntentAuthority(input: {
@@ -909,6 +986,7 @@ export class InMemoryOperationalStore implements OperationalStore {
     this.memoryThreads.clear();
     this.transfers.splice(0, this.transfers.length);
     this.uiEvents.splice(0, this.uiEvents.length);
+    this.handoverClinical.clear();
     this.authorities.clear();
     this.voiceAuthorities.clear();
     return Promise.resolve();
@@ -1586,6 +1664,7 @@ export class PostgresOperationalStore implements OperationalStore {
       cutoff_at: Date | string;
       source_hash: string;
       content: HandoverContentItem[];
+      clinical_bound: boolean;
       status: "open" | "transferred" | "acknowledged";
     };
     const acknowledgements = await this.pool.query<{ patient_id: string }>(
@@ -1611,6 +1690,109 @@ export class PostgresOperationalStore implements OperationalStore {
       episodeResult.rows.map(toEpisodeView),
       transferResult.rows.map(toTransferView),
     );
+  }
+  async bindHandoverClinicalSnapshot(
+    actorId: string,
+    role: Role,
+    handoverId: string,
+    version: number,
+    items: HandoverClinicalSnapshotItem[],
+  ): Promise<WorkdayView> {
+    const session = await this.getOrStartSession(actorId, role);
+    const configuredWorkday = workdayConfiguration(actorId, role);
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const result = await client.query<{
+        id: string;
+        version: number;
+        patient_ids: string[];
+        content: HandoverContentItem[];
+        clinical_bound: boolean;
+        department_id: string;
+        shift_key: string;
+        owner_actor_id: string;
+      }>(
+        `SELECT id,version,patient_ids,content,clinical_bound,department_id,shift_key,owner_actor_id
+         FROM handover_snapshots
+         WHERE organization_id=$1 AND department_id=$2 AND id=$3
+           AND ((shift_key=$4 AND owner_actor_id=$5) OR receiving_actor_id=$5)
+         FOR UPDATE`,
+        [
+          organizationId,
+          session.departmentId,
+          handoverId,
+          configuredWorkday.shiftKey,
+          actorId,
+        ],
+      );
+      const row = result.rows[0];
+      if (!row) throw new Error("HANDOVER_VERSION_STALE");
+      if (row.clinical_bound) {
+        await client.query("COMMIT");
+        return await this.getWorkday(actorId, role);
+      }
+      if (row.version !== version) throw new Error("HANDOVER_VERSION_STALE");
+      const acknowledgements = await client.query<{ count: string }>(
+        `SELECT count(*) FROM handover_acknowledgements
+         WHERE organization_id=$1 AND handover_id=$2`,
+        [organizationId, handoverId],
+      );
+      if (Number(acknowledgements.rows[0]?.count) > 0)
+        throw new Error("HANDOVER_ALREADY_ACKNOWLEDGED");
+      const expected = new Set(row.patient_ids);
+      if (
+        items.length !== expected.size ||
+        items.some(
+          (item) =>
+            !expected.has(item.patientId) ||
+            !item.encounterId ||
+            items.filter((candidate) => candidate.patientId === item.patientId)
+              .length !== 1,
+        )
+      )
+        throw new Error("HANDOVER_CONTENT_MISMATCH");
+      const clinicalByPatient = new Map(
+        items.map((item) => [item.patientId, item]),
+      );
+      const content = row.content.map((base) => {
+        const clinical = clinicalByPatient.get(base.patientId)!;
+        return {
+          ...base,
+          encounterId: clinical.encounterId,
+          currentImportant: [...clinical.currentImportant],
+          recentChanges: [...clinical.recentChanges],
+          openQuestions: [...clinical.openQuestions],
+        };
+      });
+      const sourceHash = handoverSourceHash({
+        departmentId: row.department_id,
+        shiftKey: row.shift_key,
+        actorId: row.owner_actor_id,
+        content,
+      });
+      const updated = await client.query(
+        `UPDATE handover_snapshots
+         SET content=$3::jsonb,source_hash=$4,content_hash=$4,
+             clinical_bound=true,version=version+1
+         WHERE organization_id=$1 AND id=$2 AND version=$5 AND clinical_bound=false`,
+        [
+          organizationId,
+          handoverId,
+          JSON.stringify(content),
+          sourceHash,
+          version,
+        ],
+      );
+      if (updated.rowCount !== 1) throw new Error("HANDOVER_VERSION_STALE");
+      await client.query("COMMIT");
+      return await this.getWorkday(actorId, role);
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
   private async setThreadPatientContext(
     client: pg.PoolClient,
@@ -1745,6 +1927,7 @@ export class PostgresOperationalStore implements OperationalStore {
           source_hash: string;
           content_hash: string;
           content: HandoverContentItem[];
+          clinical_bound: boolean;
           department_id: string;
           shift_key: string;
           owner_actor_id: string;
@@ -1762,6 +1945,7 @@ export class PostgresOperationalStore implements OperationalStore {
           row.version !== command.version ||
           row.source_hash !== row.content_hash ||
           calculatedHash !== row.source_hash ||
+          !row.clinical_bound ||
           !Array.isArray(row.content) ||
           !row.content.some((item) => item.patientId === command.patientId) ||
           !row.patient_ids.includes(command.patientId)
@@ -2676,6 +2860,7 @@ function buildWorkdayView(
     cutoff_at: Date | string;
     source_hash: string;
     content: HandoverContentItem[];
+    clinical_bound: boolean;
     status: "open" | "transferred" | "acknowledged";
   },
   acknowledgedPatientIds: string[],
@@ -2721,7 +2906,15 @@ function buildWorkdayView(
           ? handover.cutoff_at.toISOString()
           : String(handover.cutoff_at),
       contentHash: handover.source_hash,
+      clinicalBound: handover.clinical_bound,
       patientIds: handover.patient_ids,
+      items: handover.content.map((item) => ({
+        patientId: item.patientId,
+        encounterId: item.encounterId,
+        currentImportant: [...item.currentImportant],
+        recentChanges: [...item.recentChanges],
+        openQuestions: [...item.openQuestions],
+      })),
       acknowledgedPatientIds,
       status: displayedHandoverStatus,
       nextResponsibleActorId:
@@ -2763,16 +2956,35 @@ function memoryWorkdayView(
   session: MemorySession,
   transfers: ResponsibilityTransferView[],
   handoverSession: MemorySession,
+  clinicalItems?: HandoverClinicalSnapshotItem[],
 ): WorkdayView {
   const configuredWorkday = workdayConfiguration(
     handoverSession.actorId,
     handoverSession.effectiveRole,
   );
+  const clinicalByPatient = new Map(
+    (clinicalItems ?? []).map((item) => [item.patientId, item]),
+  );
+  const content = handoverContent(configuredWorkday.patientIds).map((base) => {
+    const clinical = clinicalByPatient.get(base.patientId);
+    return clinical
+      ? {
+          ...base,
+          encounterId: clinical.encounterId,
+          currentImportant: [...clinical.currentImportant],
+          recentChanges: [...clinical.recentChanges],
+          openQuestions: [...clinical.openQuestions],
+        }
+      : base;
+  });
+  const clinicalBound =
+    content.length === clinicalByPatient.size &&
+    content.every((item) => item.encounterId !== null);
   return buildWorkdayView(
     session,
     {
       id: handoverSession.handoverId,
-      version: 1,
+      version: clinicalBound ? 2 : 1,
       shift_key: configuredWorkday.shiftKey,
       patient_ids: configuredWorkday.patientIds,
       cutoff_at: session.startedAt,
@@ -2780,9 +2992,10 @@ function memoryWorkdayView(
         departmentId: session.departmentId,
         shiftKey: configuredWorkday.shiftKey,
         actorId: handoverSession.actorId,
-        content: handoverContent(configuredWorkday.patientIds),
+        content,
       }),
-      content: handoverContent(configuredWorkday.patientIds),
+      content,
+      clinical_bound: clinicalBound,
       status: handoverSession.handoverStatus,
     },
     session.acknowledgedPatientIds,

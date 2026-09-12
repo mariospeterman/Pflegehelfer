@@ -1157,6 +1157,127 @@ export function buildApp(
     return operationalStore.getOrStartSession(actorId, actor.role);
   });
 
+  const boundClinicalWorkday = async (actorId: string) => {
+    const actor = service.user(actorId);
+    let workday = await operationalStore.getWorkday(actorId, actor.role);
+    if (workday.handover.clinicalBound) return workday;
+    const snapshot = service.snapshot(actorId, actor.defaultPurpose);
+    const patientById = new Map(
+      snapshot.patients.map((patient) => [patient.id, patient]),
+    );
+    const clinicalTime = (value: string) =>
+      new Intl.DateTimeFormat("de-CH", {
+        dateStyle: "short",
+        timeStyle: "short",
+        timeZone: siteConfiguration.timeZone,
+      }).format(new Date(value));
+    const items = workday.handover.patientIds.map((patientId) => {
+      const patient = patientById.get(patientId);
+      if (!patient)
+        throw new DomainError(
+          "AUTH_DENIED",
+          "Der zugewiesene Patientenkontext ist für diese Rolle nicht freigegeben.",
+          403,
+        );
+      const latestObservation = snapshot.observations
+        .filter(
+          (item) =>
+            item.patientId === patientId &&
+            item.encounterId === patient.encounterId,
+        )
+        .sort((left, right) =>
+          right.effectiveAt.localeCompare(left.effectiveAt),
+        )[0];
+      const latestNote = snapshot.notes
+        .filter(
+          (item) =>
+            item.patientId === patientId &&
+            item.encounterId === patient.encounterId,
+        )
+        .sort((left, right) =>
+          (right.approvedAt ?? right.source.effectiveAt).localeCompare(
+            left.approvedAt ?? left.source.effectiveAt,
+          ),
+        )[0];
+      const observationText = latestObservation
+        ? `${latestObservation.label}: ${latestObservation.value}${
+            latestObservation.secondaryValue === null
+              ? ""
+              : `/${latestObservation.secondaryValue}`
+          } ${latestObservation.unit} (${clinicalTime(latestObservation.effectiveAt)})`
+        : null;
+      const currentImportant = [
+        ...patient.risks.map((risk) => `Risiko: ${risk}`),
+        patient.allergyStatus === "confirmed"
+          ? `Allergien: ${patient.allergies.join(", ")}`
+          : patient.allergyStatus === "explicit-negative"
+            ? "Allergien: keine bekannten"
+            : "Allergiestatus: ungeklärt",
+      ];
+      const openTasks = snapshot.tasks
+        .filter(
+          (task) =>
+            task.patientId === patientId &&
+            task.encounterId === patient.encounterId &&
+            task.state !== "completed",
+        )
+        .map(
+          (task) =>
+            `Aufgabe: ${task.title} (${
+              {
+                new: "neu",
+                accepted: "angenommen",
+                "in-progress": "in Arbeit",
+                waiting: "wartet",
+                escalated: "eskaliert",
+                completed: "erledigt",
+              }[task.state]
+            })`,
+        );
+      const openCommunications = snapshot.communications
+        .filter(
+          (item) =>
+            item.patientId === patientId &&
+            item.encounterId === patient.encounterId &&
+            item.state !== "closed",
+        )
+        .map(
+          (item) =>
+            `Rückfrage an ${item.recipientId ?? item.recipientRole}: ${item.request} (${
+              {
+                sent: "gesendet",
+                acknowledged: "bestätigt",
+                answered: "beantwortet",
+                closed: "geschlossen",
+                escalated: "eskaliert",
+              }[item.state]
+            })`,
+        );
+      return {
+        patientId,
+        encounterId: patient.encounterId,
+        currentImportant,
+        recentChanges: [
+          ...(observationText ? [observationText] : []),
+          ...(latestNote
+            ? [
+                `Dokumentation (${clinicalTime(latestNote.approvedAt ?? latestNote.source.effectiveAt)}): ${latestNote.structuredText}`,
+              ]
+            : []),
+        ],
+        openQuestions: [...openTasks, ...openCommunications],
+      };
+    });
+    workday = await operationalStore.bindHandoverClinicalSnapshot(
+      actorId,
+      actor.role,
+      workday.handover.id,
+      workday.handover.version,
+      items,
+    );
+    return workday;
+  };
+
   app.get("/api/v1/workday", async (request) => {
     await persistenceQueue;
     const actorId = userId(request);
@@ -1167,7 +1288,7 @@ export function buildApp(
         "Der klinische Arbeitstag ist nur für zugewiesene Pflegerollen verfügbar.",
         403,
       );
-    const workday = await operationalStore.getWorkday(actorId, actor.role);
+    const workday = await boundClinicalWorkday(actorId);
     return {
       ...workday,
       providerState: service.providerSyncState(workday.handover.patientIds),
@@ -1253,6 +1374,8 @@ export function buildApp(
         z.object({ type: z.literal("close-shift") }).strict(),
       ])
       .parse(request.body) as WorkdayCommand;
+    if (command.type === "acknowledge-handover")
+      await boundClinicalWorkday(actorId);
     if ("patientId" in command) {
       const allowedPatient = service
         .snapshot(actorId, actor.defaultPurpose)

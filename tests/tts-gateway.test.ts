@@ -38,7 +38,8 @@ describe("TTS privacy and acceptance boundary", () => {
   it("uses the compatible speech endpoint and accepts only after real audio", async () => {
     const fetchMock = vi.fn((_url: string, init?: RequestInit) => {
       expect(init?.redirect).toBe("error");
-      expect(JSON.parse(String(init?.body))).toEqual({
+      expect(typeof init?.body).toBe("string");
+      expect(JSON.parse(init?.body as string)).toEqual({
         model: "tts-test",
         voice: "test-voice",
         input: "Synthetischer Test.",

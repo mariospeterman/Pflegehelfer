@@ -52,6 +52,46 @@ async function acknowledgeApiHandover(
 }
 
 describe("interrupted nursing shift", () => {
+  it("freezes a four-part, encounter-bound clinical handover before acknowledgement", async () => {
+    const app = buildApp(undefined, { demoMode: true });
+    apps.push(app);
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/v1/workday",
+      headers: { "x-demo-user": "u-assistant" },
+    });
+    expect(response.statusCode).toBe(200);
+    const workday = response.json<{
+      handover: {
+        version: number;
+        clinicalBound: boolean;
+        patientIds: string[];
+        items: Array<{
+          patientId: string;
+          encounterId: string;
+          currentImportant: string[];
+          recentChanges: string[];
+          openQuestions: string[];
+        }>;
+      };
+    }>();
+    expect(workday.handover).toMatchObject({
+      clinicalBound: true,
+      version: 2,
+    });
+    expect(workday.handover.items).toHaveLength(
+      workday.handover.patientIds.length,
+    );
+    expect(
+      workday.handover.items.every(
+        (item) => Boolean(item.encounterId) && item.currentImportant.length > 0,
+      ),
+    ).toBe(true);
+    expect(
+      workday.handover.items.find((item) => item.patientId === "p-anna"),
+    ).toMatchObject({ encounterId: "enc-anna-2026" });
+  }, 30_000);
+
   it("denies a nursing workday without an exact actor and role assignment", async () => {
     const store = new InMemoryOperationalStore();
     await expect(

@@ -4,6 +4,9 @@ import { join, relative } from "node:path";
 const root = process.cwd();
 const ignored = new Set([
   ".git",
+  // Generated, git-ignored local runtime secrets are expected to contain
+  // credentials. The tracked .env.example remains in scope.
+  ".env.demo",
   "node_modules",
   "dist",
   "artifacts",

@@ -31,7 +31,15 @@ export interface WorkdayView {
     shiftKey: string;
     cutoffAt: string;
     contentHash: string;
+    clinicalBound: boolean;
     patientIds: string[];
+    items: Array<{
+      patientId: string;
+      encounterId: string | null;
+      currentImportant: string[];
+      recentChanges: string[];
+      openQuestions: string[];
+    }>;
     acknowledgedPatientIds: string[];
     status: "open" | "transferred" | "acknowledged";
     nextResponsibleActorId: string;
