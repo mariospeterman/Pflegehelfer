@@ -146,8 +146,19 @@ describe("interrupted nursing shift", () => {
       kind: "planned",
       title: "Morgenpflege und Mobilisation",
     });
-    expect((await store.getOrStartSession(actor, role)).patientId).toBe(
-      "p-anna",
+    expect(await store.getOrStartSession(actor, role)).toMatchObject({
+      patientId: "p-anna",
+      encounterId: "enc-anna",
+    });
+    expect(await store.listConversations(actor, role)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "patient-assistant",
+          patientId: "p-anna",
+          encounterId: "enc-anna",
+          active: true,
+        }),
+      ]),
     );
     const annaEpisode = workday.activeEpisode!;
     workday = await store.applyWorkdayCommand(actor, role, {

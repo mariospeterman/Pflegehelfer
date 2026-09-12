@@ -662,8 +662,12 @@ export class InMemoryOperationalStore implements OperationalStore {
         completionEvidence: null,
       });
       session.currentStepId = "work";
-      session.patientId = command.patientId;
-      session.contextRevision += 1;
+      await this.changePatientContext(
+        actorId,
+        role,
+        command.patientId,
+        command.encounterId,
+      );
     } else if (command.type === "interrupt-and-start") {
       const active = session.episodes.find(
         (episode) =>
@@ -685,8 +689,12 @@ export class InMemoryOperationalStore implements OperationalStore {
         completionEvidence: null,
       });
       session.currentStepId = "work";
-      session.patientId = command.patientId;
-      session.contextRevision += 1;
+      await this.changePatientContext(
+        actorId,
+        role,
+        command.patientId,
+        command.encounterId,
+      );
     } else {
       const episode = [
         "close-shift",
@@ -722,8 +730,12 @@ export class InMemoryOperationalStore implements OperationalStore {
         if (session.episodes.some((item) => item.state === "active"))
           throw new Error("ACTIVE_EPISODE_REQUIRES_PAUSE");
         episode.state = "active";
-        session.patientId = episode.patientId;
-        session.contextRevision += 1;
+        await this.changePatientContext(
+          actorId,
+          role,
+          episode.patientId,
+          episode.encounterId,
+        );
       }
       if (
         command.type === "save-episode-draft" &&

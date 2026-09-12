@@ -827,8 +827,16 @@ export function App() {
   useEffect(() => {
     const controller = new AbortController();
     let reconnect: number | null = null;
+    let reloadTimer: number | null = null;
     let stopped = false;
     let lastEventId = 0;
+    const scheduleReload = () => {
+      if (reloadTimer !== null) window.clearTimeout(reloadTimer);
+      reloadTimer = window.setTimeout(() => {
+        reloadTimer = null;
+        void load();
+      }, 75);
+    };
     const connect = async () => {
       try {
         const response = await fetch("/api/v1/events", {
@@ -852,7 +860,7 @@ export function App() {
           for (const frame of frames) {
             const id = /^id:\s*(\d+)$/m.exec(frame)?.[1];
             if (id) lastEventId = Number(id);
-            if (frame.includes("event: snapshot-invalidated")) void load();
+            if (frame.includes("event: snapshot-invalidated")) scheduleReload();
           }
         }
       } catch (failure) {
@@ -869,6 +877,7 @@ export function App() {
       stopped = true;
       controller.abort();
       if (reconnect !== null) window.clearTimeout(reconnect);
+      if (reloadTimer !== null) window.clearTimeout(reloadTimer);
     };
   }, [load, userId]);
 
