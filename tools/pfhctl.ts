@@ -2,8 +2,14 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
+import pg from "pg";
 import { AsrGateway } from "../src/ai/asr-gateway.js";
 import { parseSiteConfiguration } from "../src/core/site-config.js";
+import {
+  loadMigrationFiles,
+  verifyMigrationHistory,
+  type MigrationHistoryRow,
+} from "../src/infrastructure/migrations.js";
 
 const [group = "help", action = ""] = process.argv.slice(2);
 const baseUrl = process.env.PFH_BASE_URL ?? "http://127.0.0.1:4173";
@@ -41,7 +47,40 @@ if (group === "preflight") {
   );
 } else if (group === "status")
   console.log(JSON.stringify(await request("/ready"), null, 2));
-else if (group === "provider" && action === "list") {
+else if (group === "migrations" && action === "status") {
+  const databaseUrl = process.env.PFH_OPERATIONAL_DATABASE_URL;
+  if (!databaseUrl)
+    throw new Error("PFH_OPERATIONAL_DATABASE_URL ist nicht konfiguriert.");
+  const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+  try {
+    const migrations = await loadMigrationFiles();
+    const history = await pool.query<MigrationHistoryRow>(
+      `SELECT version,name,checksum,provenance FROM pfh_migration_history
+       ORDER BY version`,
+    );
+    verifyMigrationHistory(
+      migrations,
+      history.rows,
+      process.env.PFH_DEMO_MODE === "true",
+    );
+    console.log(
+      JSON.stringify(
+        {
+          status: history.rows.some(
+            ({ provenance }) => provenance === "legacy-unverified",
+          )
+            ? "DEMO_LEGACY_ATTESTATION"
+            : "VERIFIED",
+          migrations: history.rows,
+        },
+        null,
+        2,
+      ),
+    );
+  } finally {
+    await pool.end();
+  }
+} else if (group === "provider" && action === "list") {
   const [production, simulators] = await Promise.all([
     request("/api/v1/providers/registry?profile=production"),
     request("/api/v1/providers/registry?profile=synthetic-simulator"),
@@ -104,6 +143,14 @@ else if (group === "asr" && action === "test") {
       2,
     ),
   );
+} else if (group === "tts" && action === "test") {
+  console.log(
+    JSON.stringify(
+      await request("/api/v1/ai/tts-test", { method: "POST", body: "{}" }),
+      null,
+      2,
+    ),
+  );
 } else if (group === "site" && action === "validate") {
   const files = [
     "config/sites/tertianum-kronenhof.json",
@@ -124,7 +171,7 @@ else if (group === "asr" && action === "test") {
   );
 else {
   console.log(
-    "Usage: pfhctl preflight | status | provider list|test | demo reset | fhir import|verify|validate | model list|test | asr test | site validate | backup restore-test",
+    "Usage: pfhctl preflight | status | migrations status | provider list|test | demo reset | fhir import|verify|validate | model list|test | asr test | tts test | site validate | backup restore-test",
   );
   if (group !== "help") process.exitCode = 2;
 }

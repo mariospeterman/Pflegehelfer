@@ -29,6 +29,8 @@ export interface WorkdayView {
     id: string;
     version: number;
     shiftKey: string;
+    cutoffAt: string;
+    contentHash: string;
     patientIds: string[];
     acknowledgedPatientIds: string[];
     status: "open" | "transferred" | "acknowledged";

@@ -23,6 +23,32 @@ async function acknowledgeHandover(
 }
 
 describe.runIf(Boolean(databaseUrl))("PostgreSQL operational store", () => {
+  it("rejects acknowledgement when frozen handover content was altered", async () => {
+    const store = new PostgresOperationalStore(databaseUrl!);
+    const inspectionPool = new Pool({ connectionString: databaseUrl });
+    try {
+      await store.initialize();
+      await store.resetDemoState();
+      const workday = await store.getWorkday("u-assistant", "care-assistant");
+      await inspectionPool.query(
+        `UPDATE handover_snapshots
+         SET content=jsonb_set(content, '{0,title}', '"Geänderter Auftrag"')
+         WHERE id=$1`,
+        [workday.handover.id],
+      );
+      await expect(
+        store.applyWorkdayCommand("u-assistant", "care-assistant", {
+          type: "acknowledge-handover",
+          handoverId: workday.handover.id,
+          patientId: workday.handover.patientIds[0]!,
+          version: workday.handover.version,
+        }),
+      ).rejects.toThrow("HANDOVER_VERSION_STALE");
+    } finally {
+      await Promise.all([store.close(), inspectionPool.end()]);
+    }
+  });
+
   it("reuses one active session when initial PWA requests race", async () => {
     const store = new PostgresOperationalStore(databaseUrl!);
     const actorId = "u-assistant";

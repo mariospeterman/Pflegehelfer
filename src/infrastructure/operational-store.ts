@@ -1,6 +1,4 @@
 import { createHash, randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
 import pg from "pg";
 import { workflowForRole, type WorkflowDefinition } from "../core/workflows.js";
 import type { DurableIntentRecord } from "../core/assistant.js";
@@ -17,6 +15,7 @@ import type {
   WorkEpisodeView,
 } from "../core/workday.js";
 import { siteConfiguration } from "../core/site-config.js";
+import { runMigrations } from "./migrations.js";
 
 export type {
   WorkdayCommand,
@@ -38,11 +37,32 @@ function facilityDateKey(value = new Date()): string {
   }).format(value);
 }
 
+interface HandoverContentItem {
+  patientId: string;
+  title: string;
+  reason: string;
+  window: string;
+}
+
+function handoverContent(patientIds: readonly string[]): HandoverContentItem[] {
+  return patientIds.map((patientId) => {
+    const assignment = siteConfiguration.nursingAssignments.find(
+      (item) => item.patientId === patientId,
+    );
+    return {
+      patientId,
+      title: assignment?.title ?? "Individueller Pflegeauftrag",
+      reason: assignment?.reason ?? "Gemäss freigegebenem Pflegeplan",
+      window: assignment?.window ?? "Im Schichtverlauf",
+    };
+  });
+}
+
 function handoverSourceHash(input: {
   departmentId: string;
   shiftKey: string;
   actorId: string;
-  patientIds: readonly string[];
+  content: readonly HandoverContentItem[];
 }): string {
   return createHash("sha256")
     .update(
@@ -51,7 +71,9 @@ function handoverSourceHash(input: {
         departmentId: input.departmentId,
         shiftKey: input.shiftKey,
         actorId: input.actorId,
-        patientIds: [...input.patientIds].sort(),
+        content: [...input.content].sort((left, right) =>
+          left.patientId.localeCompare(right.patientId),
+        ),
       }),
     )
     .digest("hex");
@@ -857,25 +879,10 @@ export class PostgresOperationalStore implements OperationalStore {
     });
   }
   async initialize(): Promise<void> {
-    const sql = await readFile(
-      resolve(process.cwd(), "db/migrations/001_operational_kernel.sql"),
-      "utf8",
-    );
-    const schemaClient = await this.pool.connect();
-    try {
-      await schemaClient.query(
-        "SELECT pg_advisory_lock(hashtextextended($1, 0))",
-        [`${organizationId}:pflegehelfer-schema-migrations`],
-      );
-      await schemaClient.query(sql);
-    } finally {
-      await schemaClient
-        .query("SELECT pg_advisory_unlock(hashtextextended($1, 0))", [
-          `${organizationId}:pflegehelfer-schema-migrations`,
-        ])
-        .catch(() => undefined);
-      schemaClient.release();
-    }
+    await runMigrations(this.pool, {
+      allowLegacyAttestation: process.env.PFH_DEMO_MODE === "true",
+      lockName: `${organizationId}:pflegehelfer-schema-migrations`,
+    });
     await this.pool.query(
       `INSERT INTO organizations (id,name) VALUES ($1,$2)
        ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name`,
@@ -1085,8 +1092,8 @@ export class PostgresOperationalStore implements OperationalStore {
         if (configuredWorkday)
           await client.query(
             `INSERT INTO handover_snapshots
-             (organization_id,id,department_id,shift_key,version,patient_ids,cutoff_at,source_hash,status,owner_actor_id,created_by)
-           VALUES ($1,$2,$3,$4,1,$5,now(),$6,'open',$7,$7)
+             (organization_id,id,department_id,shift_key,version,patient_ids,cutoff_at,source_hash,status,owner_actor_id,created_by,content,content_hash)
+           VALUES ($1,$2,$3,$4,1,$5,now(),$6,'open',$7,$7,$8::jsonb,$6)
            ON CONFLICT DO NOTHING`,
             [
               organizationId,
@@ -1098,9 +1105,10 @@ export class PostgresOperationalStore implements OperationalStore {
                 departmentId,
                 shiftKey: configuredWorkday.shiftKey,
                 actorId,
-                patientIds: configuredWorkday.patientIds,
+                content: handoverContent(configuredWorkday.patientIds),
               }),
               actorId,
+              JSON.stringify(handoverContent(configuredWorkday.patientIds)),
             ],
           );
         await client.query(
@@ -1483,8 +1491,8 @@ export class PostgresOperationalStore implements OperationalStore {
     const configuredWorkday = workdayConfiguration(actorId, role);
     await this.pool.query(
       `INSERT INTO handover_snapshots
-         (organization_id,id,department_id,shift_key,version,patient_ids,cutoff_at,source_hash,status,owner_actor_id,created_by)
-       VALUES ($1,$2,$3,$4,1,$5,now(),$6,'open',$7,$7)
+         (organization_id,id,department_id,shift_key,version,patient_ids,cutoff_at,source_hash,status,owner_actor_id,created_by,content,content_hash)
+       VALUES ($1,$2,$3,$4,1,$5,now(),$6,'open',$7,$7,$8::jsonb,$6)
        ON CONFLICT DO NOTHING`,
       [
         organizationId,
@@ -1496,14 +1504,16 @@ export class PostgresOperationalStore implements OperationalStore {
           departmentId: session.departmentId,
           shiftKey: configuredWorkday.shiftKey,
           actorId,
-          patientIds: configuredWorkday.patientIds,
+          content: handoverContent(configuredWorkday.patientIds),
         }),
         actorId,
+        JSON.stringify(handoverContent(configuredWorkday.patientIds)),
       ],
     );
     const handoverResult = await this.pool.query(
       `SELECT * FROM handover_snapshots
        WHERE organization_id=$1 AND department_id=$2
+         AND content IS NOT NULL AND content_hash=source_hash
          AND ((shift_key=$3 AND owner_actor_id=$4) OR receiving_actor_id=$4)
        ORDER BY CASE
          WHEN receiving_actor_id=$4 AND status='transferred' THEN 0
@@ -1524,6 +1534,9 @@ export class PostgresOperationalStore implements OperationalStore {
       version: number;
       shift_key: string;
       patient_ids: string[];
+      cutoff_at: Date | string;
+      source_hash: string;
+      content: HandoverContentItem[];
       status: "open" | "transferred" | "acknowledged";
     };
     const acknowledgements = await this.pool.query<{ patient_id: string }>(
@@ -1680,10 +1693,28 @@ export class PostgresOperationalStore implements OperationalStore {
           id: string;
           version: number;
           patient_ids: string[];
+          source_hash: string;
+          content_hash: string;
+          content: HandoverContentItem[];
+          department_id: string;
+          shift_key: string;
+          owner_actor_id: string;
         };
+        const calculatedHash = row
+          ? handoverSourceHash({
+              departmentId: row.department_id,
+              shiftKey: row.shift_key,
+              actorId: row.owner_actor_id,
+              content: row.content,
+            })
+          : null;
         if (
           !row ||
           row.version !== command.version ||
+          row.source_hash !== row.content_hash ||
+          calculatedHash !== row.source_hash ||
+          !Array.isArray(row.content) ||
+          !row.content.some((item) => item.patientId === command.patientId) ||
           !row.patient_ids.includes(command.patientId)
         )
           throw new Error("HANDOVER_VERSION_STALE");
@@ -1720,6 +1751,7 @@ export class PostgresOperationalStore implements OperationalStore {
             `WITH target AS (
                SELECT * FROM handover_snapshots
                WHERE organization_id=$1 AND department_id=$2
+                 AND content IS NOT NULL AND content_hash=source_hash
                  AND ((shift_key=$3 AND owner_actor_id=$4) OR receiving_actor_id=$4)
                ORDER BY CASE
                  WHEN receiving_actor_id=$4 AND status='transferred' THEN 0
@@ -2544,6 +2576,9 @@ function buildWorkdayView(
     version: number;
     shift_key: string;
     patient_ids: string[];
+    cutoff_at: Date | string;
+    source_hash: string;
+    content: HandoverContentItem[];
     status: "open" | "transferred" | "acknowledged";
   },
   acknowledgedPatientIds: string[],
@@ -2584,6 +2619,11 @@ function buildWorkdayView(
       id: handover.id,
       version: Number(handover.version),
       shiftKey: handover.shift_key,
+      cutoffAt:
+        handover.cutoff_at instanceof Date
+          ? handover.cutoff_at.toISOString()
+          : String(handover.cutoff_at),
+      contentHash: handover.source_hash,
       patientIds: handover.patient_ids,
       acknowledgedPatientIds,
       status: displayedHandoverStatus,
@@ -2592,21 +2632,17 @@ function buildWorkdayView(
           workdayConfiguration(session.actorId, session.effectiveRole).shiftId
         ]!.nextResponsibleActorId,
     },
-    plan: handover.patient_ids.map((patientId) => {
+    plan: handover.content.map((snapshot) => {
+      const patientId = snapshot.patientId;
       const episode = [...episodes]
         .reverse()
         .find(
           (item) => item.patientId === patientId && item.kind === "planned",
         );
-      const assignment = siteConfiguration.nursingAssignments.find(
-        (item) => item.patientId === patientId,
-      );
       return {
         patientId,
-        title: assignment?.title ?? "Individueller Pflegeauftrag",
-        reason: assignment
-          ? `${assignment.window} · ${assignment.reason}`
-          : "Gemäss freigegebenem Pflegeplan",
+        title: snapshot.title,
+        reason: `${snapshot.window} · ${snapshot.reason}`,
         status:
           episode?.state === "deferred"
             ? "paused"
@@ -2642,6 +2678,14 @@ function memoryWorkdayView(
       version: 1,
       shift_key: configuredWorkday.shiftKey,
       patient_ids: configuredWorkday.patientIds,
+      cutoff_at: session.startedAt,
+      source_hash: handoverSourceHash({
+        departmentId: session.departmentId,
+        shiftKey: configuredWorkday.shiftKey,
+        actorId: handoverSession.actorId,
+        content: handoverContent(configuredWorkday.patientIds),
+      }),
+      content: handoverContent(configuredWorkday.patientIds),
       status: handoverSession.handoverStatus,
     },
     session.acknowledgedPatientIds,
