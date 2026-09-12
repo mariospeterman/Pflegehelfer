@@ -27,6 +27,14 @@ function resizedAssignmentPack(count: number) {
 }
 
 describe("versioned site-pack configuration", () => {
+  it("accepts an explicitly assigned shift with no patients", () => {
+    const pack = structuredClone(siteConfiguration);
+    pack.staffAssignments[0]!.patientIds = [];
+    expect(
+      parseSiteConfiguration(pack).staffAssignments[0]!.patientIds,
+    ).toEqual([]);
+  });
+
   it.each([2, 12])(
     "accepts %i assigned patients without code constants",
     (count) => {

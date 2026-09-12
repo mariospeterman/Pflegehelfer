@@ -34,6 +34,12 @@ try {
       "# PFH_TTS_MODEL=gpt-4o-mini-tts",
     );
   }
+  if (!/^PFH_TTS_MODE=/m.test(existing))
+    additions.push(
+      "",
+      "# Browser speech output is synthetic-demo only. Use hosted-test or local-openai for a server adapter.",
+      "PFH_TTS_MODE=browser-demo",
+    );
   if (additions.length)
     await appendFile(target, `${additions.join("\n")}\n`, {
       encoding: "utf8",

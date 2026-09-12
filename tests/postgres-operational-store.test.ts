@@ -23,6 +23,30 @@ async function acknowledgeHandover(
 }
 
 describe.runIf(Boolean(databaseUrl))("PostgreSQL operational store", () => {
+  it("durably replays only events addressed to the requesting actor", async () => {
+    const store = new PostgresOperationalStore(databaseUrl!);
+    try {
+      await store.initialize();
+      await store.resetDemoState();
+      const first = await store.appendUiInvalidation("u-assistant", {
+        reason: "task-changed",
+      });
+      await store.appendUiInvalidation("u-nurse", {
+        reason: "private-change",
+      });
+      const third = await store.appendUiInvalidation("u-assistant", {
+        reason: "note-changed",
+      });
+      expect(await store.listUiEventsAfter("u-assistant", 0)).toMatchObject([
+        { id: first, payload: { reason: "task-changed" } },
+        { id: third, payload: { reason: "note-changed" } },
+      ]);
+      expect(await store.listUiEventsAfter("u-nurse", 0)).toHaveLength(1);
+    } finally {
+      await store.close();
+    }
+  });
+
   it("rejects acknowledgement when frozen handover content was altered", async () => {
     const store = new PostgresOperationalStore(databaseUrl!);
     const inspectionPool = new Pool({ connectionString: databaseUrl });

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { Resource } from "@medplum/fhirtypes";
 import { AuditChain } from "./audit.js";
 import {
+  completionEvidenceIsGrounded,
   completionEvidenceIsIncomplete,
   observationNeedsHighAssurance,
   requiresDedicatedTaskWorkflow,
@@ -652,10 +653,13 @@ export class PflegehelferService {
           "Abschlussnachweis ist erforderlich.",
           400,
         );
-      if (completionEvidenceIsIncomplete(input.evidence))
+      if (
+        completionEvidenceIsIncomplete(input.evidence) ||
+        !completionEvidenceIsGrounded(input.evidence, task.title)
+      )
         throw new DomainError(
           "VALIDATION",
-          "Der Nachweis beschreibt offene oder nicht durchgeführte Arbeit und kann diese Aufgabe nicht abschliessen.",
+          "Der Nachweis muss sichere, aktuelle und zur Aufgabe passende durchgeführte Arbeit beschreiben. Messwerte werden separat geprüft.",
           422,
         );
       task.state = "completed";

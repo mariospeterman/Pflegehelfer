@@ -740,7 +740,7 @@ export function deterministicAssistantProposal(
   options: ClinicalCompilerOptions = {},
 ): AssistantProposal | null {
   const source = prompt.slice(0, 1200).trim();
-  if (!source) return null;
+  if (source.length < 3) return null;
 
   // Imperative medication changes are outside this compiler. Historical or
   // completed medication statements remain documentable reports.
@@ -1857,6 +1857,73 @@ export function completionEvidenceIsIncomplete(source: string): boolean {
         ["partial", "not-performed"].includes(item.completionStatus),
     ),
   );
+}
+
+const completionStopWords = new Set([
+  "aktuell",
+  "arbeit",
+  "durchgeführt",
+  "erledigt",
+  "geplant",
+  "geplante",
+  "patient",
+  "patientin",
+  "pflege",
+  "versorgung",
+  "wurde",
+]);
+
+function evidenceStems(value: string): Set<string> {
+  return new Set(
+    value
+      .toLocaleLowerCase("de-CH")
+      .replace(/[^\p{L}\p{N}]+/gu, " ")
+      .split(/\s+/)
+      .filter((token) => token.length >= 4 && !completionStopWords.has(token))
+      .map((token) => token.slice(0, 6)),
+  );
+}
+
+/**
+ * Direct task/workday completion is a narrow, deterministic path. It accepts
+ * only current, certain performed work that is recognisably about the exact
+ * task/episode. Measurements and ambiguous meaning must go through the normal
+ * proposal review so high-assurance and range rules cannot be bypassed.
+ */
+export function completionEvidenceIsGrounded(
+  source: string,
+  expectedActivity: string,
+): boolean {
+  if (source.trim().length < 10 || completionEvidenceIsIncomplete(source))
+    return false;
+  let meaning: AssistantProposal | null;
+  try {
+    meaning = deterministicAssistantProposal(source);
+  } catch {
+    return false;
+  }
+  if (
+    !meaning ||
+    meaning.ambiguities.length > 0 ||
+    meaning.observations.length > 0 ||
+    meaning.workPerformed.some(
+      (item) =>
+        item.status !== "performed" ||
+        item.reportingStatus !== "current" ||
+        item.certainty !== "certain",
+    )
+  )
+    return false;
+  const currentCompletedNote = meaning.actions.some(
+    (action) =>
+      action.type === "note-proposal" &&
+      action.reportingStatus === "current" &&
+      action.completionStatus === "completed",
+  );
+  if (!currentCompletedNote) return false;
+  const evidence = evidenceStems(source);
+  const expected = evidenceStems(expectedActivity);
+  return [...expected].some((stem) => evidence.has(stem));
 }
 
 export function actionReviewLabel(action: ExecutableAssistantAction): string {

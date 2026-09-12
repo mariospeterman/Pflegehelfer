@@ -335,7 +335,7 @@ function ContextPanel({
         <input
           type="search"
           value={search}
-          placeholder="Patienten und Gespräche suchen"
+          placeholder="Patienten suchen"
           onChange={(event) => setSearch(event.target.value)}
         />
       </label>
@@ -358,6 +358,14 @@ function ContextPanel({
             key={label}
             disabled={busy}
             onClick={() => {
+              if (label === "Mein Assistent") {
+                void onPatient(null).then((changed) => {
+                  if (!changed) return;
+                  onPrompt(prompt);
+                  close();
+                });
+                return;
+              }
               onPrompt(prompt);
               close();
             }}

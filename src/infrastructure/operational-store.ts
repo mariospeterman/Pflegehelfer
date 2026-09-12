@@ -71,9 +71,14 @@ function handoverSourceHash(input: {
         departmentId: input.departmentId,
         shiftKey: input.shiftKey,
         actorId: input.actorId,
-        content: [...input.content].sort((left, right) =>
-          left.patientId.localeCompare(right.patientId),
-        ),
+        content: [...input.content]
+          .sort((left, right) => left.patientId.localeCompare(right.patientId))
+          .map((item) => [
+            item.patientId,
+            item.title,
+            item.reason,
+            item.window,
+          ]),
       }),
     )
     .digest("hex");
@@ -187,6 +192,13 @@ export interface WorkingSessionView {
   startedAt: string;
 }
 
+export interface DurableUiEvent {
+  id: number;
+  eventType: string;
+  payload: Record<string, unknown>;
+  occurredAt: string;
+}
+
 export interface OperationalStore {
   initialize(): Promise<void>;
   getOrStartSession(actorId: string, role: Role): Promise<WorkingSessionView>;
@@ -222,6 +234,15 @@ export interface OperationalStore {
     command: WorkdayCommand,
   ): Promise<WorkdayView>;
   appendAudit(entry: AuditEntry): Promise<void>;
+  appendUiInvalidation(
+    actorId: string,
+    payload: Record<string, unknown>,
+  ): Promise<number>;
+  listUiEventsAfter(
+    actorId: string,
+    afterId: number,
+    limit?: number,
+  ): Promise<DurableUiEvent[]>;
   storeIntentAuthority(input: {
     tokenHash: string;
     record: DurableIntentRecord;
@@ -274,6 +295,7 @@ export class InMemoryOperationalStore implements OperationalStore {
     }
   >();
   private readonly transfers: ResponsibilityTransferView[] = [];
+  private readonly uiEvents: Array<DurableUiEvent & { actorId: string }> = [];
   private readonly authorities = new Map<
     string,
     {
@@ -748,6 +770,32 @@ export class InMemoryOperationalStore implements OperationalStore {
     void entry;
     return Promise.resolve();
   }
+  appendUiInvalidation(
+    actorId: string,
+    payload: Record<string, unknown>,
+  ): Promise<number> {
+    const id = (this.uiEvents.at(-1)?.id ?? 0) + 1;
+    this.uiEvents.push({
+      id,
+      actorId,
+      eventType: "snapshot-invalidated",
+      payload: structuredClone(payload),
+      occurredAt: new Date().toISOString(),
+    });
+    return Promise.resolve(id);
+  }
+  listUiEventsAfter(
+    actorId: string,
+    afterId: number,
+    limit = 100,
+  ): Promise<DurableUiEvent[]> {
+    return Promise.resolve(
+      this.uiEvents
+        .filter((event) => event.actorId === actorId && event.id > afterId)
+        .slice(0, limit)
+        .map(({ actorId: _actorId, ...event }) => structuredClone(event)),
+    );
+  }
   storeIntentAuthority(input: {
     tokenHash: string;
     record: DurableIntentRecord;
@@ -860,6 +908,7 @@ export class InMemoryOperationalStore implements OperationalStore {
     this.sessions.clear();
     this.memoryThreads.clear();
     this.transfers.splice(0, this.transfers.length);
+    this.uiEvents.splice(0, this.uiEvents.length);
     this.authorities.clear();
     this.voiceAuthorities.clear();
     return Promise.resolve();
@@ -2149,6 +2198,51 @@ export class PostgresOperationalStore implements OperationalStore {
       ],
     );
   }
+  async appendUiInvalidation(
+    actorId: string,
+    payload: Record<string, unknown>,
+  ): Promise<number> {
+    const result = await this.pool.query<{ id: string }>(
+      `INSERT INTO domain_events
+         (organization_id,aggregate_type,aggregate_id,event_type,audience,payload)
+       VALUES ($1,'ui-session',$2,'snapshot-invalidated',$3::jsonb,$4::jsonb)
+       RETURNING id::text`,
+      [
+        organizationId,
+        actorId,
+        JSON.stringify({ actorIds: [actorId] }),
+        JSON.stringify(payload),
+      ],
+    );
+    return Number(result.rows[0]!.id);
+  }
+  async listUiEventsAfter(
+    actorId: string,
+    afterId: number,
+    limit = 100,
+  ): Promise<DurableUiEvent[]> {
+    const result = await this.pool.query<{
+      id: string;
+      event_type: string;
+      payload: Record<string, unknown>;
+      occurred_at: Date | string;
+    }>(
+      `SELECT id::text,event_type,payload,occurred_at
+       FROM domain_events
+       WHERE organization_id=$1 AND id>$2 AND audience @> $3::jsonb
+       ORDER BY id ASC LIMIT $4`,
+      [organizationId, afterId, JSON.stringify({ actorIds: [actorId] }), limit],
+    );
+    return result.rows.map((row) => ({
+      id: Number(row.id),
+      eventType: row.event_type,
+      payload: row.payload,
+      occurredAt:
+        row.occurred_at instanceof Date
+          ? row.occurred_at.toISOString()
+          : String(row.occurred_at),
+    }));
+  }
   async storeIntentAuthority(input: {
     tokenHash: string;
     record: DurableIntentRecord;
@@ -2480,6 +2574,9 @@ export class PostgresOperationalStore implements OperationalStore {
         `DELETE FROM assistant_threads WHERE organization_id=$1`,
         [organizationId],
       );
+      await client.query(`DELETE FROM domain_events WHERE organization_id=$1`, [
+        organizationId,
+      ]);
       await client.query("COMMIT");
     } catch (error) {
       await client.query("ROLLBACK");

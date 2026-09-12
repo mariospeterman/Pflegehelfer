@@ -17,6 +17,7 @@ import { TtsGateway } from "../ai/tts-gateway.js";
 import { ModelGateway } from "../ai/model-gateway.js";
 import { ApprovedKnowledgeService } from "../ai/approved-knowledge.js";
 import {
+  completionEvidenceIsGrounded,
   completionEvidenceIsIncomplete,
   requiresDedicatedClinicalWorkflow,
 } from "../ai/assistant-proposal.js";
@@ -422,8 +423,10 @@ export function buildApp(
   };
   const eventSubscribers = new Set<(revision: number) => void>();
   const contextTransitions = new Map<string, Promise<unknown>>();
-  const publishInvalidation = () => {
-    eventRevision += 1;
+  const publishInvalidation = (durableRevision?: number) => {
+    eventRevision = durableRevision
+      ? Math.max(eventRevision + 1, durableRevision)
+      : eventRevision + 1;
     for (const subscriber of eventSubscribers) subscriber(eventRevision);
   };
   const requestCommandKeys = new WeakMap<
@@ -525,8 +528,13 @@ export function buildApp(
         for (const key of service.commandReceiptKeys())
           committedCommandKeys.add(key);
         durableResources = nextResources;
-        if (request?.method === "POST" || (publishChange && stateChanged))
-          publishInvalidation();
+        if (request?.method === "POST") {
+          const revision = await operationalStore.appendUiInvalidation(
+            userId(request),
+            { requestId: request.id },
+          );
+          publishInvalidation(revision);
+        } else if (publishChange && stateChanged) publishInvalidation();
         return result;
       } catch (error) {
         const rejectedEntries = service.audit
@@ -971,7 +979,7 @@ export function buildApp(
 
   app.get("/api/v1/events", async (request, reply) => {
     await persistenceQueue;
-    userId(request);
+    const actorId = userId(request);
     reply.hijack();
     reply.raw.writeHead(200, {
       "content-type": "text/event-stream; charset=utf-8",
@@ -980,25 +988,41 @@ export function buildApp(
       "x-accel-buffering": "no",
       "x-content-type-options": "nosniff",
     });
-    reply.raw.write(
-      `event: connected\ndata: {"revision":${eventRevision}}\n\n`,
-    );
-    const send = (revision: number) => {
-      if (!reply.raw.destroyed)
-        reply.raw.write(
-          `id: ${revision}\nevent: snapshot-invalidated\ndata: {"revision":${revision}}\n\n`,
+    let cursor = Number(request.headers["last-event-id"] ?? 0);
+    if (!Number.isFinite(cursor) || cursor < 0) cursor = 0;
+    reply.raw.write(`event: connected\ndata: {"cursor":${cursor}}\n\n`);
+    let flushing = false;
+    const flush = async () => {
+      if (flushing || reply.raw.destroyed) return;
+      flushing = true;
+      try {
+        const events = await operationalStore.listUiEventsAfter(
+          actorId,
+          cursor,
         );
+        for (const event of events) {
+          if (reply.raw.destroyed) break;
+          cursor = event.id;
+          reply.raw.write(
+            `id: ${event.id}\nevent: ${event.eventType}\ndata: ${JSON.stringify({ revision: event.id })}\n\n`,
+          );
+        }
+      } finally {
+        flushing = false;
+      }
     };
-    const lastEventId = Number(request.headers["last-event-id"] ?? 0);
-    if (Number.isFinite(lastEventId) && lastEventId < eventRevision)
-      send(eventRevision);
+    const send = () => void flush();
+    await flush();
     eventSubscribers.add(send);
+    const replayPoll = setInterval(() => void flush(), 3000);
+    replayPoll.unref();
     const heartbeat = setInterval(() => {
       if (!reply.raw.destroyed) reply.raw.write(": heartbeat\n\n");
     }, 20_000);
     heartbeat.unref();
     request.raw.on("close", () => {
       clearInterval(heartbeat);
+      clearInterval(replayPoll);
       eventSubscribers.delete(send);
     });
   });
@@ -1267,6 +1291,22 @@ export function buildApp(
         422,
       );
     if (command.type === "complete-episode") {
+      const workday = await operationalStore.getWorkday(actorId, actor.role);
+      const episode = workday.episodes.find(
+        (candidate) => candidate.id === command.episodeId,
+      );
+      if (!episode)
+        throw new DomainError(
+          "INVALID_STATE",
+          "Die Arbeitsepisode ist nicht mehr verfügbar.",
+          409,
+        );
+      if (episode.state !== "active")
+        throw new DomainError(
+          "INVALID_STATE",
+          "Nur eine aktive Arbeitsepisode kann abgeschlossen werden.",
+          409,
+        );
       if (requiresDedicatedClinicalWorkflow(command.evidence))
         throw new DomainError(
           "VALIDATION",
@@ -1277,6 +1317,12 @@ export function buildApp(
         throw new DomainError(
           "VALIDATION",
           "Die Angaben beschreiben offene oder nicht durchgeführte Arbeit. Bitte Episode unterbrechen oder Verantwortung sichtbar weitergeben.",
+          422,
+        );
+      if (!completionEvidenceIsGrounded(command.evidence, episode.title))
+        throw new DomainError(
+          "VALIDATION",
+          "Der Abschluss muss sichere, aktuelle und zum Auftrag passende durchgeführte Arbeit beschreiben. Messwerte bitte zuerst im Gespräch prüfen.",
           422,
         );
     }

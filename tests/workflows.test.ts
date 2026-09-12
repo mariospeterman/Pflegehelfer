@@ -55,7 +55,8 @@ describe("deterministic clinical workflows", () => {
     ).toThrow(/Abschlussnachweis/);
     expect(
       service.updateTask("u-assistant", "t-bp-anna", "complete", {
-        evidence: "151/88 mmHg um 08:37 dokumentiert.",
+        evidence:
+          "Blutdruckkontrolle durchgeführt; Messwert separat dokumentiert.",
       }).state,
     ).toBe("completed");
   });
@@ -185,13 +186,17 @@ describe("deterministic clinical workflows", () => {
       attempts: 1,
       errorCode: "PROVIDER_UNAVAILABLE",
     });
-    expect(service.snapshot("u-nurse").notes[0]?.status).toBe(
-      "pending-provider",
-    );
+    expect(
+      service.snapshot("u-nurse").notes.find((note) => note.id === draft.id)
+        ?.status,
+    ).toBe("pending-provider");
     service.setProviderMode("u-it", documentationProvider, "normal");
     const final = (await service.flushOutbox("u-it"))[0];
     expect(final).toMatchObject({ state: "acknowledged", attempts: 2 });
-    expect(service.snapshot("u-nurse").notes[0]?.status).toBe("synced");
+    expect(
+      service.snapshot("u-nurse").notes.find((note) => note.id === draft.id)
+        ?.status,
+    ).toBe("synced");
     expect((await service.flushOutbox("u-it"))[0]?.attempts).toBe(2);
   });
 
