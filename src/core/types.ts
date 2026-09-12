@@ -72,6 +72,7 @@ export interface Patient {
   room: string;
   wardId: string;
   encounterId: string;
+  allergyStatus: "confirmed" | "explicit-negative" | "unknown";
   allergies: string[];
   risks: string[];
   diagnoses: string[];
@@ -83,6 +84,7 @@ export interface Patient {
 export interface ClinicalTask {
   id: string;
   patientId: string | null;
+  encounterId: string | null;
   title: string;
   reason: string;
   requesterId: string;
@@ -103,6 +105,7 @@ export interface ClinicalTask {
 export interface Observation {
   id: string;
   patientId: string;
+  encounterId: string;
   code:
     "blood-pressure" | "temperature" | "oxygen-saturation" | "pulse" | "weight";
   label: string;
@@ -124,6 +127,7 @@ export interface Observation {
 export interface ClinicalNote {
   id: string;
   patientId: string;
+  encounterId: string;
   transcript: string | null;
   structuredText: string;
   criticalEntities: string[];
@@ -141,6 +145,7 @@ export interface ClinicalNote {
 export interface Communication {
   id: string;
   patientId: string;
+  encounterId: string;
   request: string;
   reason: string;
   senderId: string;
@@ -281,6 +286,17 @@ export interface AppSnapshot {
     siteId: string;
     displayName: string;
     dataClass: "synthetic-demo" | "institution-local";
+    governedTopics: Array<{
+      id: string;
+      label: string;
+      description: string;
+      scope: "patient-team" | "department" | "both";
+      allowedUse: Array<"discussion" | "search-filter">;
+      sensitivity: "standard" | "sensitive";
+      owner: string;
+      version: number;
+      synonyms: string[];
+    }>;
   };
   currentUser: DemoUser;
   users: DemoUser[];

@@ -40,7 +40,30 @@ export const assistantComponentSchema = z.discriminatedUnion("type", [
       type: z.literal("PatientSummary"),
       patientId: recordId,
       title: z.string().trim().min(1).max(120),
-      summary: boundedText,
+      narrative: boundedText,
+      sections: z
+        .array(
+          z
+            .object({
+              id: recordId,
+              label: z.string().trim().min(1).max(80),
+              items: z.array(z.string().trim().min(1).max(500)).max(12),
+              state: z.enum([
+                "confirmed",
+                "unknown",
+                "not-supplied",
+                "stale",
+                "conflict",
+                "restricted",
+                "explicit-negative",
+              ]),
+              sourceLabel: z.string().trim().min(1).max(180),
+              effectiveAt: z.string().datetime().nullable(),
+            })
+            .strict(),
+        )
+        .min(1)
+        .max(12),
       sourceLabel: z.string().trim().min(1).max(180),
     })
     .strict(),
@@ -59,6 +82,25 @@ export const assistantComponentSchema = z.discriminatedUnion("type", [
       patientId: recordId,
       label: z.string().trim().min(1).max(80),
       value: z.string().trim().min(1).max(80),
+      points: z
+        .array(
+          z
+            .object({
+              id: recordId,
+              value: z.number(),
+              secondaryValue: z.number().nullable(),
+              unit: z.enum(["mmHg", "°C", "%", "/min", "kg"]),
+              effectiveAt: z.string().datetime(),
+              status: z.enum([
+                "approved",
+                "draft",
+                "pending-review",
+                "corrected",
+              ]),
+            })
+            .strict(),
+        )
+        .max(12),
       sourceLabel: z.string().trim().min(1).max(180),
     })
     .strict(),

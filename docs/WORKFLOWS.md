@@ -1,6 +1,6 @@
 # Configurable workflows
 
-`WorkflowTemplate` is stable; edits create draft `WorkflowTemplateVersion`s. Publishing is immutable and activation uses compare-and-swap. `WorkingSession` pins one published version and one `AssistantThread`; `WorkflowStepInstance` records progression/evidence.
+`WorkflowTemplate` is stable; edits create draft `WorkflowTemplateVersion`s. Publishing is immutable and activation uses compare-and-swap. `WorkingSession` pins one published version, links multiple explicitly scoped `AssistantThread`s and keeps one active-thread pointer; `WorkflowStepInstance` records progression/evidence. Changing conversation scope never starts, pauses or completes clinical work by itself.
 
 Allowlisted step kinds are `orientation`, `context-selection`, `work-queue`, `documentation`, `review`, `handover`, `reconciliation`, and `completion`. Predicates are bounded comparisons over server state. Definitions cannot grant permission, skip policy review, contain executable code/URLs/arbitrary OpenUI, auto-select patients or enable providers.
 

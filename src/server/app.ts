@@ -76,6 +76,7 @@ const taskBody = z.object({
 });
 const taskCreateBody = z.object({
   patientId: z.string().nullable().optional(),
+  encounterId: z.string().nullable().optional(),
   title: z.string().trim().min(3).max(120),
   reason: z.string().trim().min(3).max(500),
   ownerRole: roleSchema,
@@ -85,6 +86,7 @@ const taskCreateBody = z.object({
 });
 const observationBody = z.object({
   patientId: z.string(),
+  encounterId: z.string(),
   code: z.enum([
     "blood-pressure",
     "temperature",
@@ -99,6 +101,7 @@ const observationBody = z.object({
 });
 const noteBody = z.object({
   patientId: z.string(),
+  encounterId: z.string(),
   transcript: z.string().max(4000).nullable().optional(),
   structuredText: z.string().trim().min(10).max(8000),
   purpose: purposeSchema.optional(),
@@ -112,6 +115,7 @@ const approveBody = z.object({
 });
 const communicationBody = z.object({
   patientId: z.string(),
+  encounterId: z.string(),
   request: z.string().trim().min(3).max(1000),
   reason: z.string().trim().min(3).max(1000),
   recipientRole: roleSchema,
@@ -340,7 +344,12 @@ export function buildApp(
     createHash("sha256").update(token).digest("hex");
   const persistResponseAuthorities = async (
     response: AssistantResponse,
-    session: { id: string; threadId: string; contextRevision: number },
+    session: {
+      id: string;
+      threadId: string;
+      contextRevision: number;
+      encounterId: string | null;
+    },
   ) => {
     for (const component of response.components) {
       if (component.type !== "DraftAction") continue;
@@ -357,13 +366,20 @@ export function buildApp(
         sessionId: session.id,
         threadId: session.threadId,
         contextRevision: session.contextRevision,
+        responseId: response.id,
+        reviewItems: component.reviewItems ?? [],
       });
     }
   };
   const consumeValidatedVoiceReceipt = async (
     actorId: string,
     body: AssistantQueryBody,
-    session: { id: string; threadId: string; contextRevision: number },
+    session: {
+      id: string;
+      threadId: string;
+      contextRevision: number;
+      encounterId: string | null;
+    },
   ): Promise<string | null> => {
     if (body.inputModality !== "voice") return null;
     const receiptId = body.voiceReceiptId ?? "";
@@ -380,6 +396,7 @@ export function buildApp(
       receipt.expiresAt < Date.now() ||
       receipt.actorId !== actorId ||
       receipt.patientId !== body.patientId ||
+      receipt.encounterId !== session.encounterId ||
       receipt.purpose !== purpose ||
       receipt.sessionId !== session.id ||
       receipt.threadId !== session.threadId ||
@@ -1028,12 +1045,37 @@ export function buildApp(
     await persistenceQueue;
     const actorId = userId(request);
     const actor = service.user(actorId);
-    const session = await operationalStore.getOrStartSession(
-      actorId,
-      actor.role,
+    let session = await operationalStore.getOrStartSession(actorId, actor.role);
+    const authorizedPatients = new Map(
+      service
+        .snapshot(actorId, actor.defaultPurpose)
+        .patients.map((patient) => [patient.id, patient.encounterId]),
+    );
+    if (
+      session.patientId &&
+      authorizedPatients.get(session.patientId) !== session.encounterId
+    ) {
+      assistant.revokeActorIntents(actorId);
+      revokeVoiceReceipts(actorId);
+      await operationalStore.revokeActorAuthorities(actorId);
+      session = await operationalStore.changePatientContext(
+        actorId,
+        actor.role,
+        null,
+        null,
+      );
+    }
+    const conversations = (
+      await operationalStore.listConversations(actorId, actor.role)
+    ).filter(
+      (conversation) =>
+        conversation.patientId === null ||
+        authorizedPatients.get(conversation.patientId) ===
+          conversation.encounterId,
     );
     return {
       turns: await operationalStore.loadConversation(actorId, actor.role),
+      conversations,
       expiresAt: new Date(
         Date.now() + siteConfiguration.sessionTtlHours * 60 * 60_000,
       ).toISOString(),
@@ -1224,6 +1266,7 @@ export function buildApp(
               );
             const draft = service.createNoteDraft(actorId, {
               patientId: patient.id,
+              encounterId: patient.encounterId,
               structuredText: command.evidence,
               purpose: actor.defaultPurpose,
             });
@@ -1269,11 +1312,13 @@ export function buildApp(
       .object({ patientId: z.string().nullable() })
       .strict()
       .parse(request.body);
+    const selectedPatient = body.patientId
+      ? service
+          .snapshot(actorId, actor.defaultPurpose)
+          .patients.find((patient) => patient.id === body.patientId)
+      : undefined;
     if (body.patientId) {
-      const allowed = service
-        .snapshot(actorId, actor.defaultPurpose)
-        .patients.some((patient) => patient.id === body.patientId);
-      if (!allowed)
+      if (!selectedPatient)
         throw new DomainError(
           "AUTH_DENIED",
           "Patientenkontext ist für diese Rolle nicht freigegeben.",
@@ -1287,6 +1332,7 @@ export function buildApp(
       actorId,
       actor.role,
       body.patientId,
+      selectedPatient?.encounterId ?? null,
     );
     contextTransitions.set(actorId, transition);
     try {
@@ -1336,17 +1382,21 @@ export function buildApp(
       actorId,
       actor.role,
     );
-    if (session.patientId !== context.patientId)
+    const selectedPatient = context.patientId
+      ? service
+          .snapshot(actorId, context.purpose)
+          .patients.find((patient) => patient.id === context.patientId)
+      : null;
+    if (
+      session.patientId !== context.patientId ||
+      session.encounterId !== (selectedPatient?.encounterId ?? null)
+    )
       throw new DomainError(
         "AUTH_DENIED",
         "Sprachaufnahme gehört nicht zum aktuellen Patientenkontext.",
         403,
       );
-    const snapshot = service.snapshot(actorId, context.purpose);
-    if (
-      context.patientId &&
-      !snapshot.patients.some((patient) => patient.id === context.patientId)
-    )
+    if (context.patientId && !selectedPatient)
       throw new DomainError(
         "AUTH_DENIED",
         "Sprachaufnahme liegt ausserhalb des freigegebenen Patientenkontexts.",
@@ -1384,6 +1434,7 @@ export function buildApp(
       const voiceAuthority: DurableVoiceAuthority = {
         actorId,
         patientId: context.patientId,
+        encounterId: session.encounterId,
         purpose: context.purpose,
         textHash: createHash("sha256").update(transcription.text).digest("hex"),
         model: transcription.model,
@@ -1422,7 +1473,15 @@ export function buildApp(
     const actor = service.user(actorId);
     await contextTransitions.get(actorId);
     let session = await operationalStore.getOrStartSession(actorId, actor.role);
-    if (session.patientId !== body.patientId)
+    const selectedPatient = body.patientId
+      ? service
+          .snapshot(actorId, body.purpose ?? actor.defaultPurpose)
+          .patients.find((patient) => patient.id === body.patientId)
+      : null;
+    if (
+      session.patientId !== body.patientId ||
+      session.encounterId !== (selectedPatient?.encounterId ?? null)
+    )
       throw new DomainError(
         "AUTH_DENIED",
         "Assistenzanfrage stimmt nicht mit dem bewusst gewählten Patientenkontext überein.",
@@ -1458,6 +1517,8 @@ export function buildApp(
       createdAt: new Date().toISOString(),
       inputModality: body.inputModality,
       originPatientId: body.patientId,
+      originEncounterId: session.encounterId,
+      originThreadId: session.threadId,
       originContextRevision: session.contextRevision,
     });
     void voiceReceiptId;
@@ -1470,7 +1531,15 @@ export function buildApp(
     const actor = service.user(actorId);
     await contextTransitions.get(actorId);
     let session = await operationalStore.getOrStartSession(actorId, actor.role);
-    if (session.patientId !== body.patientId)
+    const selectedPatient = body.patientId
+      ? service
+          .snapshot(actorId, body.purpose ?? actor.defaultPurpose)
+          .patients.find((patient) => patient.id === body.patientId)
+      : null;
+    if (
+      session.patientId !== body.patientId ||
+      session.encounterId !== (selectedPatient?.encounterId ?? null)
+    )
       throw new DomainError(
         "AUTH_DENIED",
         "Assistenzanfrage stimmt nicht mit dem bewusst gewählten Patientenkontext überein.",
@@ -1532,6 +1601,8 @@ export function buildApp(
         createdAt: new Date().toISOString(),
         inputModality: body.inputModality,
         originPatientId: body.patientId,
+        originEncounterId: session.encounterId,
+        originThreadId: session.threadId,
         originContextRevision: session.contextRevision,
       });
     } catch {
@@ -1558,7 +1629,10 @@ export function buildApp(
       actorId,
       actor.role,
     );
-    if (session.patientId !== execution.patientId)
+    if (
+      session.patientId !== execution.patientId ||
+      session.encounterId !== execution.encounterId
+    )
       return persist(() => {
         service.audit.append({
           actor,
@@ -1582,6 +1656,7 @@ export function buildApp(
       threadId: session.threadId,
       contextRevision: session.contextRevision,
       patientId: execution.patientId,
+      encounterId: execution.encounterId,
     });
     if (
       !durableIntent ||
@@ -1815,7 +1890,10 @@ export function buildApp(
       actorId,
       actor.role,
     );
-    if (session.patientId !== record.patientId)
+    if (
+      session.patientId !== record.patientId ||
+      session.encounterId !== record.encounterId
+    )
       throw new DomainError(
         "AUTH_DENIED",
         "Freigabe erfordert den bewusst gewählten passenden Patientenkontext.",

@@ -38,12 +38,15 @@ export interface IntentClassification {
   mode: AiRuntimeMode;
   model: string;
   degraded: boolean;
+  failure?: ClinicalPlanResult["failure"];
 }
 
 export interface ModelRuntimeStatus {
   mode: AiRuntimeMode;
   model: string;
   ready: boolean;
+  configured: boolean;
+  acceptance: "accepted" | "ready-for-test" | "not-configured";
   dataBoundary: "none" | "deterministic" | "synthetic-hosted" | "local-network";
   message: string;
 }
@@ -53,6 +56,17 @@ export interface ClinicalPlanResult {
   mode: AiRuntimeMode;
   model: string;
   degraded: boolean;
+  failure?: {
+    code:
+      | "not-configured"
+      | "timeout"
+      | "rate-limited"
+      | "refusal"
+      | "incomplete"
+      | "http-error"
+      | "invalid-output";
+    message: string;
+  };
 }
 
 export interface ModelSyntheticTestResult {
@@ -96,19 +110,125 @@ function boundedContext(context?: AuthorizedModelContext): string | null {
   });
 }
 
-function responseText(body: unknown): string | null {
-  if (!body || typeof body !== "object") return null;
+class ModelResponseError extends Error {
+  constructor(
+    readonly code: NonNullable<ClinicalPlanResult["failure"]>["code"],
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+function responseText(body: unknown): string {
+  if (!body || typeof body !== "object")
+    throw new ModelResponseError("invalid-output", "model-empty");
   const value = body as {
+    status?: unknown;
+    incomplete_details?: { reason?: unknown };
     output_text?: unknown;
-    output?: Array<{ content?: Array<{ text?: unknown }> }>;
-    choices?: Array<{ message?: { content?: unknown } }>;
+    output?: Array<{
+      content?: Array<{ type?: unknown; text?: unknown; refusal?: unknown }>;
+    }>;
+    choices?: Array<{
+      finish_reason?: unknown;
+      message?: { content?: unknown; refusal?: unknown };
+    }>;
   };
+  if (value.status === "incomplete")
+    throw new ModelResponseError(
+      "incomplete",
+      typeof value.incomplete_details?.reason === "string"
+        ? value.incomplete_details.reason
+        : "model-response-incomplete",
+    );
+  const choice = value.choices?.[0];
+  if (choice?.finish_reason === "length")
+    throw new ModelResponseError("incomplete", "model-output-limit");
+  if (typeof choice?.message?.refusal === "string")
+    throw new ModelResponseError("refusal", choice.message.refusal);
   if (typeof value.output_text === "string") return value.output_text;
   for (const item of value.output ?? [])
-    for (const content of item.content ?? [])
+    for (const content of item.content ?? []) {
+      if (typeof content.refusal === "string")
+        throw new ModelResponseError("refusal", content.refusal);
       if (typeof content.text === "string") return content.text;
+    }
   const chatContent = value.choices?.[0]?.message?.content;
-  return typeof chatContent === "string" ? chatContent : null;
+  if (typeof chatContent === "string") return chatContent;
+  throw new ModelResponseError("invalid-output", "model-empty");
+}
+
+type JsonSchema = Record<string, unknown>;
+
+function permitsNull(schema: JsonSchema): boolean {
+  if (schema.type === "null") return true;
+  if (Array.isArray(schema.type) && schema.type.includes("null")) return true;
+  return ["anyOf", "oneOf"].some(
+    (key) =>
+      Array.isArray(schema[key]) &&
+      (schema[key] as unknown[]).some(
+        (item) =>
+          item !== null &&
+          typeof item === "object" &&
+          permitsNull(item as JsonSchema),
+      ),
+  );
+}
+
+function nullableSchema(schema: JsonSchema): JsonSchema {
+  return permitsNull(schema) ? schema : { anyOf: [schema, { type: "null" }] };
+}
+
+/**
+ * OpenAI strict Structured Outputs requires every object property to be in
+ * `required` and every object to deny additional properties. Domain schemas
+ * still keep genuine optionality; the transport represents an omitted value
+ * as null and normalizes it before domain validation.
+ */
+export function toStrictStructuredOutputSchema(schema: JsonSchema): JsonSchema {
+  const visit = (node: unknown): unknown => {
+    if (Array.isArray(node)) return node.map(visit);
+    if (node === null || typeof node !== "object") return node;
+    const current = node as JsonSchema;
+    const mapped: JsonSchema = Object.fromEntries(
+      Object.entries(current).map(([key, value]) => [key, visit(value)]),
+    );
+    if (current.type !== "object" || !current.properties) return mapped;
+    const properties = current.properties as Record<string, JsonSchema>;
+    const originallyRequired = new Set(
+      Array.isArray(current.required)
+        ? current.required.filter(
+            (item): item is string => typeof item === "string",
+          )
+        : [],
+    );
+    mapped.properties = Object.fromEntries(
+      Object.entries(properties).map(([key, value]) => {
+        const visited = visit(value) as JsonSchema;
+        return [
+          key,
+          originallyRequired.has(key) ? visited : nullableSchema(visited),
+        ];
+      }),
+    );
+    mapped.required = Object.keys(properties);
+    mapped.additionalProperties = false;
+    delete mapped.default;
+    return mapped;
+  };
+  return visit(schema) as JsonSchema;
+}
+
+function normalizeProposalTransport(input: unknown): unknown {
+  if (!input || typeof input !== "object") return input;
+  const proposal = structuredClone(input) as {
+    understoodFacts?: Array<Record<string, unknown>>;
+  };
+  for (const fact of proposal.understoodFacts ?? []) {
+    if (fact.value === null) delete fact.value;
+    if (fact.unit === null) delete fact.unit;
+  }
+  return proposal;
 }
 
 function deterministicIntent(prompt: string): AssistantIntent {
@@ -236,6 +356,7 @@ export class ModelGateway {
   private readonly baseUrl: string | null;
   private readonly apiKey: string | null;
   private readonly timeoutMs: number;
+  private verifiedAt: number | null = null;
 
   constructor(env: NodeJS.ProcessEnv = process.env) {
     this.mode = z
@@ -361,6 +482,7 @@ export class ModelGateway {
       },
     );
     const ready = !result.degraded && result.plan !== null;
+    if (ready) this.verifiedAt = Date.now();
     return {
       ready,
       mode: this.mode,
@@ -379,6 +501,8 @@ export class ModelGateway {
         mode: this.mode,
         model: this.model,
         ready: false,
+        configured: false,
+        acceptance: "not-configured",
         dataBoundary: "none",
         message:
           "Sprachmodell deaktiviert; feste klinische Abläufe bleiben verfügbar.",
@@ -388,6 +512,8 @@ export class ModelGateway {
         mode: this.mode,
         model: "deterministic-clinical-router-v1",
         ready: true,
+        configured: true,
+        acceptance: "accepted",
         dataBoundary: "deterministic",
         message: "Deterministischer Intent-Router aktiv.",
       };
@@ -396,6 +522,8 @@ export class ModelGateway {
         mode: this.mode,
         model: this.model,
         ready: false,
+        configured: false,
+        acceptance: "not-configured",
         dataBoundary:
           this.mode === "hosted-test" ? "synthetic-hosted" : "local-network",
         message:
@@ -419,11 +547,20 @@ export class ModelGateway {
       return {
         mode: this.mode,
         model: this.model,
-        ready: response.ok,
+        ready: response.ok && this.verifiedAt !== null,
+        configured: true,
+        acceptance:
+          response.ok && this.verifiedAt !== null
+            ? "accepted"
+            : response.ok
+              ? "ready-for-test"
+              : "not-configured",
         dataBoundary:
           this.mode === "hosted-test" ? "synthetic-hosted" : "local-network",
         message: response.ok
-          ? "Konfiguriertes Sprachmodell-Gateway erreichbar."
+          ? this.verifiedAt
+            ? "Sprachmodell mit echtem synthetischem Strukturierungstest bestätigt."
+            : "Sprachmodell-Gateway erreichbar; echter synthetischer Strukturierungstest steht noch aus."
           : `Sprachmodell-Gateway antwortet mit HTTP ${response.status}.`,
       };
     } catch {
@@ -431,6 +568,8 @@ export class ModelGateway {
         mode: this.mode,
         model: this.model,
         ready: false,
+        configured: true,
+        acceptance: "ready-for-test",
         dataBoundary:
           this.mode === "hosted-test" ? "synthetic-hosted" : "local-network",
         message:
@@ -472,6 +611,12 @@ export class ModelGateway {
         mode: this.mode,
         model: this.model,
         degraded: true,
+        failure: {
+          code: "not-configured",
+          message: this.canCallConfiguredModel
+            ? "hosted-model-synthetic-data-only"
+            : "model-not-configured",
+        },
       };
 
     const controller = new AbortController();
@@ -486,7 +631,7 @@ export class ModelGateway {
         ],
         prompt.slice(0, 1200),
         "assistant_intent_v1",
-        z.toJSONSchema(assistantIntentSchema),
+        toStrictStructuredOutputSchema(z.toJSONSchema(assistantIntentSchema)),
         40,
       );
       const response = await fetch(
@@ -502,9 +647,12 @@ export class ModelGateway {
           redirect: "error",
         },
       );
-      if (!response.ok) throw new Error(`model-http-${response.status}`);
+      if (!response.ok)
+        throw new ModelResponseError(
+          response.status === 429 ? "rate-limited" : "http-error",
+          `model-http-${response.status}`,
+        );
       const content = responseText(await response.json());
-      if (!content) throw new Error("model-empty");
       const jsonStart = content.indexOf("{");
       const jsonEnd = content.lastIndexOf("}");
       if (jsonStart < 0 || jsonEnd <= jsonStart)
@@ -518,12 +666,22 @@ export class ModelGateway {
         model: this.model,
         degraded: false,
       };
-    } catch {
+    } catch (error) {
+      const failure =
+        error instanceof ModelResponseError
+          ? { code: error.code, message: error.message }
+          : error instanceof DOMException && error.name === "AbortError"
+            ? { code: "timeout" as const, message: "model-timeout" }
+            : {
+                code: "invalid-output" as const,
+                message: "model-invalid-output",
+              };
       return {
         intent: fallback,
         mode: this.mode,
         model: this.model,
         degraded: true,
+        failure,
       };
     } finally {
       clearTimeout(timer);
@@ -561,7 +719,7 @@ export class ModelGateway {
         ],
         prompt.slice(0, 1200),
         "assistant_proposal_v3",
-        z.toJSONSchema(assistantProposalSchema),
+        toStrictStructuredOutputSchema(z.toJSONSchema(assistantProposalSchema)),
         1200,
       );
       const response = await fetch(
@@ -577,13 +735,16 @@ export class ModelGateway {
           redirect: "error",
         },
       );
-      if (!response.ok) throw new Error(`model-http-${response.status}`);
+      if (!response.ok)
+        throw new ModelResponseError(
+          response.status === 429 ? "rate-limited" : "http-error",
+          `model-http-${response.status}`,
+        );
       const content = responseText(await response.json());
-      if (!content) throw new Error("model-empty");
       return {
         plan: verifyModelProposalAgainstDeterministicCompiler(
           prompt,
-          JSON.parse(content),
+          normalizeProposalTransport(JSON.parse(content)),
           fallback,
           inputTimestamp,
         ),
@@ -591,12 +752,22 @@ export class ModelGateway {
         model: this.model,
         degraded: false,
       };
-    } catch {
+    } catch (error) {
+      const failure =
+        error instanceof ModelResponseError
+          ? { code: error.code, message: error.message }
+          : error instanceof DOMException && error.name === "AbortError"
+            ? { code: "timeout" as const, message: "model-timeout" }
+            : {
+                code: "invalid-output" as const,
+                message: "model-invalid-output",
+              };
       return {
         plan: fallback,
         mode: this.mode,
         model: "deterministic-clinical-planner-v1",
         degraded: true,
+        failure,
       };
     } finally {
       clearTimeout(timer);

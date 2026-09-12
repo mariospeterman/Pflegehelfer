@@ -18,6 +18,7 @@ import { verifyAuditEntries } from "../core/audit.js";
 import {
   fhirResourceId,
   legacyFhirResourceId,
+  managedProjectionTag,
   tenantTag,
   tenantTagSystem,
 } from "../core/fhir-resource-set.js";
@@ -46,6 +47,7 @@ const managedClinicalResourceTypes = [
   "Task",
   "Observation",
   "Communication",
+  "DocumentReference",
   "QuestionnaireResponse",
 ] satisfies ResourceType[];
 const dataClassificationSystem =
@@ -549,7 +551,7 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
       ? this.appBaseUrl
       : `${this.appBaseUrl}/`;
     const safeReference =
-      /^(Patient|Task|Observation|Communication|QuestionnaireResponse)\/[A-Za-z0-9.-]{1,64}$/.test(
+      /^(Patient|Task|Observation|Communication|DocumentReference|QuestionnaireResponse)\/[A-Za-z0-9.-]{1,64}$/.test(
         resourceReference,
       )
         ? resourceReference
@@ -719,8 +721,11 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
         if (!isNotFoundError(error)) throw error;
       }
     }
+    const noteMigrationResources =
+      await this.supersededNoteResources(resources);
     const synchronizedResources = [
       ...resources,
+      ...noteMigrationResources,
       ...(checkpoint
         ? [serializeCheckpoint(checkpoint, this.checkpointHmacKey)]
         : []),
@@ -781,6 +786,90 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
     }
   }
 
+  private async supersededNoteResources(
+    resources: Resource[],
+  ): Promise<Resource[]> {
+    const migrated: Resource[] = [];
+    for (const resource of resources) {
+      if (resource.resourceType !== "DocumentReference") continue;
+      const noteId = resource.identifier?.find(
+        (identifier) =>
+          identifier.system === "https://pflegehelfer.example.invalid/note-id",
+      )?.value;
+      if (!noteId) continue;
+      const priorId = fhirResourceId("QuestionnaireResponse", noteId);
+      const migrationRecordedAt =
+        "date" in resource && typeof resource.date === "string"
+          ? resource.date
+          : "2026-09-05T00:00:00.000Z";
+      try {
+        const prior = await this.client.readResource(
+          "QuestionnaireResponse",
+          priorId,
+        );
+        const isSameTenant = prior.meta?.tag?.some(
+          (tag) =>
+            tag.system === tenantTagSystem && tag.code === tenantTag().code,
+        );
+        if (!isSameTenant)
+          throw new Error(
+            "Refusing to migrate a note representation without the exact institution/site tag.",
+          );
+        migrated.push(
+          {
+            ...prior,
+            status: "amended",
+            meta: {
+              ...prior.meta,
+              tag: [
+                ...(prior.meta?.tag ?? []).filter(
+                  (tag) =>
+                    tag.system !==
+                    "https://pflegehelfer.example.invalid/representation-status",
+                ),
+                {
+                  system:
+                    "https://pflegehelfer.example.invalid/representation-status",
+                  code: "superseded-by-document-reference",
+                },
+              ],
+            },
+          },
+          {
+            resourceType: "Provenance",
+            id: fhirResourceId(
+              "Provenance",
+              `note-representation-migration/${noteId}`,
+            ),
+            recorded: migrationRecordedAt,
+            meta: {
+              tag: [
+                tenantTag(),
+                managedProjectionTag,
+                ...(resource.meta?.tag?.filter(
+                  (tag) => tag.system === dataClassificationSystem,
+                ) ?? []),
+              ],
+            },
+            target: [{ reference: `DocumentReference/${resource.id}` }],
+            agent: [{ who: { display: "Pflegehelfer canonical mapper" } }],
+            entity: [
+              {
+                role: "source",
+                what: {
+                  reference: `QuestionnaireResponse/${priorId}`,
+                },
+              },
+            ],
+          },
+        );
+      } catch (error) {
+        if (!isNotFoundError(error)) throw error;
+      }
+    }
+    return migrated;
+  }
+
   private async removeStaleManagedResources(
     resources: Resource[],
   ): Promise<void> {
@@ -801,11 +890,12 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
     );
     const stale: Resource[] = [];
     const scopedTenantTag = `${tenantTagSystem}|${tenantTag().code}`;
+    const scopedProjectionTag = `${managedProjectionTag.system}|${managedProjectionTag.code}`;
     for (const resourceType of managedClinicalResourceTypes) {
       for (const managedTag of managedTags) {
         const existing = await this.client.searchResources(
           resourceType,
-          `_tag=${encodeURIComponent(managedTag)}&_tag=${encodeURIComponent(scopedTenantTag)}&_count=1000`,
+          `_tag=${encodeURIComponent(managedTag)}&_tag=${encodeURIComponent(scopedTenantTag)}&_tag=${encodeURIComponent(scopedProjectionTag)}&_count=1000`,
         );
         stale.push(
           ...existing.filter(
@@ -942,7 +1032,7 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
         "Task",
         "Observation",
         "Communication",
-        "QuestionnaireResponse",
+        "DocumentReference",
         "CarePlan",
         "Goal",
       ] satisfies ResourceType[];

@@ -9,6 +9,41 @@
     "id": "rehab-2",
     "displayName": "Rehabilitation 2"
   },
+  "governedTopics": [
+    {
+      "id": "mobilitaet",
+      "label": "Mobilität",
+      "description": "Teamfilter für Mobilisation, Transfer und Hilfsmittel; kein klinischer Alarm.",
+      "scope": "both",
+      "allowedUse": ["discussion", "search-filter"],
+      "sensitivity": "standard",
+      "owner": "Pflegeentwicklung · Demo",
+      "version": 1,
+      "synonyms": ["Mobilisation", "Transfer", "Bewegung"]
+    },
+    {
+      "id": "ernaehrung",
+      "label": "Ernährung & Trinken",
+      "description": "Teamfilter für Mahlzeiten und Flüssigkeitsaufnahme; kein klinischer Befund.",
+      "scope": "both",
+      "allowedUse": ["discussion", "search-filter"],
+      "sensitivity": "standard",
+      "owner": "Pflegeentwicklung · Demo",
+      "version": 1,
+      "synonyms": ["Ernährung", "Flüssigkeit", "Trinkmenge"]
+    },
+    {
+      "id": "uebergabe",
+      "label": "Übergabe",
+      "description": "Teamfilter für Schichtwechsel und offene Verantwortung.",
+      "scope": "department",
+      "allowedUse": ["discussion", "search-filter"],
+      "sensitivity": "standard",
+      "owner": "Pflegedienst · Demo",
+      "version": 1,
+      "synonyms": ["Handover", "Schichtwechsel"]
+    }
+  ],
   "activeShiftId": "early",
   "shifts": {
     "early": {

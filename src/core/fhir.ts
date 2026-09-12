@@ -104,6 +104,7 @@ export function observationToFhirR4(
       text: observation.label,
     },
     subject: { reference: `Patient/${observation.patientId}` },
+    encounter: { reference: `Encounter/${observation.encounterId}` },
     effectiveDateTime: observation.effectiveAt,
     performer: [{ reference: `Practitioner/${observation.performerId}` }],
   };

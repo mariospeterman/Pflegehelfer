@@ -49,4 +49,4 @@ For the detailed Medplum UI, read the generated email/password locally and never
 grep '^MEDPLUM_DEFAULT_SUPER_ADMIN_\(EMAIL\|PASSWORD\)=' .env.demo
 ```
 
-After login, search the fictional Patient, Encounter, Observation, Task, Communication, QuestionnaireResponse, Provenance and AuditEvent resources. The Medplum UI is an expert inspection surface, not the routine staff workflow.
+After login, search the fictional Patient, Encounter, Observation, Task, Communication, DocumentReference, Provenance and AuditEvent resources. Pflege notes are profile-correct `DocumentReference` records rather than fabricated questionnaire answers. The Medplum UI is an expert inspection surface, not the routine staff workflow.

@@ -117,6 +117,7 @@ export function minimumPatientView(user: DemoUser, patient: Patient): Patient {
   if (user.role === "administration") {
     return {
       ...patient,
+      allergyStatus: "unknown",
       allergies: [],
       risks: [],
       diagnoses: [],

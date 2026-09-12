@@ -1,9 +1,11 @@
 # Pflegehelfer product contract
 
 Status: active acceptance contract
-Last updated: 2026-09-06
+Last updated: 2026-09-12
 
 Pflegehelfer is one interruption-tolerant, mobile-first clinical coworker for authorised staff. The same conversation accepts speech, text and direct taps; materialises stable clinical GenUI components; keeps the active patient and responsibility visible; and routes approved work to Medplum and configured providers. Chat-first is not chat-only: quick lenses, compact tables, forms and deterministic controls are part of the conversation when they reduce effort.
+
+One coherent working session may link multiple explicitly scoped conversations: a private general assistant, private patient-and-encounter assistants and separately authorized patient-team, department or direct threads. Scope changes preserve shift progress and per-thread continuity without mixing prompts, drafts or audiences. This supersedes the former one-giant-transcript rule.
 
 The invariant is **conversational outside, structured inside**. Employees never fill or see an `AssistantProposal`; they talk naturally, receive a short coworker response, and see only the minimum editable GenUI required for the current safe review.
 

@@ -227,6 +227,26 @@ export const siteConfigurationSchema = z
         displayName: z.string().trim().min(1).max(120),
       })
       .strict(),
+    governedTopics: z
+      .array(
+        z
+          .object({
+            id: z.string().regex(/^[a-z0-9-]+$/),
+            label: z.string().trim().min(1).max(80),
+            description: z.string().trim().min(1).max(240),
+            scope: z.enum(["patient-team", "department", "both"]),
+            allowedUse: z
+              .array(z.enum(["discussion", "search-filter"]))
+              .min(1)
+              .max(2),
+            sensitivity: z.enum(["standard", "sensitive"]),
+            owner: z.string().trim().min(1).max(120),
+            version: z.number().int().positive(),
+            synonyms: z.array(z.string().trim().min(1).max(80)).max(12),
+          })
+          .strict(),
+      )
+      .max(40),
     activeShiftId: z.string().regex(/^[a-z0-9-]+$/),
     shifts: z.record(
       z.string().regex(/^[a-z0-9-]+$/),

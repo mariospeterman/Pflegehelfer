@@ -16,6 +16,7 @@ describe("deterministic clinical workflows", () => {
       const service = new PflegehelferService();
       const draft = service.createObservationDraft("u-nurse", {
         patientId: "p-anna",
+        encounterId: "enc-anna-2026",
         code: "pulse",
         value: 78,
         effectiveAt: "2026-09-05T07:58:00.000Z",
@@ -63,6 +64,7 @@ describe("deterministic clinical workflows", () => {
     const service = new PflegehelferService();
     const draft = service.createObservationDraft("u-nurse", {
       patientId: "p-anna",
+      encounterId: "enc-anna-2026",
       code: "blood-pressure",
       value: 151,
       secondaryValue: 88,
@@ -104,6 +106,7 @@ describe("deterministic clinical workflows", () => {
     const service = new PflegehelferService();
     const draft = service.createNoteDraft("u-nurse", {
       patientId: "p-anna",
+      encounterId: "enc-anna-2026",
       structuredText: "Mobilisation links mit Rollator 30 m, keine Dyspnoe.",
       approvalPolicy: "four-eyes",
     });
@@ -128,6 +131,7 @@ describe("deterministic clinical workflows", () => {
     const service = new PflegehelferService();
     const draft = service.createObservationDraft("u-nurse", {
       patientId: "p-anna",
+      encounterId: "enc-anna-2026",
       code: "oxygen-saturation",
       value: 35,
       effectiveAt: "2026-09-05T09:00:00.000Z",
@@ -160,6 +164,7 @@ describe("deterministic clinical workflows", () => {
     const service = new PflegehelferService();
     const draft = service.createNoteDraft("u-nurse", {
       patientId: "p-anna",
+      encounterId: "enc-anna-2026",
       structuredText: "Wundverband trocken und intakt; keine Rötung sichtbar.",
       approvalPolicy: "sensitive",
     });
@@ -194,6 +199,7 @@ describe("deterministic clinical workflows", () => {
     const service = new PflegehelferService();
     const task = service.createTask("u-nurse", {
       patientId: "p-anna",
+      encounterId: "enc-anna-2026",
       title: "Trinkmenge am Mittag prüfen",
       reason: "Flüssigkeitsziel der aktuellen Schicht nachverfolgen.",
       ownerRole: "care-assistant",
@@ -202,6 +208,7 @@ describe("deterministic clinical workflows", () => {
     });
     const communication = service.createCommunication("u-nurse", {
       patientId: "p-anna",
+      encounterId: "enc-anna-2026",
       request: "Bitte Mobilitätsziel bei der nächsten Visite bestätigen.",
       reason: "Gemeinsame Tagesplanung im Behandlungsteam.",
       recipientRole: "physician",
@@ -251,6 +258,7 @@ describe("deterministic clinical workflows", () => {
     const service = new PflegehelferService();
     const draft = service.createObservationDraft("u-nurse", {
       patientId: "p-luca",
+      encounterId: "enc-luca-2026",
       code: "temperature",
       value: 37.8,
       effectiveAt: "2026-09-05T09:00:00.000Z",
@@ -315,6 +323,7 @@ describe("deterministic clinical workflows", () => {
     const service = new PflegehelferService();
     const draft = service.createObservationDraft("u-nurse", {
       patientId: "p-luca",
+      encounterId: "enc-luca-2026",
       code: "temperature",
       value: 37.7,
       effectiveAt: "2026-09-05T09:30:00.000Z",
@@ -465,6 +474,7 @@ describe("deterministic clinical workflows", () => {
     );
     const draft = service.createNoteDraft("u-nurse", {
       patientId: "p-luca",
+      encounterId: "enc-luca-2026",
       structuredText: "Mobilisation 20 m mit Rollator, links gesichert.",
     });
 
@@ -494,6 +504,7 @@ describe("deterministic clinical workflows", () => {
     const service = new PflegehelferService();
     const draft = service.createNoteDraft("u-assistant", {
       patientId: "p-anna",
+      encounterId: "enc-anna-2026",
       structuredText: "Transfer rechts mit Hilfestellung sicher durchgeführt.",
     });
     expect(() =>

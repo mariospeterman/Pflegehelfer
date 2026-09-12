@@ -125,7 +125,7 @@ test("one bedside sentence yields granular review and explicit execution", async
   ).toBeVisible();
 });
 
-test("patient switch closes executable proposals and keeps a visible context event", async ({
+test("patient switch opens an isolated scoped conversation", async ({
   page,
 }) => {
   await choosePatient(page);
@@ -142,11 +142,50 @@ test("patient switch closes executable proposals and keeps a visible context eve
   await expect(
     page.getByText(/Patientenkontext bewusst gewählt.*Luca Demo/),
   ).toBeVisible();
+  await expect(page.locator(".assistant-draft")).toHaveCount(0);
   await expect(
-    page.getByText(
-      "Die frühere offene Änderung wurde beim Kontextwechsel sicher geschlossen.",
-    ),
-  ).toBeVisible();
+    page.getByText("Mobilisation mit Rollator sicher durchgeführt."),
+  ).toHaveCount(0);
+  await openDrawer(page);
+  await expect(page.locator(".conversation-history")).toContainText(
+    "Anna Beispiel",
+  );
+});
+
+test("patient lenses open directly and composer drafts restore per encounter", async ({
+  page,
+}) => {
+  await choosePatient(page);
+  const composer = page.getByLabel("Nachricht an Pflegehelfer");
+  await composer.fill("Anna Entwurf bleibt privat");
+
+  await choosePatient(page, "Luca Demo");
+  await expect(composer).toHaveValue("");
+  await composer.fill("Luca Entwurf bleibt privat");
+
+  await choosePatient(page, "Anna Beispiel");
+  await expect(composer).toHaveValue("Anna Entwurf bleibt privat");
+  await expect(page.locator(".conversation-feed")).not.toContainText(
+    "Luca Entwurf bleibt privat",
+  );
+
+  await page
+    .locator(".patient-workspace-tabs")
+    .getByRole("button", { name: "Profil", exact: true })
+    .click();
+  await expect(page.locator(".patient-context-card")).toBeVisible();
+  await expect(page.locator(".patient-context-card")).toContainText(
+    "Identität & Aufenthalt",
+  );
+  await expect(page.locator(".patient-context-card")).toContainText(
+    /Bestätigt|Unbekannt|Nicht geliefert|Nicht freigegeben/,
+  );
+
+  await page
+    .locator(".patient-workspace-tabs")
+    .getByRole("button", { name: "Werte", exact: true })
+    .click();
+  await expect(page.locator(".vital-point-table").first()).toBeVisible();
 });
 
 test("direct patient changes lock conversation until the server confirms context", async ({

@@ -3,6 +3,7 @@
 - Status: Accepted
 - Date: 2026-09-05
 - Supersedes: the fixed-workflow ownership decision in ADR-0005
+- Partially superseded by: ADR-0012 for conversation scoping; the GenUI-primary decision remains active
 
 ## Context
 
@@ -14,9 +15,11 @@ coworker experience.
 
 ## Decision
 
-Use one text/voice conversation and clinical-event stream as the primary staff
-workspace. Deterministic shift state, patient context, tasks, communications,
-handover, rounds, alerts and synchronization results render in that stream.
+Use one text/voice conversation engine and clinical-event presentation as the
+primary staff workspace. ADR-0012 refines this into a working session with
+multiple explicitly scoped transcripts. Deterministic shift state, patient
+context, tasks, communications, handover, rounds, alerts and synchronization
+results render in the appropriate scoped conversation.
 OpenUI responses use only the signed clinical catalog. Compact modes filter the
 stream; they do not own separate workflows.
 

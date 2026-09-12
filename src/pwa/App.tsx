@@ -7,6 +7,21 @@ import {
 } from "./assistant/AssistantSurface";
 import type { WorkdayView } from "../core/workday";
 
+interface ConversationDescriptor {
+  id: string;
+  type:
+    | "general-assistant"
+    | "patient-assistant"
+    | "patient-team"
+    | "department"
+    | "direct";
+  title: string;
+  patientId: string | null;
+  pinned: boolean;
+  lastActivityAt: string;
+  active: boolean;
+}
+
 const roleLabels: Record<Role, string> = {
   "care-assistant": "Pflegeassistenz",
   "registered-nurse": "Pflegefachperson",
@@ -95,20 +110,35 @@ function PatientSafetyBar({ patient }: { patient: Patient }) {
         <small>
           Geb. {formatBirthDate(patient.birthDate)} · Fall {patient.mrn}
         </small>
+        <small className="patient-channel-label">
+          Pflegehelfer zu {patient.displayName.split(" ")[0]} · Privater
+          Assistenzchat
+        </small>
       </span>
       <span className="patient-safety-signals">
-        {patient.allergies.length > 0 && (
-          <strong className="patient-allergy">
-            Allergie: {patient.allergies.join(" · ")}
-          </strong>
+        {patient.allergyStatus === "confirmed" &&
+          patient.allergies.length > 0 && (
+            <strong className="patient-allergy">
+              Allergie: {patient.allergies.join(" · ")}
+            </strong>
+          )}
+        {patient.allergyStatus === "explicit-negative" && (
+          <small>
+            Allergien: keine bekannten gemäss aktuellem Quellenstand
+          </small>
+        )}
+        {patient.allergyStatus === "unknown" && (
+          <small>Allergiestatus im freigegebenen Ausschnitt: unbekannt</small>
         )}
         {patient.risks.length > 0 && (
           <small className="patient-risk">
             Risiko: {patient.risks.join(" · ")}
           </small>
         )}
-        {patient.allergies.length === 0 && patient.risks.length === 0 && (
-          <small>Keine bekannten Warnhinweise</small>
+        {patient.risks.length === 0 && (
+          <small>
+            Weitere Warnhinweise im freigegebenen Ausschnitt: unbekannt
+          </small>
         )}
       </span>
     </div>
@@ -119,15 +149,20 @@ function CountersignaturePanel({
   snapshot,
   userId,
   activePatientId,
+  activeEncounterId,
   done,
 }: {
   snapshot: AppSnapshot;
   userId: string;
   activePatientId: string | null;
+  activeEncounterId: string | null;
   done: (message: string) => Promise<void>;
 }) {
   const reviewed = snapshot.observations.filter(
-    (item) => item.status === "reviewed" && item.patientId === activePatientId,
+    (item) =>
+      item.status === "reviewed" &&
+      item.patientId === activePatientId &&
+      item.encounterId === activeEncounterId,
   );
   const [busyId, setBusyId] = useState<string | null>(null);
   if (reviewed.length === 0) return null;
@@ -247,6 +282,7 @@ function ContextPanel({
   onTheme,
   busy,
   close,
+  conversations,
 }: {
   snapshot: AppSnapshot;
   patient: Patient | null;
@@ -258,13 +294,21 @@ function ContextPanel({
   onTheme: (theme: "system" | "light" | "dark") => void;
   busy: boolean;
   close: () => void;
+  conversations: ConversationDescriptor[];
 }) {
   const actions = [
-    ["Heute", "Übergabe"],
-    ["Offene Arbeit", "Was ist noch offen?"],
+    ["Mein Assistent", "Übergabe"],
+    ["Geplant · Arbeitsplan", "Was ist noch offen?"],
     ["Team & @Fragen", "Welche Teamfragen sind offen?"],
-    ["Synchronisation", "Was wartet auf Synchronisation?"],
+    ["Bibliothek", "Welche freigegebenen Richtlinien helfen mir heute?"],
   ] as const;
+  const [search, setSearch] = useState("");
+  const normalizedSearch = search.trim().toLocaleLowerCase("de-CH");
+  const visiblePatients = snapshot.patients.filter((item) =>
+    `${item.room} ${item.displayName} ${item.mrn}`
+      .toLocaleLowerCase("de-CH")
+      .includes(normalizedSearch),
+  );
   return (
     <aside
       className="context-panel"
@@ -286,6 +330,15 @@ function ContextPanel({
           ×
         </button>
       </div>
+      <label className="context-search">
+        <span className="sr-only">Arbeitsbereich durchsuchen</span>
+        <input
+          type="search"
+          value={search}
+          placeholder="Patienten und Gespräche suchen"
+          onChange={(event) => setSearch(event.target.value)}
+        />
+      </label>
       <button
         className="new-context-button"
         disabled={busy}
@@ -314,10 +367,32 @@ function ContextPanel({
           </button>
         ))}
       </nav>
+      <section className="governed-topics" aria-label="Freigegebene Teamthemen">
+        <h2>Teamthemen</h2>
+        <div>
+          {snapshot.organization.governedTopics.map((topic) => (
+            <button
+              key={topic.id}
+              title={topic.description}
+              onClick={() => {
+                onPrompt(
+                  `#${topic.label}: Zeige passende offene Teambeiträge.`,
+                );
+                close();
+              }}
+            >
+              #{topic.label}
+            </button>
+          ))}
+        </div>
+        <small>
+          Themen filtern Gespräche; sie sind keine klinischen Warnungen.
+        </small>
+      </section>
       <section className="patient-context-list">
         <h2>Patientenkontext</h2>
         <p>Bewusst wählen — kein automatischer Wechsel.</p>
-        {snapshot.patients.map((item) => (
+        {visiblePatients.map((item) => (
           <button
             key={item.id}
             disabled={busy}
@@ -336,6 +411,43 @@ function ContextPanel({
           </button>
         ))}
       </section>
+      {conversations.length > 1 && (
+        <section className="conversation-history">
+          <h2>Letzte Gespräche</h2>
+          {conversations
+            .filter((item) => item.type === "patient-assistant")
+            .slice(0, 8)
+            .map((item) => {
+              const subject = snapshot.patients.find(
+                (patient) => patient.id === item.patientId,
+              );
+              if (!subject) return null;
+              return (
+                <button
+                  key={item.id}
+                  className={item.active ? "active" : ""}
+                  disabled={busy}
+                  onClick={() =>
+                    void onPatient(subject.id).then((changed) => {
+                      if (changed) close();
+                    })
+                  }
+                >
+                  <span>{subject.room}</span>
+                  <span>
+                    <strong>{subject.displayName}</strong>
+                    <small>
+                      Privat mit Pflegehelfer ·{" "}
+                      {new Date(item.lastActivityAt).toLocaleDateString(
+                        "de-CH",
+                      )}
+                    </small>
+                  </span>
+                </button>
+              );
+            })}
+        </section>
+      )}
       <footer className="context-footer">
         <label className="drawer-role-switcher">
           <span>Demo-Rolle</span>
@@ -401,6 +513,8 @@ function DraftHandoffSheet({
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [title, setTitle] = useState(handoff.title);
+  const [reason, setReason] = useState(handoff.reason);
   const dialogRef = useRef<HTMLElement | null>(null);
   const closeRef = useRef<HTMLButtonElement | null>(null);
   useEffect(() => {
@@ -448,8 +562,8 @@ function DraftHandoffSheet({
           method: "POST",
           body: JSON.stringify({
             patientId: patient.id,
-            request: handoff.title,
-            reason: handoff.reason,
+            request: title.trim(),
+            reason: reason.trim(),
             recipientRole: handoff.recipientRole ?? "physician",
             recipientId: handoff.recipientId ?? null,
             priority: "routine",
@@ -461,8 +575,8 @@ function DraftHandoffSheet({
           method: "POST",
           body: JSON.stringify({
             patientId: patient.id,
-            title: handoff.title,
-            reason: handoff.reason,
+            title: title.trim(),
+            reason: reason.trim(),
             ownerRole: "registered-nurse",
             priority: "routine",
             dueAt: handoff.dueAt,
@@ -515,8 +629,25 @@ function DraftHandoffSheet({
           </button>
         </header>
         <div className="draft-review-copy">
-          <strong>{handoff.title}</strong>
-          <p>{handoff.reason}</p>
+          <label>
+            <span>
+              {handoff.kind === "communication" ? "Nachricht" : "Aufgabe"}
+            </span>
+            <input
+              value={title}
+              maxLength={1000}
+              onChange={(event) => setTitle(event.target.value)}
+            />
+          </label>
+          <label>
+            <span>Kontext / Begründung</span>
+            <textarea
+              value={reason}
+              maxLength={1000}
+              rows={4}
+              onChange={(event) => setReason(event.target.value)}
+            />
+          </label>
           <small>
             {handoff.kind === "communication"
               ? `Empfänger: ${handoff.recipientLabel ?? handoff.recipientRole ?? "ärztlicher Dienst"}${handoff.recipientId ? " (bewusst gewählte Person)" : " (zuständige Rollenwarteschlange)"}. `
@@ -532,11 +663,16 @@ function DraftHandoffSheet({
         )}
         <div className="sheet-actions">
           <button className="secondary" onClick={close}>
-            Ändern / verwerfen
+            Verwerfen
           </button>
           <button
             className="primary"
-            disabled={busy || !navigator.onLine}
+            disabled={
+              busy ||
+              !navigator.onLine ||
+              title.trim().length < 3 ||
+              reason.trim().length < 3
+            }
             onClick={() => void submit()}
           >
             {busy ? "Wird geprüft…" : "Jetzt freigeben"}
@@ -553,15 +689,20 @@ export function App() {
   );
   const [snapshot, setSnapshot] = useState<AppSnapshot | null>(null);
   const [workday, setWorkday] = useState<WorkdayView | null>(null);
+  const [conversations, setConversations] = useState<ConversationDescriptor[]>(
+    [],
+  );
   const [selectedPatientId, setSelectedPatientId] = useState<string | null>(
     () => sessionStorage.getItem("pfh-patient-context"),
   );
+  const [activePatientLens, setActivePatientLens] = useState("Chat");
   const [online, setOnline] = useState(navigator.onLine);
   const [apiReady, setApiReady] = useState(true);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [launchPrompt, setLaunchPrompt] = useState<{
     id: number;
     text: string;
+    autoSubmit?: boolean;
   } | null>(null);
   const [handoff, setHandoff] = useState<AssistantHandoff | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -576,9 +717,13 @@ export function App() {
   const load = useCallback(async () => {
     const current = ++generation.current;
     try {
-      const [data, session] = await Promise.all([
+      const [data, session, conversationData] = await Promise.all([
         api<AppSnapshot>("/api/v1/snapshot", userId),
         api<{ patientId: string | null }>("/api/v1/working-session", userId),
+        api<{ conversations: ConversationDescriptor[] }>(
+          "/api/v1/assistant/conversation",
+          userId,
+        ),
       ]);
       const workdayData = ["care-assistant", "registered-nurse"].includes(
         data.currentUser.role,
@@ -588,6 +733,7 @@ export function App() {
       if (current !== generation.current) return;
       setSnapshot(data);
       setWorkday(workdayData);
+      setConversations(conversationData.conversations);
       setApiReady(true);
       setSelectedPatientId(
         session.patientId &&
@@ -767,6 +913,13 @@ export function App() {
       if (requestGeneration !== generation.current || requestUserId !== userId)
         return false;
       setSelectedPatientId(id);
+      setActivePatientLens("Chat");
+      const conversationData = await api<{
+        conversations: ConversationDescriptor[];
+      }>("/api/v1/assistant/conversation", userId);
+      if (requestGeneration !== generation.current || requestUserId !== userId)
+        return false;
+      setConversations(conversationData.conversations);
       if (id) sessionStorage.setItem("pfh-patient-context", id);
       else sessionStorage.removeItem("pfh-patient-context");
       return true;
@@ -784,15 +937,18 @@ export function App() {
         setContextBusy(false);
     }
   };
-  const prompt = (text: string) => setLaunchPrompt({ id: Date.now(), text });
+  const prompt = (text: string, autoSubmit = false) =>
+    setLaunchPrompt({ id: Date.now(), text, autoSubmit });
   const changeUser = (next: string) => {
     generation.current += 1;
     setContextBusy(false);
     sessionStorage.setItem("pfh-demo-user", next);
     sessionStorage.removeItem("pfh-patient-context");
     setSelectedPatientId(null);
+    setActivePatientLens("Chat");
     setSnapshot(null);
     setWorkday(null);
+    setConversations([]);
     setNotice(null);
     setUserId(next);
   };
@@ -849,6 +1005,7 @@ export function App() {
         onTheme={setTheme}
         busy={contextBusy || assistantBusy}
         close={() => setDrawerOpen(false)}
+        conversations={conversations}
       />
       <main
         className="coworker-main"
@@ -900,7 +1057,41 @@ export function App() {
           </div>
         </header>
         {patient ? (
-          <PatientSafetyBar patient={patient} />
+          <>
+            <PatientSafetyBar patient={patient} />
+            <nav
+              className="patient-workspace-tabs"
+              aria-label="Patientenarbeitsbereich"
+            >
+              {["Chat", "Profil", "Verlauf", "Werte", "Team", "Mehr"].map(
+                (label) => (
+                  <button
+                    key={label}
+                    className={label === activePatientLens ? "active" : ""}
+                    aria-current={
+                      label === activePatientLens ? "page" : undefined
+                    }
+                    disabled={assistantBusy || contextBusy}
+                    onClick={() => {
+                      if (label === activePatientLens) return;
+                      setActivePatientLens(label);
+                      if (label === "Chat") return;
+                      const prompts: Record<string, string> = {
+                        Profil: "Zeige mir das Patientenprofil.",
+                        Verlauf: "Zeige mir den aktuellen Pflegeverlauf.",
+                        Werte: "Zeige mir die letzten Vitalwerte.",
+                        Team: "Zeige mir Teamfragen und Erwähnungen zu diesem Patienten.",
+                        Mehr: "Zeige mir den Medikationskontext nur lesbar.",
+                      };
+                      prompt(prompts[label]!, true);
+                    }}
+                  >
+                    {label}
+                  </button>
+                ),
+              )}
+            </nav>
+          </>
         ) : (
           <div className="no-patient-context">
             <span>Kein Patient aktiv</span>
@@ -924,6 +1115,7 @@ export function App() {
           snapshot={snapshot}
           userId={userId}
           activePatientId={selectedPatientId}
+          activeEncounterId={patient?.encounterId ?? null}
           done={async (message) => {
             await load();
             setNotice(message);

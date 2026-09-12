@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   ModelGateway,
   type AuthorizedModelContext,
+  type ClinicalPlanResult,
   type IntentClassification,
 } from "../ai/model-gateway.js";
 import { ApprovedKnowledgeService } from "../ai/approved-knowledge.js";
@@ -66,6 +67,7 @@ export interface AssistantResponse {
       | "deep-hosted-test";
     label: string;
     degraded: boolean;
+    failure?: NonNullable<ClinicalPlanResult["failure"]>["code"];
   };
   patientContext: {
     patientId: string;
@@ -108,11 +110,11 @@ export function toOpenUi(components: AssistantComponent[]): string {
       case "PatientPicker":
         return `${name} = PatientPicker(${q(component.title)}, ${q(component.message)}, ${JSON.stringify(component.patients)})`;
       case "PatientSummary":
-        return `${name} = PatientContextCard(${q(component.patientId)}, ${q(component.title)}, ${q(component.summary)}, ${q(component.sourceLabel)})`;
+        return `${name} = PatientContextCard(${q(component.patientId)}, ${q(component.title)}, ${q(component.narrative)}, ${JSON.stringify(component.sections)}, ${q(component.sourceLabel)})`;
       case "TaskList":
         return `${name} = TaskListCard(${q(component.title)}, ${component.count}, ${q(component.summary)}, ${q(component.sourceLabel)})`;
       case "VitalTrend":
-        return `${name} = VitalTrendCard(${q(component.label)}, ${q(component.value)}, ${q(component.sourceLabel)})`;
+        return `${name} = VitalTrendCard(${q(component.label)}, ${q(component.value)}, ${JSON.stringify(component.points)}, ${q(component.sourceLabel)})`;
       case "HandoverChecklist":
         return `${name} = HandoverDeltaCard(${q(component.title)}, ${component.openCount}, ${q(component.summary)}, ${q(component.sourceLabel)})`;
       case "TeamInbox":
@@ -399,6 +401,9 @@ export class AssistantService {
             ? `Synthetischer Testdienst · ${classification.model}`
             : `Lokales Sprachmodell · ${classification.model}`,
       degraded: classification.degraded,
+      ...(classification.failure
+        ? { failure: classification.failure.code }
+        : {}),
     };
     const evidence: AssistantResponse["evidence"] = [];
     const components: AssistantComponent[] = [];
@@ -463,7 +468,10 @@ export class AssistantService {
         });
         const latestObservations = snapshot.observations
           .filter(
-            (item) => item.patientId === current.id && item.approvedAt !== null,
+            (item) =>
+              item.patientId === current.id &&
+              item.encounterId === current.encounterId &&
+              item.approvedAt !== null,
           )
           .toSorted((left, right) =>
             right.effectiveAt.localeCompare(left.effectiveAt),
@@ -473,16 +481,37 @@ export class AssistantService {
             (item) =>
               `${item.label} ${item.value}${item.secondaryValue === null ? "" : `/${item.secondaryValue}`} ${item.unit}`,
           );
+        const pendingObservations = snapshot.observations
+          .filter(
+            (item) =>
+              item.patientId === current.id &&
+              item.encounterId === current.encounterId &&
+              item.approvedAt === null,
+          )
+          .toSorted((left, right) =>
+            right.effectiveAt.localeCompare(left.effectiveAt),
+          )
+          .slice(0, 3)
+          .map(
+            (item) =>
+              `${item.label} ${item.value}${item.secondaryValue === null ? "" : `/${item.secondaryValue}`} ${item.unit} (${formatOrganizationTimestamp(item.effectiveAt)}, ${["high-assurance", "four-eyes"].includes(item.approvalPolicy) ? "unabhängige Prüfung ausstehend" : "Entwurf – nicht als aktueller klinischer Fakt bestätigt"})`,
+          );
         const protocol = [
           ...snapshot.notes
             .filter(
               (item) =>
-                item.patientId === current.id && item.approvedAt !== null,
+                item.patientId === current.id &&
+                item.encounterId === current.encounterId &&
+                item.approvedAt !== null,
             )
             .slice(-3)
             .map((item) => `#Dokumentation ${item.structuredText}`),
           ...snapshot.communications
-            .filter((item) => item.patientId === current.id)
+            .filter(
+              (item) =>
+                item.patientId === current.id &&
+                item.encounterId === current.encounterId,
+            )
             .slice(-3)
             .map((item) => `#Team ${item.request} · ${item.state}`),
         ];
@@ -490,21 +519,105 @@ export class AssistantService {
           type: "PatientSummary",
           patientId: current.id,
           title: `${current.room} · ${current.displayName}`,
-          summary: [
-            `#Situation ${current.diagnoses.join("; ") || "keine Diagnose im freigegebenen Ausschnitt"}`,
-            `#Sicherheit ${
-              [
-                ...(current.allergies.length
-                  ? current.allergies.map((item) => `Allergie: ${item}`)
+          narrative: `${current.displayName} · Zimmer ${current.room} · Fall ${current.encounterId}. Strukturierte, rollenberechtigte Sicht; fehlende Angaben werden nicht als Verneinung dargestellt.`,
+          sections: [
+            {
+              id: "identity",
+              label: "Identität & Aufenthalt",
+              items: [
+                `Geburtsdatum ${current.birthDate}`,
+                `Zimmer ${current.room}`,
+                `Fall ${current.encounterId}`,
+              ],
+              state: "confirmed" as const,
+              sourceLabel: `${current.source.provider} · Version ${current.source.version}`,
+              effectiveAt: current.source.effectiveAt,
+            },
+            {
+              id: "allergies",
+              label: "Allergien",
+              items:
+                current.allergyStatus === "confirmed"
+                  ? current.allergies
+                  : current.allergyStatus === "explicit-negative"
+                    ? ["Keine bekannten Allergien dokumentiert"]
+                    : [],
+              state: current.allergyStatus,
+              sourceLabel: `${current.source.provider} · freigegebener Ausschnitt`,
+              effectiveAt: current.source.effectiveAt,
+            },
+            {
+              id: "risks",
+              label: "Risiken & Hinweise",
+              items: current.risks,
+              state: current.risks.length
+                ? ("confirmed" as const)
+                : ("unknown" as const),
+              sourceLabel: `${current.source.provider} · freigegebener Ausschnitt`,
+              effectiveAt: current.source.effectiveAt,
+            },
+            {
+              id: "situation",
+              label: "Situation",
+              items: current.diagnoses,
+              state: current.diagnoses.length
+                ? ("confirmed" as const)
+                : ("not-supplied" as const),
+              sourceLabel: `${current.source.provider} · klinischer Ausschnitt`,
+              effectiveAt: current.source.effectiveAt,
+            },
+            {
+              id: "goals",
+              label: "Ziele & Unterstützung",
+              items: current.careGoals,
+              state: current.careGoals.length
+                ? ("confirmed" as const)
+                : ("not-supplied" as const),
+              sourceLabel: `${current.source.provider} · Pflegeplanung`,
+              effectiveAt: current.source.effectiveAt,
+            },
+            {
+              id: "medication",
+              label: "Medikationskontext · nur lesbar",
+              items: current.medicationSummary,
+              state: current.medicationSummary.length
+                ? ("confirmed" as const)
+                : ("restricted" as const),
+              sourceLabel: `${current.source.provider} · keine Bearbeitung in diesem Arbeitsablauf`,
+              effectiveAt: current.source.effectiveAt,
+            },
+            {
+              id: "today",
+              label: "Heute",
+              items: [
+                `${snapshot.tasks.filter((task) => task.patientId === current.id && task.encounterId === current.encounterId && task.state !== "completed").length} offene Aufgaben`,
+                ...(latestObservations.length
+                  ? [`Bestätigte Werte: ${latestObservations.join(" · ")}`]
                   : []),
-                ...current.risks,
-              ].join(" · ") || "keine Warnhinweise erfasst"
-            }`,
-            `#Ziele ${current.careGoals.join("; ") || "keine erfasst"}`,
-            `#Medikation · nur lesbar ${current.medicationSummary.join("; ") || "kein Ausschnitt verfügbar"}`,
-            `#Heute ${snapshot.tasks.filter((task) => task.patientId === current.id && task.state !== "completed").length} offene Aufgaben${latestObservations.length ? ` · ${latestObservations.join(" · ")}` : ""}`,
-            `#Pflegeprotokoll ${protocol.join("\n") || "Noch keine Einträge in dieser Schicht."}`,
-          ].join("\n"),
+                ...(pendingObservations.length
+                  ? [
+                      `Neu gemeldet, noch nicht als klinischer Ist-Wert freigegeben: ${pendingObservations.join(" · ")}`,
+                    ]
+                  : []),
+              ],
+              state: "confirmed" as const,
+              sourceLabel:
+                "FHIR Task und Observation · aktueller Rollenbereich",
+              effectiveAt: new Date().toISOString(),
+            },
+            {
+              id: "timeline",
+              label: "Pflegeprotokoll",
+              items: protocol.length
+                ? protocol
+                : ["Noch keine freigegebenen Einträge in dieser Schicht."],
+              state: protocol.length
+                ? ("confirmed" as const)
+                : ("not-supplied" as const),
+              sourceLabel: "Freigegebene Dokumentation und Teamkommunikation",
+              effectiveAt: current.source.effectiveAt,
+            },
+          ],
           sourceLabel: `${current.source.provider} · Version ${current.source.version} · rollenberechtigte FHIR-/Workflow-Sicht`,
         });
         break;
@@ -513,7 +626,9 @@ export class AssistantService {
         const tasks = snapshot.tasks.filter(
           (task) =>
             task.state !== "completed" &&
-            (!patient || task.patientId === patient.id),
+            (!patient ||
+              (task.patientId === patient.id &&
+                task.encounterId === patient.encounterId)),
         );
         for (const task of tasks.slice(0, 8))
           evidence.push({
@@ -548,21 +663,56 @@ export class AssistantService {
         }
         const observations = snapshot.observations
           .filter(
-            (item) => item.patientId === current.id && item.approvedAt !== null,
+            (item) =>
+              item.patientId === current.id &&
+              item.encounterId === current.encounterId,
           )
-          .toSorted((a, b) => b.effectiveAt.localeCompare(a.effectiveAt));
-        for (const item of observations.slice(0, 4)) {
-          evidence.push({
-            resourceId: `Observation/${item.id}`,
-            version: item.version,
-            label: `${item.source.provider} · ${formatOrganizationTimestamp(item.effectiveAt)}`,
-          });
+          .toSorted((a, b) => a.effectiveAt.localeCompare(b.effectiveAt));
+        const codes = [...new Set(observations.map((item) => item.code))];
+        for (const code of codes.slice(0, 5)) {
+          const series = observations.filter((item) => item.code === code);
+          const validated = series.filter((item) => item.approvedAt !== null);
+          const latestValidated = validated.at(-1) ?? null;
+          const pending = series.filter((item) => item.approvedAt === null);
+          const newestPending = pending.at(-1) ?? null;
+          const pendingRequiresIndependentReview = newestPending
+            ? ["high-assurance", "four-eyes"].includes(
+                newestPending.approvalPolicy,
+              )
+            : false;
+          const pendingIsNewer = Boolean(
+            newestPending &&
+            (!latestValidated ||
+              newestPending.effectiveAt > latestValidated.effectiveAt),
+          );
+          const representative = latestValidated ?? newestPending;
+          if (!representative) continue;
+          for (const item of series.slice(-12))
+            evidence.push({
+              resourceId: `Observation/${item.id}`,
+              version: item.version,
+              label: `${item.source.provider} · ${formatOrganizationTimestamp(item.effectiveAt)} · ${item.approvedAt ? "validiert" : "Prüfung ausstehend"}`,
+            });
           components.push({
             type: "VitalTrend",
             patientId: current.id,
-            label: item.label,
-            value: `${item.value}${item.secondaryValue === null ? "" : `/${item.secondaryValue}`} ${item.unit}`,
-            sourceLabel: `${item.source.provider} · ${item.status === "pending-provider" ? "lokal freigegeben, Anbieter ausstehend · " : item.status === "external-gated" ? "lokal freigegeben, externe Schnittstelle gesperrt · " : ""}${formatOrganizationTimestamp(item.effectiveAt)}`,
+            label: representative.label,
+            value: latestValidated
+              ? `${latestValidated.value}${latestValidated.secondaryValue === null ? "" : `/${latestValidated.secondaryValue}`} ${latestValidated.unit}`
+              : "Noch kein unabhängig bestätigter Wert",
+            points: series.slice(-12).map((item) => ({
+              id: item.id,
+              value: item.value,
+              secondaryValue: item.secondaryValue,
+              unit: item.unit,
+              effectiveAt: item.effectiveAt,
+              status: item.approvedAt
+                ? "approved"
+                : ["high-assurance", "four-eyes"].includes(item.approvalPolicy)
+                  ? "pending-review"
+                  : "draft",
+            })),
+            sourceLabel: `${latestValidated?.source.provider ?? representative.source.provider} · ${latestValidated ? `letzter bestätigter Stand ${formatOrganizationTimestamp(latestValidated.effectiveAt)}` : "kein bestätigter Stand"}${newestPending ? ` · ${pendingIsNewer ? "neuer " : "zusätzlicher "}gemeldeter Wert vom ${formatOrganizationTimestamp(newestPending.effectiveAt)} ${pendingRequiresIndependentReview ? "wartet auf unabhängige Prüfung" : "ist ein nicht bestätigter Entwurf"}` : ""}`,
           });
         }
         if (!observations.length)
@@ -594,10 +744,12 @@ export class AssistantService {
         break;
       }
       case "team-inbox": {
-        // The patient-authorized treatment team shares one transparent thread.
-        // Addressing controls who may claim/answer, not who may safely read it.
         const messages = snapshot.communications.filter(
-          (item) => item.state !== "closed",
+          (item) =>
+            item.state !== "closed" &&
+            (!patient ||
+              (item.patientId === patient.id &&
+                item.encounterId === patient.encounterId)),
         );
         for (const item of messages.slice(0, 8))
           evidence.push({
@@ -987,6 +1139,7 @@ export class AssistantService {
               ? "Deterministischer klinischer Aktionsplan"
               : `${planned.mode === "hosted-test" ? "Synthetischer Testdienst" : "Lokales Sprachmodell"} · strukturierter Aktionsplan`,
           degraded: planned.degraded,
+          ...(planned.failure ? { failure: planned.failure.code } : {}),
         };
         if (planned.plan.actions.length === 0) {
           const negated = planned.plan.understoodFacts
@@ -1034,6 +1187,7 @@ export class AssistantService {
           );
           return (
             task.patientId === current.id &&
+            task.encounterId === current.encounterId &&
             ["new", "accepted", "in-progress", "waiting"].includes(
               task.state,
             ) &&
@@ -1282,6 +1436,7 @@ export class AssistantService {
       case "note:draft": {
         const draft = this.clinical.createNoteDraft(userId, {
           patientId: intent.patientId,
+          encounterId: intent.encounterId,
           transcript:
             intent.payload.inputModality === "voice"
               ? (intent.payload.structuredText ?? "")
@@ -1440,6 +1595,7 @@ export class AssistantService {
               case "note-proposal": {
                 const draft = this.clinical.createNoteDraft(userId, {
                   patientId: intent.patientId,
+                  encounterId: intent.encounterId,
                   transcript:
                     intent.payload.inputModality === "voice"
                       ? action.structuredText
@@ -1477,6 +1633,7 @@ export class AssistantService {
                   );
                 const draft = this.clinical.createObservationDraft(userId, {
                   patientId: intent.patientId,
+                  encounterId: intent.encounterId,
                   code: action.code,
                   value: action.value,
                   secondaryValue: action.secondaryValue,
@@ -1503,6 +1660,7 @@ export class AssistantService {
                   );
                 return this.clinical.createCommunication(userId, {
                   patientId: intent.patientId,
+                  encounterId: intent.encounterId,
                   request: action.request,
                   reason: action.reason,
                   recipientRole: action.recipientRole,
@@ -1521,6 +1679,7 @@ export class AssistantService {
                   );
                 return this.clinical.createTask(userId, {
                   patientId: intent.patientId,
+                  encounterId: intent.encounterId,
                   title: action.title,
                   reason: action.reason,
                   ownerRole: action.ownerRole,

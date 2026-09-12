@@ -9,6 +9,30 @@
     "id": "wohnbereich-a",
     "displayName": "Wohnbereich A"
   },
+  "governedTopics": [
+    {
+      "id": "mobilitaet",
+      "label": "Mobilität",
+      "description": "Lokaler Teamfilter für Mobilisation; kein klinischer Alarm.",
+      "scope": "both",
+      "allowedUse": ["discussion", "search-filter"],
+      "sensitivity": "standard",
+      "owner": "Pflegeentwicklung · Demo",
+      "version": 1,
+      "synonyms": ["Mobilisation", "Gehtraining", "Transfer"]
+    },
+    {
+      "id": "alltag",
+      "label": "Alltagsbegleitung",
+      "description": "Lokaler Teamfilter für geplante Alltagsaktivitäten.",
+      "scope": "patient-team",
+      "allowedUse": ["discussion", "search-filter"],
+      "sensitivity": "standard",
+      "owner": "Betreuung · Demo",
+      "version": 1,
+      "synonyms": ["Begleitung", "Aktivierung"]
+    }
+  ],
   "activeShiftId": "early",
   "shifts": {
     "early": {

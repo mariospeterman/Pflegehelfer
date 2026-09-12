@@ -118,6 +118,7 @@ describe("purpose-specific BFF", () => {
       headers: commandHeaders("u-nurse"),
       payload: {
         patientId: "p-anna",
+        encounterId: "enc-anna-2026",
         code: "temperature",
         value: 999,
         effectiveAt: "not-a-date",
@@ -143,6 +144,7 @@ describe("purpose-specific BFF", () => {
       headers: commandHeaders("u-nurse"),
       payload: {
         patientId: "p-anna",
+        encounterId: "enc-anna-2026",
         code: "oxygen-saturation",
         value: 35,
         effectiveAt: "2026-09-05T09:00:00.000Z",
@@ -176,7 +178,11 @@ describe("purpose-specific BFF", () => {
         inputModality: "typed",
       },
     });
-    expect(summary.body).not.toContain("Sauerstoffsättigung 35 %");
+    expect(summary.body).toContain("Sauerstoffsättigung 35 %");
+    expect(summary.body).toContain("unabhängige Prüfung ausstehend");
+    expect(summary.body).toContain(
+      "noch nicht als klinischer Ist-Wert freigegeben",
+    );
 
     const future = await app.inject({
       method: "POST",
@@ -184,6 +190,7 @@ describe("purpose-specific BFF", () => {
       headers: commandHeaders("u-nurse"),
       payload: {
         patientId: "p-anna",
+        encounterId: "enc-anna-2026",
         code: "pulse",
         value: 80,
         effectiveAt: new Date(Date.now() + 10 * 60_000).toISOString(),
@@ -245,6 +252,7 @@ describe("purpose-specific BFF", () => {
       headers: commandHeaders("u-nurse"),
       payload: {
         patientId: "p-anna",
+        encounterId: "enc-anna-2026",
         title: "Insulin 20 IE sofort geben",
         reason: "Freie Texteingabe aus dem generischen Aufgabenweg",
         ownerRole: "registered-nurse",
@@ -292,6 +300,7 @@ describe("purpose-specific BFF", () => {
       headers: commandHeaders("u-nurse"),
       payload: {
         patientId: "p-luca",
+        encounterId: "enc-luca-2026",
         code: "temperature",
         value: 37.8,
         effectiveAt: "2026-09-05T09:00:00.000Z",

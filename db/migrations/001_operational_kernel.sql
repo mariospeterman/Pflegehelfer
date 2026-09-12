@@ -45,6 +45,18 @@ CREATE TABLE IF NOT EXISTS assistant_threads (
   next_sequence bigint NOT NULL DEFAULT 1,
   context_revision integer NOT NULL DEFAULT 0,
   patient_id text,
+  site_id text NOT NULL DEFAULT 'legacy-unassigned',
+  thread_type text NOT NULL DEFAULT 'general-assistant'
+    CONSTRAINT assistant_threads_type_check
+    CHECK (thread_type IN ('general-assistant','patient-assistant','patient-team','department','direct')),
+  subject_encounter_id text,
+  title text NOT NULL DEFAULT 'Mein Assistent',
+  audience jsonb NOT NULL DEFAULT '{}'::jsonb,
+  membership jsonb NOT NULL DEFAULT '[]'::jsonb,
+  retention_class text NOT NULL DEFAULT 'shift-session'
+    CONSTRAINT assistant_threads_retention_check
+    CHECK (retention_class IN ('shift-session','patient-record','department-record','direct-message')),
+  pinned boolean NOT NULL DEFAULT false,
   expires_at timestamptz NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
@@ -107,12 +119,97 @@ ALTER TABLE assistant_threads
   ADD COLUMN IF NOT EXISTS context_revision integer NOT NULL DEFAULT 0;
 ALTER TABLE assistant_threads
   ADD COLUMN IF NOT EXISTS patient_id text;
+ALTER TABLE assistant_threads
+  ADD COLUMN IF NOT EXISTS site_id text NOT NULL DEFAULT 'legacy-unassigned';
+ALTER TABLE assistant_threads
+  ADD COLUMN IF NOT EXISTS thread_type text NOT NULL DEFAULT 'general-assistant';
+ALTER TABLE assistant_threads
+  ADD COLUMN IF NOT EXISTS subject_encounter_id text;
+ALTER TABLE assistant_threads
+  ADD COLUMN IF NOT EXISTS title text NOT NULL DEFAULT 'Mein Assistent';
+ALTER TABLE assistant_threads
+  ADD COLUMN IF NOT EXISTS audience jsonb NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE assistant_threads
+  ADD COLUMN IF NOT EXISTS membership jsonb NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE assistant_threads
+  ADD COLUMN IF NOT EXISTS retention_class text NOT NULL DEFAULT 'shift-session';
+ALTER TABLE assistant_threads
+  ADD COLUMN IF NOT EXISTS pinned boolean NOT NULL DEFAULT false;
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='assistant_threads_type_check') THEN
+    ALTER TABLE assistant_threads ADD CONSTRAINT assistant_threads_type_check
+      CHECK (thread_type IN ('general-assistant','patient-assistant','patient-team','department','direct')) NOT VALID;
+    ALTER TABLE assistant_threads VALIDATE CONSTRAINT assistant_threads_type_check;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='assistant_threads_retention_check') THEN
+    ALTER TABLE assistant_threads ADD CONSTRAINT assistant_threads_retention_check
+      CHECK (retention_class IN ('shift-session','patient-record','department-record','direct-message')) NOT VALID;
+    ALTER TABLE assistant_threads VALIDATE CONSTRAINT assistant_threads_retention_check;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='assistant_threads_supported_type_check') THEN
+    ALTER TABLE assistant_threads ADD CONSTRAINT assistant_threads_supported_type_check
+      CHECK (thread_type IN ('general-assistant','patient-assistant')) NOT VALID;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='assistant_threads_patient_binding_check') THEN
+    ALTER TABLE assistant_threads ADD CONSTRAINT assistant_threads_patient_binding_check
+      CHECK (
+        (thread_type='general-assistant' AND patient_id IS NULL AND subject_encounter_id IS NULL)
+        OR
+        (thread_type='patient-assistant' AND patient_id IS NOT NULL AND subject_encounter_id IS NOT NULL)
+      ) NOT VALID;
+  END IF;
+END $$;
+CREATE INDEX IF NOT EXISTS assistant_threads_actor_scope
+  ON assistant_threads (organization_id, actor_id, thread_type, patient_id, subject_encounter_id, updated_at DESC);
 ALTER TABLE assistant_messages
   ADD COLUMN IF NOT EXISTS context_revision integer NOT NULL DEFAULT 0;
 ALTER TABLE assistant_messages
   ADD COLUMN IF NOT EXISTS patient_id text;
 ALTER TABLE assistant_messages
   ADD COLUMN IF NOT EXISTS input_modality text;
+CREATE TABLE IF NOT EXISTS assistant_proposal_revisions (
+  organization_id text NOT NULL REFERENCES organizations(id),
+  id uuid NOT NULL,
+  actor_id text NOT NULL,
+  session_id uuid NOT NULL,
+  thread_id uuid NOT NULL,
+  context_revision integer NOT NULL,
+  patient_id text NOT NULL,
+  encounter_id text NOT NULL,
+  source_response_id uuid NOT NULL,
+  revision integer NOT NULL CHECK (revision > 0),
+  proposal_hash text NOT NULL CHECK (proposal_hash ~ '^[a-f0-9]{64}$'),
+  payload jsonb NOT NULL,
+  review_items jsonb NOT NULL DEFAULT '[]'::jsonb,
+  status text NOT NULL CHECK (status IN ('pending','superseded','consumed','expired')),
+  supersedes_id uuid,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  consumed_at timestamptz,
+  PRIMARY KEY (organization_id,id),
+  FOREIGN KEY (organization_id,thread_id) REFERENCES assistant_threads(organization_id,id),
+  FOREIGN KEY (organization_id,session_id) REFERENCES working_sessions(organization_id,id),
+  FOREIGN KEY (organization_id,supersedes_id) REFERENCES assistant_proposal_revisions(organization_id,id)
+);
+CREATE INDEX IF NOT EXISTS assistant_proposals_pending_scope
+  ON assistant_proposal_revisions (organization_id,actor_id,thread_id,patient_id,created_at DESC)
+  WHERE status='pending';
+WITH duplicate_pending AS (
+  SELECT organization_id,id,
+         row_number() OVER (
+           PARTITION BY organization_id,actor_id,thread_id,patient_id,encounter_id
+           ORDER BY revision DESC,created_at DESC,id DESC
+         ) AS position
+  FROM assistant_proposal_revisions WHERE status='pending'
+)
+UPDATE assistant_proposal_revisions p SET status='superseded'
+FROM duplicate_pending d
+WHERE p.organization_id=d.organization_id AND p.id=d.id AND d.position > 1;
+CREATE UNIQUE INDEX IF NOT EXISTS assistant_proposals_one_pending_scope
+  ON assistant_proposal_revisions (organization_id,actor_id,thread_id,patient_id,encounter_id)
+  WHERE status='pending';
+CREATE UNIQUE INDEX IF NOT EXISTS assistant_proposals_revision_identity
+  ON assistant_proposal_revisions (organization_id,actor_id,thread_id,patient_id,encounter_id,revision);
 CREATE TABLE IF NOT EXISTS safety_authority (
   organization_id text NOT NULL REFERENCES organizations(id),
   token_hash text NOT NULL CHECK (token_hash ~ '^[a-f0-9]{64}$'),
@@ -123,10 +220,14 @@ CREATE TABLE IF NOT EXISTS safety_authority (
   context_revision integer NOT NULL,
   patient_id text,
   binding jsonb NOT NULL,
+  proposal_revision_id uuid,
+  proposal_hash text,
   expires_at timestamptz NOT NULL,
   consumed_at timestamptz,
   PRIMARY KEY (organization_id, token_hash)
 );
+ALTER TABLE safety_authority ADD COLUMN IF NOT EXISTS proposal_revision_id uuid;
+ALTER TABLE safety_authority ADD COLUMN IF NOT EXISTS proposal_hash text;
 CREATE TABLE IF NOT EXISTS command_receipts (
   organization_id text NOT NULL REFERENCES organizations(id),
   command_key text NOT NULL,

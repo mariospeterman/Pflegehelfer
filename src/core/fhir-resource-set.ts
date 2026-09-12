@@ -3,12 +3,12 @@ import type {
   AuditEvent,
   CarePlan,
   Communication as FhirCommunication,
+  DocumentReference,
   Encounter,
   Goal,
   Location,
   Practitioner,
   Provenance,
-  QuestionnaireResponse,
   Resource,
   Task,
 } from "@medplum/fhirtypes";
@@ -61,6 +61,10 @@ const dataClassificationSystem =
   "https://pflegehelfer.example.invalid/data-classification";
 export const tenantTagSystem =
   "https://pflegehelfer.example.invalid/institution-site";
+export const managedProjectionTag = {
+  system: "https://pflegehelfer.example.invalid/managed-projection",
+  code: "pflegehelfer-clinical-v1",
+} as const;
 
 const classificationTag = (dataClass: DataClass) => ({
   system: dataClassificationSystem,
@@ -225,6 +229,9 @@ function task(item: ClinicalTask, dataClass: DataClass): Task {
     ...(item.patientId
       ? { for: { reference: ref("Patient", item.patientId) } }
       : {}),
+    ...(item.encounterId
+      ? { encounter: { reference: ref("Encounter", item.encounterId) } }
+      : {}),
     ...(item.requesterId.startsWith("u-")
       ? { requester: { reference: ref("Practitioner", item.requesterId) } }
       : {}),
@@ -262,6 +269,7 @@ function communication(
     status: communicationStatus[item.state],
     priority: item.priority === "elevated" ? "urgent" : item.priority,
     subject: { reference: ref("Patient", item.patientId) },
+    encounter: { reference: ref("Encounter", item.encounterId) },
     sender: { reference: ref("Practitioner", item.senderId) },
     recipient: [
       item.recipientId
@@ -285,31 +293,49 @@ function communication(
   };
 }
 
-function note(item: ClinicalNote, dataClass: DataClass): QuestionnaireResponse {
+function note(item: ClinicalNote, dataClass: DataClass): DocumentReference {
   return {
-    resourceType: "QuestionnaireResponse",
-    id: fhirResourceId("QuestionnaireResponse", item.id),
-    identifier: {
-      system: "https://pflegehelfer.example.invalid/note-id",
-      value: item.id,
-    },
+    resourceType: "DocumentReference",
+    id: fhirResourceId("DocumentReference", item.id),
+    identifier: [
+      {
+        system: "https://pflegehelfer.example.invalid/note-id",
+        value: item.id,
+      },
+    ],
     meta: { tag: sourceTags(item.source, dataClass) },
-    status: [
+    status: "current",
+    docStatus: [
       "synced",
       "approved",
       "pending-provider",
       "external-gated",
     ].includes(item.status)
-      ? "completed"
-      : "in-progress",
+      ? "final"
+      : "preliminary",
+    type: {
+      coding: [
+        {
+          system: "http://loinc.org",
+          code: "11506-3",
+          display: "Progress note",
+        },
+      ],
+      text: "Pflegeverlaufsnotiz",
+    },
     subject: { reference: ref("Patient", item.patientId) },
-    author: { reference: ref("Practitioner", item.authorId) },
-    authored: item.source.recordedAt,
-    item: [
+    context: { encounter: [{ reference: ref("Encounter", item.encounterId) }] },
+    author: [{ reference: ref("Practitioner", item.authorId) }],
+    date: item.source.recordedAt,
+    description: "Strukturierte Pflegedokumentation",
+    content: [
       {
-        linkId: "nursing-note",
-        text: "Strukturierte Pflegedokumentation",
-        answer: [{ valueString: item.structuredText }],
+        attachment: {
+          contentType: "text/plain; charset=utf-8",
+          title: "Pflegeverlaufsnotiz",
+          creation: item.source.recordedAt,
+          data: Buffer.from(item.structuredText, "utf8").toString("base64"),
+        },
       },
     ],
   };
@@ -533,6 +559,7 @@ export function toFhirResourceSet(
             },
           ],
           subject: { reference: ref("Patient", item.patientId) },
+          encounter: { reference: ref("Encounter", item.encounterId) },
           performer: [{ reference: ref("Practitioner", item.performerId) }],
         }) as Resource,
     ),
@@ -551,9 +578,12 @@ export function toFhirResourceSet(
       ...resource.meta,
       tag: [
         ...(resource.meta?.tag ?? []).filter(
-          (tag) => tag.system !== tenantTagSystem,
+          (tag) =>
+            tag.system !== tenantTagSystem &&
+            tag.system !== managedProjectionTag.system,
         ),
         tenantTag(),
+        managedProjectionTag,
       ],
     },
   }));

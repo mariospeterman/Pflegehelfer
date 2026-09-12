@@ -6,6 +6,7 @@ describe("clinical communication visibility", () => {
     const service = new PflegehelferService();
     const direct = service.createCommunication("u-nurse", {
       patientId: "p-anna",
+      encounterId: "enc-anna-2026",
       request: "Bitte den Blutdruckverlauf persönlich beurteilen.",
       reason: "Schwindel nach Mobilisation",
       recipientRole: "physician",
@@ -40,6 +41,7 @@ describe("clinical communication visibility", () => {
     const service = new PflegehelferService();
     const direct = service.createCommunication("u-nurse", {
       patientId: "p-anna",
+      encounterId: "enc-anna-2026",
       request: "Bitte den Blutdruckverlauf persönlich beurteilen.",
       reason: "Schwindel nach Mobilisation",
       recipientRole: "physician",
@@ -67,6 +69,7 @@ describe("clinical communication visibility", () => {
     expect(() =>
       service.createCommunication("u-nurse", {
         patientId: "p-mei",
+        encounterId: "enc-mei-2026",
         request: "Bitte Mobilität beurteilen.",
         reason: "Unklarer Transferstatus",
         recipientRole: "physiotherapy",

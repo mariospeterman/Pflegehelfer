@@ -126,28 +126,71 @@ const PatientContextCard = defineComponent({
     .object({
       patientId: z.string().max(64),
       title: z.string().max(160),
-      summary: z.string().max(1600),
+      narrative: z.string().max(1600),
+      sections: z
+        .array(
+          z
+            .object({
+              id: z.string().max(64),
+              label: z.string().max(80),
+              items: z.array(z.string().max(500)).max(12),
+              state: z.enum([
+                "confirmed",
+                "unknown",
+                "not-supplied",
+                "stale",
+                "conflict",
+                "restricted",
+                "explicit-negative",
+              ]),
+              sourceLabel: z.string().max(180),
+              effectiveAt: z.string().datetime().nullable(),
+            })
+            .strict(),
+        )
+        .max(12),
       source: z.string().max(240),
     })
     .strict(),
-  component: ({ props: { title, summary, source } }) => {
-    const sections = summary.split("\n").filter(Boolean);
+  component: ({ props: { title, narrative, sections, source } }) => {
+    const stateLabel = {
+      confirmed: "Bestätigt",
+      unknown: "Unbekannt",
+      "not-supplied": "Nicht geliefert",
+      stale: "Veraltet",
+      conflict: "Widersprüchlich",
+      restricted: "Nicht freigegeben",
+      "explicit-negative": "Ausdrücklich verneint",
+    } as const;
     return (
       <article className="assistant-card patient-context-card">
         <header>
           <span>Patientenkontext</span>
           <h3>{title}</h3>
         </header>
+        <p>{narrative}</p>
         <div className="patient-summary-sections">
-          {sections.map((line, index) => {
-            const tagged = /^#([^\s]+)(?:\s+(.+))?$/.exec(line);
-            return (
-              <section key={`${index}-${line.slice(0, 24)}`}>
-                {tagged ? <h4>{tagged[1]}</h4> : null}
-                <p>{tagged?.[2] ?? line}</p>
-              </section>
-            );
-          })}
+          {sections.map((section) => (
+            <section key={section.id} className={`profile-${section.state}`}>
+              <h4>{section.label}</h4>
+              <span className="profile-state">{stateLabel[section.state]}</span>
+              {section.items.length ? (
+                <ul>
+                  {section.items.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              ) : (
+                <p>Keine verlässliche Angabe im freigegebenen Ausschnitt.</p>
+              )}
+              <small>
+                {section.sourceLabel}
+                {section.effectiveAt
+                  ? ` · Stand ${new Date(section.effectiveAt).toLocaleString("de-CH", { dateStyle: "short", timeStyle: "short" })}`
+                  : ""}
+              </small>
+            </section>
+          ))}
         </div>
         <footer>{source}</footer>
       </article>
@@ -180,22 +223,171 @@ const TaskListCard = defineComponent({
 
 const VitalTrendCard = defineComponent({
   name: "VitalTrendCard",
-  description: "Accessible vital result with a restrained visual indicator.",
+  description:
+    "Accessible trend of real observation points; pending values stay visibly separate from validated facts.",
   props: z
     .object({
       label: z.string().max(100),
       value: z.string().max(100),
+      points: z
+        .array(
+          z
+            .object({
+              id: z.string().max(64),
+              value: z.number(),
+              secondaryValue: z.number().nullable(),
+              unit: z.enum(["mmHg", "°C", "%", "/min", "kg"]),
+              effectiveAt: z.string().datetime(),
+              status: z.enum([
+                "approved",
+                "draft",
+                "pending-review",
+                "corrected",
+              ]),
+            })
+            .strict(),
+        )
+        .max(12),
       source: z.string().max(240),
     })
     .strict(),
-  component: ({ props: { label, value, source } }) => (
-    <article className="assistant-card vital-trend-card">
-      <span>{label}</span>
-      <strong>{value}</strong>
-      <div className="vital-line" aria-hidden="true" />
-      <footer>{source}</footer>
-    </article>
-  ),
+  component: ({ props: { label, value, points, source } }) => {
+    const values = points.flatMap((point) => [
+      point.value,
+      ...(point.secondaryValue === null ? [] : [point.secondaryValue]),
+    ]);
+    const minimum = Math.min(...values);
+    const maximum = Math.max(...values);
+    const spread = Math.max(1, maximum - minimum);
+    const x = (index: number) =>
+      points.length === 1 ? 50 : 6 + (index / (points.length - 1)) * 88;
+    const y = (pointValue: number) =>
+      48 - ((pointValue - minimum) / spread) * 38;
+    const approved = points
+      .map((point, index) => ({ point, index }))
+      .filter(({ point }) => point.status === "approved");
+    return (
+      <article className="assistant-card vital-trend-card">
+        <header>
+          <span>Letzter bestätigter Wert</span>
+          <h3>{label}</h3>
+        </header>
+        <strong>{value}</strong>
+        {points.length > 0 && (
+          <>
+            <svg
+              className="vital-chart"
+              viewBox="0 0 100 56"
+              role="img"
+              aria-label={`${label}: ${points.length} echte Messpunkte, keine berechneten Zwischenwerte`}
+            >
+              {approved.length > 1 && (
+                <>
+                  <polyline
+                    points={approved
+                      .map(
+                        ({ point, index }) => `${x(index)},${y(point.value)}`,
+                      )
+                      .join(" ")}
+                    fill="none"
+                    vectorEffect="non-scaling-stroke"
+                  />
+                  {approved.every(
+                    ({ point }) => point.secondaryValue !== null,
+                  ) && (
+                    <polyline
+                      className="secondary-series"
+                      points={approved
+                        .map(
+                          ({ point, index }) =>
+                            `${x(index)},${y(point.secondaryValue!)}`,
+                        )
+                        .join(" ")}
+                      fill="none"
+                      vectorEffect="non-scaling-stroke"
+                    />
+                  )}
+                </>
+              )}
+              {points.map((point, index) =>
+                point.status === "pending-review" ? (
+                  <g key={point.id} className="pending-point">
+                    <line
+                      x1={x(index) - 2}
+                      y1={y(point.value) - 2}
+                      x2={x(index) + 2}
+                      y2={y(point.value) + 2}
+                    />
+                    <line
+                      x1={x(index) + 2}
+                      y1={y(point.value) - 2}
+                      x2={x(index) - 2}
+                      y2={y(point.value) + 2}
+                    />
+                  </g>
+                ) : (
+                  <circle
+                    key={point.id}
+                    className={point.status}
+                    cx={x(index)}
+                    cy={y(point.value)}
+                    r="2"
+                  />
+                ),
+              )}
+            </svg>
+            <div className="vital-table-scroll">
+              <table className="vital-point-table">
+                <caption className="sr-only">
+                  Gemessene Werte, Zeitpunkte und Prüfstatus
+                </caption>
+                <thead>
+                  <tr>
+                    <th>Zeit</th>
+                    <th>Wert</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {points.map((point) => (
+                    <tr key={point.id} className={point.status}>
+                      <td>
+                        <time dateTime={point.effectiveAt}>
+                          {new Date(point.effectiveAt).toLocaleString("de-CH", {
+                            dateStyle: "short",
+                            timeStyle: "short",
+                          })}
+                        </time>
+                      </td>
+                      <td>
+                        <strong>
+                          {point.value}
+                          {point.secondaryValue === null
+                            ? ""
+                            : `/${point.secondaryValue}`}{" "}
+                          {point.unit}
+                        </strong>
+                      </td>
+                      <td>
+                        {point.status === "approved"
+                          ? "Bestätigt"
+                          : point.status === "corrected"
+                            ? "Korrigiert"
+                            : point.status === "pending-review"
+                              ? "Unabhängige Prüfung ausstehend"
+                              : "Entwurf – nicht bestätigt"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+        <footer>{source}</footer>
+      </article>
+    );
+  },
 });
 
 const HandoverDeltaCard = defineComponent({

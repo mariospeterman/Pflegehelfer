@@ -1,9 +1,12 @@
 import { z } from "zod";
 import type { Role } from "../core/types.js";
+import { siteConfiguration } from "../core/site-config.js";
 import { validateLocalAiEndpoint } from "./local-endpoint-policy.js";
 
 export interface ApprovedKnowledgeDocument {
   id: string;
+  institutionId: string;
+  siteId: string;
   title: string;
   version: string;
   owner: string;
@@ -46,6 +49,8 @@ const clinicalRoles: Role[] = [
 export const approvedKnowledgeDocuments: ApprovedKnowledgeDocument[] = [
   {
     id: "sop-medication-discrepancy",
+    institutionId: "org-demo",
+    siteId: "rehab-2",
     title: "Medikationsdiskrepanz sicher eskalieren",
     version: "1.0.0-demo",
     owner: "Fachverantwortung Pflege & Apotheke (synthetisch)",
@@ -57,6 +62,8 @@ export const approvedKnowledgeDocuments: ApprovedKnowledgeDocument[] = [
   },
   {
     id: "sop-handover-minimum",
+    institutionId: "org-demo",
+    siteId: "rehab-2",
     title: "Strukturierte Schichtübergabe",
     version: "1.0.0-demo",
     owner: "Pflegeentwicklung Tertianum Kronenhof Demo (synthetisch)",
@@ -68,6 +75,8 @@ export const approvedKnowledgeDocuments: ApprovedKnowledgeDocument[] = [
   },
   {
     id: "sop-fall-response",
+    institutionId: "org-demo",
+    siteId: "rehab-2",
     title: "Vorgehen nach beobachtetem oder vermutetem Sturz",
     version: "1.0.0-demo",
     owner: "Clinical Safety Board Tertianum Kronenhof Demo (synthetisch)",
@@ -191,7 +200,11 @@ export class ApprovedKnowledgeService {
       ready:
         this.mode === "deterministic" ||
         Boolean(this.baseUrl && (this.mode !== "hosted-test" || this.apiKey)),
-      documentCount: this.documents.length,
+      documentCount: this.documents.filter(
+        (document) =>
+          document.institutionId === siteConfiguration.institutionId &&
+          document.siteId === siteConfiguration.siteId,
+      ).length,
       message:
         this.mode === "deterministic"
           ? "Versionierte lokale Wissenssuche aktiv."
@@ -216,6 +229,8 @@ export class ApprovedKnowledgeService {
     const matches = this.documents
       .filter(
         (document) =>
+          document.institutionId === siteConfiguration.institutionId &&
+          document.siteId === siteConfiguration.siteId &&
           document.allowedRoles.includes(role) &&
           document.validFrom <= date &&
           (!document.validTo || document.validTo >= date),

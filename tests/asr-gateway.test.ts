@@ -55,7 +55,9 @@ describe("local ASR privacy boundary", () => {
     ).toMatchObject({
       mode: "hosted-test",
       model: "gpt-4o-transcribe",
-      ready: true,
+      ready: false,
+      configured: true,
+      acceptance: "ready-for-test",
       dataBoundary: "synthetic-hosted",
     });
   });

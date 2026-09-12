@@ -443,6 +443,7 @@ export class PflegehelferService {
         siteId: siteConfiguration.siteId,
         displayName: siteConfiguration.displayName,
         dataClass: this.currentDataClass,
+        governedTopics: siteConfiguration.governedTopics,
       },
       currentUser: user,
       users: this.state.users.map((candidate) => ({
@@ -549,6 +550,12 @@ export class PflegehelferService {
     if (!task)
       throw new DomainError("NOT_FOUND", "Aufgabe nicht gefunden.", 404);
     const patient = task.patientId ? this.patient(task.patientId) : undefined;
+    if (patient && task.encounterId !== patient.encounterId)
+      throw new DomainError(
+        "VERSION_CONFLICT",
+        "Die Aufgabe gehört zu einem früheren Aufenthalt.",
+        409,
+      );
     if (
       ["transport", "service"].includes(user.role) &&
       purpose !== "operations"
@@ -683,6 +690,7 @@ export class PflegehelferService {
     userId: string,
     input: {
       patientId?: string | null | undefined;
+      encounterId?: string | null | undefined;
       title: string;
       reason: string;
       ownerRole: Role;
@@ -695,6 +703,24 @@ export class PflegehelferService {
     const user = this.user(userId);
     const purpose = input.purpose ?? user.defaultPurpose;
     const patient = input.patientId ? this.patient(input.patientId) : undefined;
+    if (
+      !input.governedClinicalWorkflow &&
+      requiresDedicatedTaskWorkflow(`${input.title}. ${input.reason}`)
+    )
+      throw new DomainError(
+        "VALIDATION",
+        "Medikations-, Behandlungs- und Diagnostikaufträge müssen im dafür freigegebenen Fachworkflow angelegt werden.",
+        422,
+      );
+    if (
+      (patient && input.encounterId !== patient.encounterId) ||
+      (!patient && input.encounterId)
+    )
+      throw new DomainError(
+        "VERSION_CONFLICT",
+        "Patient und Aufenthalt der Aufgabe stimmen nicht überein.",
+        409,
+      );
     this.authorize(user, "task:create", purpose, patient);
     if (
       patient &&
@@ -712,18 +738,10 @@ export class PflegehelferService {
         "Patientengebundene Aufgaben dürfen nicht an nichtklinische Rollen adressiert werden.",
         400,
       );
-    if (
-      !input.governedClinicalWorkflow &&
-      requiresDedicatedTaskWorkflow(`${input.title}. ${input.reason}`)
-    )
-      throw new DomainError(
-        "VALIDATION",
-        "Medikations-, Behandlungs- und Diagnostikaufträge müssen im dafür freigegebenen Fachworkflow angelegt werden.",
-        422,
-      );
     const task: ClinicalTask = {
       id: `t-${randomUUID()}`,
       patientId: input.patientId ?? null,
+      encounterId: patient?.encounterId ?? null,
       title: input.title.trim(),
       reason: input.reason.trim(),
       requesterId: user.id,
@@ -757,6 +775,7 @@ export class PflegehelferService {
     userId: string,
     input: {
       patientId: string;
+      encounterId: string;
       code: Observation["code"];
       value: number;
       secondaryValue?: number | null | undefined;
@@ -768,6 +787,12 @@ export class PflegehelferService {
     const user = this.user(userId);
     const purpose = input.purpose ?? user.defaultPurpose;
     const patient = this.patient(input.patientId);
+    if (input.encounterId !== patient.encounterId)
+      throw new DomainError(
+        "VERSION_CONFLICT",
+        "Der Aufenthalt hat sich geändert. Bitte Patientenkontext neu öffnen.",
+        409,
+      );
     this.authorize(user, "observation:draft", purpose, patient);
     this.validateObservation(
       input.code,
@@ -792,6 +817,7 @@ export class PflegehelferService {
     const observation: Observation = {
       id: `o-${randomUUID()}`,
       patientId: patient.id,
+      encounterId: patient.encounterId,
       code: input.code,
       label: labels[input.code],
       value: input.value,
@@ -829,6 +855,7 @@ export class PflegehelferService {
     userId: string,
     input: {
       patientId: string;
+      encounterId: string;
       transcript?: string | null | undefined;
       structuredText: string;
       approvalPolicy?: ApprovalPolicy | undefined;
@@ -839,6 +866,12 @@ export class PflegehelferService {
     const user = this.user(userId);
     const purpose = input.purpose ?? user.defaultPurpose;
     const patient = this.patient(input.patientId);
+    if (input.encounterId !== patient.encounterId)
+      throw new DomainError(
+        "VERSION_CONFLICT",
+        "Der Aufenthalt hat sich geändert. Bitte Patientenkontext neu öffnen.",
+        409,
+      );
     this.authorize(user, "note:draft", purpose, patient);
     if (input.structuredText.trim().length < 10)
       throw new DomainError("VALIDATION", "Dokumentation ist zu kurz.", 400);
@@ -850,6 +883,7 @@ export class PflegehelferService {
     const note: ClinicalNote = {
       id: `n-${randomUUID()}`,
       patientId: patient.id,
+      encounterId: patient.encounterId,
       transcript: input.transcript?.trim() || null,
       structuredText: input.structuredText.trim(),
       criticalEntities,
@@ -901,6 +935,12 @@ export class PflegehelferService {
     if (!record)
       throw new DomainError("NOT_FOUND", "Entwurf nicht gefunden.", 404);
     const patient = this.patient(record.patientId);
+    if (record.encounterId !== patient.encounterId)
+      throw new DomainError(
+        "VERSION_CONFLICT",
+        "Der Entwurf gehört zu einem früheren Aufenthalt.",
+        409,
+      );
     this.authorize(
       user,
       type === "observation" ? "observation:approve" : "note:approve",
@@ -1014,6 +1054,7 @@ export class PflegehelferService {
     userId: string,
     input: {
       patientId: string;
+      encounterId: string;
       request: string;
       reason: string;
       recipientRole: Role;
@@ -1026,6 +1067,12 @@ export class PflegehelferService {
     const user = this.user(userId);
     const purpose = input.purpose ?? user.defaultPurpose;
     const patient = this.patient(input.patientId);
+    if (input.encounterId !== patient.encounterId)
+      throw new DomainError(
+        "VERSION_CONFLICT",
+        "Der Aufenthalt hat sich geändert. Bitte Patientenkontext neu öffnen.",
+        409,
+      );
     this.authorize(user, "communication:create", purpose, patient);
     if (
       ![
@@ -1057,6 +1104,7 @@ export class PflegehelferService {
     const communication: Communication = {
       id: `c-${randomUUID()}`,
       patientId: patient.id,
+      encounterId: patient.encounterId,
       request: input.request.trim(),
       reason: input.reason.trim(),
       senderId: user.id,
@@ -1108,6 +1156,12 @@ export class PflegehelferService {
     if (!item)
       throw new DomainError("NOT_FOUND", "Kommunikation nicht gefunden.", 404);
     const patient = this.patient(item.patientId);
+    if (item.encounterId !== patient.encounterId)
+      throw new DomainError(
+        "VERSION_CONFLICT",
+        "Die Kommunikation gehört zu einem früheren Aufenthalt.",
+        409,
+      );
     this.authorize(user, "communication:respond", purpose, patient);
     const directRecipient =
       user.role === item.recipientRole &&
@@ -1163,6 +1217,7 @@ export class PflegehelferService {
       if (input.createTask)
         item.resultingTaskId = this.createTask(user.id, {
           patientId: patient.id,
+          encounterId: patient.encounterId,
           title: "Folgeauftrag aus Antwort",
           reason: item.response,
           ownerRole: "registered-nurse",
@@ -1315,6 +1370,7 @@ export class PflegehelferService {
     const template = roundActionCatalog[input.actionKind];
     const task = this.createTask(user.id, {
       patientId: patient.id,
+      encounterId: patient.encounterId,
       title: template.decision,
       reason: "Beschluss aus Visite",
       ownerRole: input.ownerRole,
@@ -1848,7 +1904,7 @@ export class PflegehelferService {
           item.aggregateType === "observation"
             ? "Observation"
             : item.aggregateType === "note"
-              ? "QuestionnaireResponse"
+              ? "DocumentReference"
               : item.aggregateType === "task"
                 ? "Task"
                 : "Communication",
@@ -1978,6 +2034,7 @@ export class PflegehelferService {
     const task: ClinicalTask = {
       id: `t-${randomUUID()}`,
       patientId: input.patientId,
+      encounterId: this.patient(input.patientId).encounterId,
       title: input.title,
       reason: input.reason,
       requesterId: "system:nurse-call-adapter",

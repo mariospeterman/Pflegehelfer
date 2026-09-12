@@ -52,6 +52,7 @@ describe("production bootstrap boundary", () => {
     );
     const task = service.createTask("u-nurse", {
       patientId: "p-anna",
+      encounterId: "enc-anna-2026",
       title: "Providergebundene Aufgabe",
       reason:
         "Der interne Auftrag bleibt auch ohne privaten Provider-Vertrag nutzbar.",
@@ -61,6 +62,7 @@ describe("production bootstrap boundary", () => {
     });
     const communication = service.createCommunication("u-nurse", {
       patientId: "p-anna",
+      encounterId: "enc-anna-2026",
       request: "Bitte im Provider bestätigen.",
       reason: "Die interne Teamkommunikation darf nicht vom Vendor abhängen.",
       recipientRole: "physician",

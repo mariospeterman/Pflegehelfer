@@ -384,12 +384,16 @@ describe.runIf(Boolean(databaseUrl))("PostgreSQL operational store", () => {
 
   it("persists and atomically consumes one-use assistant authority", async () => {
     const store = new PostgresOperationalStore(databaseUrl!);
+    const inspectionPool = new Pool({ connectionString: databaseUrl });
     try {
       await store.initialize();
       await store.resetDemoState();
-      const session = await store.getOrStartSession(
+      await store.getOrStartSession("u-nurse", "registered-nurse");
+      const session = await store.changePatientContext(
         "u-nurse",
         "registered-nurse",
+        "p-anna",
+        "enc-anna-2026",
       );
       const tokenHash = createHash("sha256").update("test-token").digest("hex");
       const record = {
@@ -409,6 +413,8 @@ describe.runIf(Boolean(databaseUrl))("PostgreSQL operational store", () => {
         sessionId: session.id,
         threadId: session.threadId,
         contextRevision: session.contextRevision,
+        responseId: crypto.randomUUID(),
+        reviewItems: [{ id: "action-1", kind: "task" }],
       });
       await expect(
         store.loadIntentAuthority({
@@ -418,12 +424,28 @@ describe.runIf(Boolean(databaseUrl))("PostgreSQL operational store", () => {
           threadId: session.threadId,
           contextRevision: session.contextRevision,
           patientId: "p-anna",
+          encounterId: "enc-anna-2026",
         }),
       ).resolves.toMatchObject({ command: "task:draft" });
       expect(await store.consumeIntentAuthority(tokenHash)).toBe(true);
       expect(await store.consumeIntentAuthority(tokenHash)).toBe(false);
+      const proposal = await inspectionPool.query<{
+        status: string;
+        proposal_hash: string;
+        review_items: Array<{ id: string; kind: string }>;
+      }>(
+        `SELECT status,proposal_hash,review_items FROM assistant_proposal_revisions
+         WHERE organization_id=$1 AND actor_id=$2`,
+        [session.organizationId, "u-nurse"],
+      );
+      expect(proposal.rows).toHaveLength(1);
+      expect(proposal.rows[0]?.status).toBe("consumed");
+      expect(proposal.rows[0]?.proposal_hash).toMatch(/^[a-f0-9]{64}$/);
+      expect(proposal.rows[0]?.review_items).toEqual([
+        { id: "action-1", kind: "task" },
+      ]);
     } finally {
-      await store.close();
+      await Promise.all([store.close(), inspectionPool.end()]);
     }
   });
 

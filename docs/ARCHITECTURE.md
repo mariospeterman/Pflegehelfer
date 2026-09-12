@@ -1,15 +1,15 @@
 # Pflegehelfer production architecture
 
 Status: canonical target architecture
-Last verified: 2026-09-09
+Last verified: 2026-09-12
 
 This is the single architectural source of truth. Product behaviour is in `PRODUCT_EXPERIENCE.md`; configurable journeys are in `WORKFLOWS.md`. ADRs explain decisions but do not override this document.
 
 ## Product invariant
 
-> Pflegehelfer is a GenUI/chat/voice-first clinical coworker. One persistent conversation is the primary workspace. Handover, patient summaries, tasks, measurements, documentation, team communication, rounds, forms and provider operations appear in that conversation as contextual, interactive, server-authorized components. Fixed UI is limited to identity, role and patient context, conversation history, safety state, synchronization state, authentication and deterministic approval.
+> Pflegehelfer is a GenUI/chat/voice-first clinical coworker. One coherent working session links multiple explicitly scoped conversations: the employee's general assistant, private patient-and-encounter assistant threads and separately authorized patient-team/department/direct threads. Handover, patient summaries, tasks, measurements, documentation, team communication, rounds, forms and provider operations appear in the appropriate conversation as contextual, interactive, server-authorized components. Fixed UI is limited to identity, role and patient context, scoped conversation history, contact-style read/query lenses, safety state, synchronization state, authentication and deterministic approval.
 
-There are no workflow-owning dashboard pages or focus modes. The sidebar/drawer changes or recalls context in the same working thread. Detailed Medplum screens are an authorized expert escape hatch, not the daily workflow.
+There are no workflow-owning dashboard pages or focus modes. The sidebar/drawer recalls an explicitly scoped conversation without ending the working session. Patient tabs are views over the same authorized record and command pipeline; they do not own workflow state. Detailed Medplum screens are an authorized expert escape hatch, not the daily workflow.
 
 The demo organization is **Tertianum Kronenhof · Demo**. Every demo surface states that all people and records are fictional.
 
@@ -17,7 +17,7 @@ The demo organization is **Tertianum Kronenhof · Demo**. Every demo surface sta
 
 ```mermaid
 flowchart TD
-  UI["Persistent GenUI conversation\nvoice, chat, safe components"]
+  UI["Scoped GenUI conversations\nvoice, chat, safe components"]
   G["Clinical query and action gateway\nauth, policy, validation, approvals"]
   W["Workflow and working-session kernel"]
   AI["Local AI services\nASR, fast model, deep model, RAG"]
@@ -59,7 +59,7 @@ PostgreSQL must not become a duplicate patient record. It stores operational ref
 
 ## Working sessions and workflows
 
-A `WorkingSession` binds organization/department, authenticated actor and role, one immutable `WorkflowTemplateVersion`, one persistent `AssistantThread`, current step/version, explicit patient-context revision (initially no patient), and lifecycle timestamps.
+A `WorkingSession` binds organization/department, authenticated actor and role, one immutable `WorkflowTemplateVersion`, current step/version, lifecycle timestamps and an active-thread pointer. It can link many `AssistantThread`s. Each thread persists organization/site/department, type, owner/audience/membership, patient and encounter where applicable, lifecycle/retention, context revision and ordered messages.
 
 On sign-in the server resumes the open session or starts the institution’s active role workflow. It emits the next safe step into the conversation. Activating a template version never changes a running session.
 
@@ -71,19 +71,19 @@ Reference journeys:
 2. Physician: addressed questions/round context → patient evidence → answer/decision → owned follow-up → close loop.
 3. Allied/operational roles: minimum assigned-work context, explicit patient access where permitted, completion/evidence and escalation.
 
-## One conversation and explicit context
+## One session, scoped conversations and explicit context
 
-An assistant thread contains immutable sequenced messages. Patient changes are server commands that append `ContextChanged` and increment `context_revision`. Each response is stored with the patient and revision captured when its request began, even if a slower request completes after a context switch. Recent model context is filtered to the active authorized patient. Outstanding intents and voice receipts for the old revision become unusable. No hidden model memory crosses patients.
+An assistant thread contains immutable sequenced messages. Scope changes are server commands that select or create the matching authorized thread, append `ContextChanged` and increment `context_revision`. Patient threads are bound to both patient and encounter. Each response is stored with its origin thread, patient/encounter and revision captured when its request began, even if a slower request completes after a switch. Recent model context is filtered to that authorized scope. Outstanding intents and voice receipts for the old revision become unusable. Useful draft content can be retained but must be revalidated before approval. No hidden model memory crosses patients or private/team audiences.
 
 Sidebar/mobile-drawer entries are context/history controls:
 
-- Today: current working session and next safe actions;
-- Patients: explicit patient context selection;
-- Team: authorized mentions/questions/responses inserted into the thread;
-- History: prior authorized sessions/threads;
+- My assistant: private current working session and next safe actions;
+- Patients: explicit private patient-and-encounter conversations plus contact-style record lenses;
+- Team: separately authorized shared patient/department discussions with visible authors and audience;
+- History: prior authorized scoped sessions/threads;
 - Workflow Studio: administration only.
 
-They never replace the conversation with a separate dashboard.
+They reuse the same conversation engine and never create a separate dashboard. A private draft becomes shared only through an explicit audience preview and reviewed publish command.
 
 ## GenUI and model boundary
 
@@ -171,7 +171,7 @@ Readiness fails closed without operational PostgreSQL, governed Medplum or produ
 
 ## Definition of done
 
-- one persistent role-aware conversation with explicit patient context and no dashboard/focus application;
+- one coherent working session with persistent general, patient-private and authorized shared conversations, explicit patient/encounter scope and no dashboard/focus application;
 - versioned configurable workflows and resumable working sessions;
 - real streamed bounded OpenUI with server-hydrated authority and safe partial failure;
 - typed multi-action draft/review/approval with source/version checks;

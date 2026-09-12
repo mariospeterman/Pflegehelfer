@@ -194,6 +194,7 @@ export const patients: Patient[] = [
     room: "214A",
     wardId: activeWardId,
     encounterId: "enc-anna-2026",
+    allergyStatus: "confirmed",
     allergies: ["Penicillin – Exanthem"],
     risks: ["Sturzrisiko", "Antikoagulation"],
     diagnoses: [
@@ -218,6 +219,7 @@ export const patients: Patient[] = [
     room: "207",
     wardId: activeWardId,
     encounterId: "enc-luca-2026",
+    allergyStatus: "unknown",
     allergies: [],
     risks: ["Delirrisiko", "Hörminderung"],
     diagnoses: ["Dekonditionierung nach Pneumonie"],
@@ -233,6 +235,7 @@ export const patients: Patient[] = [
     room: "211",
     wardId: activeWardId,
     encounterId: "enc-mei-2026",
+    allergyStatus: "confirmed",
     allergies: ["Latex"],
     risks: ["Aspirationsrisiko"],
     diagnoses: ["Zustand nach ischämischem Insult"],
@@ -248,6 +251,7 @@ export const patients: Patient[] = [
     room: "205",
     wardId: activeWardId,
     encounterId: "enc-ruth-2026",
+    allergyStatus: "unknown",
     allergies: [],
     risks: ["Sturzrisiko", "Schmerz bei Belastung"],
     diagnoses: ["Knie-Totalprothese rechts, postoperativ"],
@@ -263,6 +267,7 @@ export const patients: Patient[] = [
     room: "208",
     wardId: activeWardId,
     encounterId: "enc-peter-2026",
+    allergyStatus: "confirmed",
     allergies: ["Pflasterkleber"],
     risks: ["Flüssigkeitsretention", "Hautrisiko Unterschenkel"],
     diagnoses: ["Herzinsuffizienz, rehabilitative Stabilisierung"],
@@ -278,6 +283,7 @@ export const patients: Patient[] = [
     room: "216B",
     wardId: activeWardId,
     encounterId: "enc-sofia-2026",
+    allergyStatus: "unknown",
     allergies: [],
     risks: ["Transfer mit zwei Mitarbeitenden", "Dekubitusrisiko"],
     diagnoses: ["Hemiparese links nach Insult"],
@@ -293,7 +299,8 @@ export const patients: Patient[] = [
     room: "203",
     wardId: activeWardId,
     encounterId: "enc-emil-2026",
-    allergies: ["Keine bekannten Allergien"],
+    allergyStatus: "explicit-negative",
+    allergies: [],
     risks: ["Hörminderung", "Orientierung in neuer Umgebung"],
     diagnoses: ["Dekonditionierung nach abdominalem Eingriff"],
     careGoals: ["Hörhilfe selbst einsetzen", "Begleiteter Spaziergang"],
@@ -306,6 +313,7 @@ export const tasks: ClinicalTask[] = [
   {
     id: "t-bp-anna",
     patientId: "p-anna",
+    encounterId: "enc-anna-2026",
     title: "Blutdruck kontrollieren",
     reason: "Erhöhter Morgenwert 168/96 mmHg",
     requesterId: "u-nurse",
@@ -325,6 +333,7 @@ export const tasks: ClinicalTask[] = [
   {
     id: "t-mobilise-luca",
     patientId: "p-luca",
+    encounterId: "enc-luca-2026",
     title: "Mobilisation mit Rollator",
     reason: "Rehabilitationsziel",
     requesterId: "u-physio",
@@ -344,6 +353,7 @@ export const tasks: ClinicalTask[] = [
   {
     id: "t-transport-luca",
     patientId: "p-luca",
+    encounterId: "enc-luca-2026",
     title: "Transport zur Radiologie",
     reason: "Kontrollaufnahme",
     requesterId: "u-physician",
@@ -363,6 +373,7 @@ export const tasks: ClinicalTask[] = [
   {
     id: "t-service-214",
     patientId: null,
+    encounterId: null,
     title: "Defekte Leselampe Zimmer 214",
     reason: "Patientenkomfort",
     requesterId: "u-assistant",
@@ -382,6 +393,7 @@ export const tasks: ClinicalTask[] = [
   {
     id: "t-intake-anna-med",
     patientId: "p-anna",
+    encounterId: "enc-anna-2026",
     title: "Eintritt: Medikationsdiskrepanz klären",
     reason: "Import aus WiCare und Austrittsbericht ist widersprüchlich",
     requesterId: "system-import",
@@ -401,6 +413,7 @@ export const tasks: ClinicalTask[] = [
   {
     id: "t-intake-luca-consent",
     patientId: "p-luca",
+    encounterId: "enc-luca-2026",
     title: "Eintritt: Einwilligungsdokument nachfordern",
     reason: "Import meldet fehlendes unterschriebenes Dokument",
     requesterId: "system-import",
@@ -423,6 +436,7 @@ export const observations: Observation[] = [
   {
     id: "o-bp-anna-1",
     patientId: "p-anna",
+    encounterId: "enc-anna-2026",
     code: "blood-pressure",
     label: "Blutdruck",
     value: 168,
@@ -447,6 +461,7 @@ export const observations: Observation[] = [
   {
     id: "o-temp-luca-1",
     patientId: "p-luca",
+    encounterId: "enc-luca-2026",
     code: "temperature",
     label: "Temperatur",
     value: 37.4,
@@ -466,6 +481,7 @@ export const observations: Observation[] = [
   {
     id: "o-spo2-mei-1",
     patientId: "p-mei",
+    encounterId: "enc-mei-2026",
     code: "oxygen-saturation",
     label: "Sauerstoffsättigung",
     value: 94,
@@ -495,6 +511,7 @@ export const communications: Communication[] = [
   {
     id: "c-dizziness-anna",
     patientId: "p-anna",
+    encounterId: "enc-anna-2026",
     request: "Bitte Medikation und Orthostasewerte beurteilen.",
     reason: "Neuer Schwindel bei Mobilisation.",
     senderId: "u-nurse",

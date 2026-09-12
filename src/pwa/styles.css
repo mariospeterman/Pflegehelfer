@@ -204,6 +204,15 @@ input:focus-visible {
 .new-context-button:hover {
   border-color: var(--blue);
 }
+.context-search input {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--surface);
+  color: var(--ink);
+  padding: 0 12px;
+}
 .context-actions {
   display: grid;
   gap: 3px;
@@ -235,6 +244,35 @@ input:focus-visible {
   color: var(--muted);
   font-size: 11px;
 }
+.governed-topics {
+  display: grid;
+  gap: 7px;
+  padding: 0 10px;
+}
+.governed-topics h2 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.governed-topics > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.governed-topics button {
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--blue);
+  padding: 0 9px;
+  cursor: pointer;
+}
+.governed-topics small {
+  color: var(--muted);
+}
 .patient-context-list {
   display: grid;
   gap: 4px;
@@ -256,6 +294,44 @@ input:focus-visible {
 }
 .patient-context-list button > span:last-child {
   display: grid;
+}
+.conversation-history {
+  display: grid;
+  gap: 4px;
+}
+.conversation-history h2 {
+  margin: 8px 10px 2px;
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.conversation-history button {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ink);
+  padding: 7px 10px;
+  text-align: left;
+}
+.conversation-history button:hover,
+.conversation-history button.active {
+  background: var(--blue-soft);
+}
+.conversation-history button > span:first-child {
+  min-width: 38px;
+  font-weight: 800;
+  color: var(--blue);
+}
+.conversation-history button > span:last-child {
+  display: grid;
+}
+.conversation-history small {
+  color: var(--muted);
 }
 .room-dot {
   min-width: 38px;
@@ -414,6 +490,36 @@ input:focus-visible {
   justify-items: end;
   gap: 3px;
   font-size: 11px;
+}
+.patient-workspace-tabs {
+  min-height: 46px;
+  padding: 0 22px;
+  display: flex;
+  gap: 4px;
+  align-items: end;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  position: sticky;
+  top: 124px;
+  z-index: 17;
+}
+.patient-workspace-tabs button {
+  min-width: 56px;
+  min-height: 44px;
+  padding: 0 10px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.patient-workspace-tabs button:hover,
+.patient-workspace-tabs button.active {
+  color: var(--blue);
+  border-bottom-color: var(--blue);
 }
 .patient-allergy {
   color: var(--danger);
@@ -587,7 +693,7 @@ input:focus-visible {
 }
 .patient-summary-sections section {
   display: grid;
-  grid-template-columns: minmax(88px, 0.28fr) minmax(0, 1fr);
+  grid-template-columns: minmax(110px, 0.3fr) minmax(0, 1fr) auto;
   gap: 10px;
   align-items: baseline;
   padding-bottom: 9px;
@@ -605,6 +711,34 @@ input:focus-visible {
   color: var(--blue);
   font-size: 11px;
   letter-spacing: 0.03em;
+}
+.patient-channel-label {
+  color: var(--blue);
+}
+.patient-summary-sections ul {
+  margin: 0;
+  padding-left: 18px;
+}
+.patient-summary-sections small {
+  grid-column: 2 / -1;
+  color: var(--muted);
+}
+.profile-state {
+  align-self: start;
+  border-radius: 999px;
+  padding: 3px 7px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.profile-unknown .profile-state,
+.profile-not-supplied .profile-state,
+.profile-restricted .profile-state,
+.profile-stale .profile-state,
+.profile-conflict .profile-state {
+  background: var(--warning-soft);
+  color: var(--warning-ink);
 }
 .assistant-model-status {
   color: var(--muted);
@@ -799,21 +933,63 @@ input:focus-visible {
 }
 .vital-trend-card {
   display: grid;
-  grid-template-columns: 1fr auto;
-  align-items: baseline;
   gap: 7px;
 }
 .vital-trend-card strong {
   color: var(--blue);
   font-size: 25px;
 }
-.vital-line {
-  grid-column: 1 / -1;
-  height: 2px;
-  background: linear-gradient(90deg, var(--blue), transparent);
+.vital-chart {
+  width: 100%;
+  min-height: 120px;
+  border-block: 1px solid var(--line);
+  color: var(--blue);
+  overflow: visible;
+}
+.vital-chart polyline,
+.vital-chart circle {
+  stroke: currentColor;
+  stroke-width: 2;
+}
+.vital-chart .secondary-series {
+  stroke-dasharray: 4 3;
+  opacity: 0.75;
+}
+.vital-chart circle {
+  fill: var(--surface);
+}
+.vital-chart .pending-point {
+  color: var(--warning);
+  stroke: currentColor;
+  stroke-width: 2;
+}
+.vital-table-scroll {
+  overflow-x: auto;
+}
+.vital-point-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+.vital-point-table th,
+.vital-point-table td {
+  padding: 7px 9px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+}
+.vital-point-table th {
+  color: var(--muted);
+}
+.vital-point-table tr.pending-review {
+  background: var(--warning-soft);
+  color: var(--warning-ink);
+}
+.vital-point-table strong {
+  color: inherit;
+  font-size: 12px;
 }
 .vital-trend-card footer {
-  grid-column: 1 / -1;
+  margin-top: 4px;
 }
 .handover-delta-card {
   border-left: 4px solid var(--warning);
@@ -1150,6 +1326,25 @@ button:disabled {
 }
 .draft-review-copy {
   padding: 19px 0;
+  display: grid;
+  gap: 14px;
+}
+.draft-review-copy label {
+  display: grid;
+  gap: 6px;
+}
+.draft-review-copy label > span {
+  font-weight: 700;
+}
+.draft-review-copy input,
+.draft-review-copy textarea {
+  width: 100%;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 10px 12px;
+  font: inherit;
 }
 .draft-review-copy p {
   line-height: 1.55;
@@ -1265,6 +1460,18 @@ button:disabled {
   .composer-dock {
     left: 0;
     padding: 16px 12px calc(10px + env(safe-area-inset-bottom));
+  }
+}
+
+@media (max-width: 520px) {
+  .patient-summary-sections section {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .patient-summary-sections h4,
+  .patient-summary-sections ul,
+  .patient-summary-sections section > p,
+  .patient-summary-sections small {
+    grid-column: 1 / -1;
   }
 }
 

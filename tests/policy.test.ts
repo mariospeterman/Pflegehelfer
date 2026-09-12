@@ -40,6 +40,7 @@ describe("least-privilege policy", () => {
     expect(() =>
       service.createObservationDraft("u-transport", {
         patientId: "p-luca",
+        encounterId: "enc-luca-2026",
         code: "temperature",
         value: 37,
         effectiveAt: "2026-09-05T08:10:00.000Z",
@@ -83,6 +84,7 @@ describe("least-privilege policy", () => {
     const service = new PflegehelferService();
     const task = service.createTask("u-physician", {
       patientId: "p-anna",
+      encounterId: "enc-anna-2026",
       title: "Ärztliche Verlaufskontrolle",
       reason: "Verantwortung bleibt beim übernehmenden Arzt",
       ownerRole: "physician",
@@ -101,6 +103,7 @@ describe("least-privilege policy", () => {
     const service = new PflegehelferService();
     const message = service.createCommunication("u-nurse", {
       patientId: "p-anna",
+      encounterId: "enc-anna-2026",
       request: "Bitte im ärztlichen Dienst übernehmen",
       reason: "Rollenkanal mit persönlicher Quittierung",
       recipientRole: "physician",
@@ -127,6 +130,7 @@ describe("least-privilege policy", () => {
     const service = new PflegehelferService();
     const message = service.createCommunication("u-nurse", {
       patientId: "p-anna",
+      encounterId: "enc-anna-2026",
       request: "Bitte aktuellen Zustand beurteilen",
       reason: "Transparente Frage im Behandlungsteam",
       recipientRole: "physician",
@@ -152,6 +156,7 @@ describe("least-privilege policy", () => {
     expect(() =>
       service.createTask("u-nurse", {
         patientId: "p-anna",
+        encounterId: "enc-anna-2026",
         title: "Unsichere Zuweisung",
         reason: "Darf die klinische Grenze nicht verlassen",
         ownerRole: "hr",
@@ -162,6 +167,7 @@ describe("least-privilege policy", () => {
     expect(() =>
       service.createCommunication("u-nurse", {
         patientId: "p-anna",
+        encounterId: "enc-anna-2026",
         request: "Patientendaten an HR",
         reason: "Negativtest",
         recipientRole: "hr",
@@ -172,6 +178,7 @@ describe("least-privilege policy", () => {
     expect(() =>
       service.createTask("u-nurse", {
         patientId: "p-anna",
+        encounterId: "enc-anna-2026",
         title: "Klinischer Freitext",
         reason: "Darf nicht in Administration oder Transport gelangen",
         ownerRole: "administration",
@@ -186,6 +193,7 @@ describe("least-privilege policy", () => {
     expect(
       service.createTask("u-nurse", {
         patientId: "p-anna",
+        encounterId: "enc-anna-2026",
         title: "Bewohnerin mobilisieren und beim Ankleiden unterstützen",
         reason: "Geplante Grundpflege",
         ownerRole: "care-assistant",
@@ -196,6 +204,7 @@ describe("least-privilege policy", () => {
     expect(
       service.createTask("u-nurse", {
         patientId: "p-anna",
+        encounterId: "enc-anna-2026",
         title: "Beim Essen und Trinken unterstützen",
         reason: "Geplante Grundpflege",
         ownerRole: "care-assistant",
@@ -220,6 +229,7 @@ describe("least-privilege policy", () => {
     expect(() =>
       service.createTask("u-nurse", {
         patientId: "p-anna",
+        encounterId: "enc-anna-2026",
         title,
         reason: "Freie generische Aufgabe",
         ownerRole: "registered-nurse",
@@ -233,6 +243,7 @@ describe("least-privilege policy", () => {
     const service = new PflegehelferService();
     const task = service.createTask("u-physician", {
       patientId: "p-anna",
+      encounterId: "enc-anna-2026",
       title: "Ärztliche Rückfrage prüfen",
       reason: "Expliziter Eigentümer-Negativtest",
       ownerRole: "physician",
@@ -248,6 +259,7 @@ describe("least-privilege policy", () => {
 
     const message = service.createCommunication("u-nurse", {
       patientId: "p-anna",
+      encounterId: "enc-anna-2026",
       request: "Apothekerische Prüfung",
       reason: "Empfängerbindung",
       recipientRole: "pharmacy",
@@ -266,6 +278,7 @@ describe("least-privilege policy", () => {
     const service = new PflegehelferService();
     const message = service.createCommunication("u-nurse", {
       patientId: "p-anna",
+      encounterId: "enc-anna-2026",
       request: "Bitte Schwindel beurteilen",
       reason: "Gezielte ärztliche Rückfrage",
       recipientRole: "physician",
@@ -297,6 +310,7 @@ describe("least-privilege policy", () => {
     const dueAt = new Date(Date.now() + 60_000).toISOString();
     const message = service.createCommunication("u-nurse", {
       patientId: "p-anna",
+      encounterId: "enc-anna-2026",
       request: "Bitte zeitkritischen Verlauf beurteilen",
       reason: "Gezielte Person ist möglicherweise nicht verfügbar",
       recipientRole: "physician",

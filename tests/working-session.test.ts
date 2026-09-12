@@ -27,6 +27,7 @@ describe("versioned working session", () => {
       "u-nurse",
       "registered-nurse",
       "p-anna",
+      "enc-anna-2026",
     );
     const resumed = await store.getOrStartSession(
       "u-nurse",
@@ -48,31 +49,75 @@ describe("versioned working session", () => {
       createdAt: new Date().toISOString(),
       inputModality: "typed" as const,
     });
+    await store.changePatientContext(
+      "u-nurse",
+      "registered-nurse",
+      "p-anna",
+      "enc-anna-2026",
+    );
     await store.appendConversationTurn(
       "u-nurse",
       "registered-nurse",
       turn("anna", "p-anna", "Anna wurde mobilisiert."),
+    );
+    await store.changePatientContext(
+      "u-nurse",
+      "registered-nurse",
+      "p-luca",
+      "enc-luca-2026",
     );
     await store.appendConversationTurn(
       "u-nurse",
       "registered-nurse",
       turn("luca", "p-luca", "Luca hat 200 ml getrunken."),
     );
+    await store.changePatientContext("u-nurse", "registered-nurse", null);
     await store.appendConversationTurn(
       "u-nurse",
       "registered-nurse",
       turn("general", null, "Was ist heute wichtig?"),
     );
 
+    await store.changePatientContext(
+      "u-nurse",
+      "registered-nurse",
+      "p-luca",
+      "enc-luca-2026",
+    );
     await expect(
       store.loadConversation("u-nurse", "registered-nurse", "p-luca"),
     ).resolves.toMatchObject([{ id: "luca" }]);
+    await store.changePatientContext("u-nurse", "registered-nurse", null);
     await expect(
       store.loadConversation("u-nurse", "registered-nurse", null),
     ).resolves.toMatchObject([{ id: "general" }]);
     await expect(
       store.loadConversation("u-nurse", "registered-nurse"),
-    ).resolves.toHaveLength(3);
+    ).resolves.toMatchObject([{ id: "general" }]);
+
+    const conversations = await store.listConversations(
+      "u-nurse",
+      "registered-nurse",
+    );
+    expect(conversations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "general-assistant",
+          patientId: null,
+          active: true,
+        }),
+        expect.objectContaining({
+          type: "patient-assistant",
+          patientId: "p-anna",
+          active: false,
+        }),
+        expect.objectContaining({
+          type: "patient-assistant",
+          patientId: "p-luca",
+          active: false,
+        }),
+      ]),
+    );
   });
 
   it("rejects duplicate steps, executable fields and a missing completion", () => {

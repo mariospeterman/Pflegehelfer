@@ -13,6 +13,8 @@ export interface AsrRuntimeStatus {
   mode: AsrRuntimeMode;
   model: string;
   ready: boolean;
+  configured: boolean;
+  acceptance: "accepted" | "ready-for-test" | "not-configured";
   dataBoundary:
     "none" | "synthetic-browser" | "synthetic-hosted" | "local-network";
   message: string;
@@ -49,6 +51,7 @@ export class AsrGateway {
   readonly model: string;
   private readonly baseUrl: string | null;
   private readonly apiKey: string | null;
+  private verifiedAt: number | null = null;
 
   constructor(env: NodeJS.ProcessEnv = process.env) {
     this.mode = z
@@ -93,6 +96,8 @@ export class AsrGateway {
         mode: this.mode,
         model: "browser-speech-recognition",
         ready: true,
+        configured: true,
+        acceptance: "accepted",
         dataBoundary: "synthetic-browser",
         message:
           "Nur synthetische Demo: Push-to-talk wird vom Browser transkribiert.",
@@ -101,26 +106,41 @@ export class AsrGateway {
       return {
         mode: this.mode,
         model: this.model,
-        ready: Boolean(this.baseUrl),
+        ready: this.verifiedAt !== null,
+        configured: Boolean(this.baseUrl),
+        acceptance: this.verifiedAt
+          ? "accepted"
+          : this.baseUrl
+            ? "ready-for-test"
+            : "not-configured",
         dataBoundary: "local-network",
         message: this.baseUrl
-          ? "Lokaler OpenAI-kompatibler ASR-Endpunkt konfiguriert; Audio wird nicht gespeichert."
+          ? this.verifiedAt
+            ? "Lokaler ASR-Endpunkt mit echtem nicht-schreibendem Audiotest bestätigt; Audio wird nicht gespeichert."
+            : "Lokaler ASR-Endpunkt konfiguriert; echter Audiotest steht noch aus."
           : "PFH_ASR_BASE_URL fehlt.",
       };
     if (this.mode === "hosted-test")
       return {
         mode: this.mode,
         model: this.model,
-        ready: Boolean(this.baseUrl && this.apiKey),
+        ready: this.verifiedAt !== null,
+        configured: Boolean(this.baseUrl && this.apiKey),
+        acceptance:
+          this.baseUrl && this.apiKey ? "ready-for-test" : "not-configured",
         dataBoundary: "synthetic-hosted",
         message: this.apiKey
-          ? "Synthetischer Entwicklertest: externe Transkription konfiguriert; Audio wird nach der Antwort verworfen."
+          ? this.verifiedAt
+            ? "Synthetische externe Transkription mit echtem Audiotest bestätigt; Audio wird nach der Antwort verworfen."
+            : "Synthetische externe Transkription konfiguriert; echter Audiotest steht noch aus."
           : "OPENAI_API_KEY beziehungsweise PFH_ASR_API_KEY fehlt.",
       };
     return {
       mode: this.mode,
       model: this.model,
       ready: false,
+      configured: false,
+      acceptance: "not-configured",
       dataBoundary: "none",
       message: "Spracherkennung deaktiviert.",
     };
@@ -203,6 +223,7 @@ export class AsrGateway {
           503,
         );
       const parsed = transcriptionResponse.parse(await response.json());
+      this.verifiedAt = Date.now();
       const reported = parsed.segments
         ?.map((segment) => segment.avg_logprob)
         .filter((value): value is number => typeof value === "number");

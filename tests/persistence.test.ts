@@ -89,6 +89,31 @@ class RecordingWorkspace implements ClinicalWorkspace {
 }
 
 describe("durable workflow checkpoint", () => {
+  it("projects generic nursing notes as DocumentReference, not QuestionnaireResponse", () => {
+    const service = new PflegehelferService();
+    const created = service.createNoteDraft("u-assistant", {
+      patientId: "p-anna",
+      encounterId: "enc-anna-2026",
+      structuredText: "Mobilisation mit Rollator durchgeführt.",
+    });
+    const resources = service.fhirResources();
+    const note = resources.find(
+      (resource) =>
+        resource.resourceType === "DocumentReference" &&
+        resource.id === fhirResourceId("DocumentReference", created.id),
+    );
+    expect(note).toMatchObject({
+      resourceType: "DocumentReference",
+      status: "current",
+      docStatus: "preliminary",
+    });
+    expect(
+      resources.some(
+        (resource) => resource.resourceType === "QuestionnaireResponse",
+      ),
+    ).toBe(false);
+  });
+
   it("verifies an old checkpoint during controlled HMAC rotation", () => {
     const checkpoint = new PflegehelferService().checkpoint();
     const oldKey = "old-checkpoint-key-with-at-least-32-bytes";
@@ -547,6 +572,7 @@ describe("durable workflow checkpoint", () => {
       },
       payload: {
         patientId: "p-anna",
+        encounterId: "enc-anna-2026",
         title,
         reason:
           "Ein fehlgeschlagener Commit darf keinen Phantomzustand zeigen.",
@@ -647,6 +673,7 @@ describe("durable workflow checkpoint", () => {
     };
     const payload = {
       patientId: "p-anna",
+      encounterId: "enc-anna-2026",
       title: "Durabler Neustarttest",
       reason:
         "Derselbe Befehl darf nach Neustart keine zweite Aufgabe anlegen.",
@@ -717,6 +744,7 @@ describe("durable workflow checkpoint", () => {
       const commandId = `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
       const payload = {
         patientId: "p-anna",
+        encounterId: "enc-anna-2026",
         title: `Durable cache replay ${index}`,
         reason: "A durable receipt remains authoritative after cache eviction.",
         ownerRole: "registered-nurse",
@@ -802,6 +830,7 @@ describe("durable workflow checkpoint", () => {
       },
       payload: {
         patientId: "p-anna",
+        encounterId: "enc-anna-2026",
         title: "Gleichzeitiger Wiederholungsversuch",
         reason: "Nur ein dauerhaft bestätigter Befehl darf Erfolg melden.",
         ownerRole: "registered-nurse",
@@ -838,6 +867,7 @@ describe("durable workflow checkpoint", () => {
       },
       payload: {
         patientId: "p-anna",
+        encounterId: "enc-anna-2026",
         title: "Unklare Commit-Antwort",
         reason: "Der bestätigte Checkpoint entscheidet über den Ausgang.",
         ownerRole: "registered-nurse",

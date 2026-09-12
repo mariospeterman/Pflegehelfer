@@ -35,6 +35,14 @@ interface AssistantResponse {
       | "deep-hosted-test";
     label: string;
     degraded: boolean;
+    failure?:
+      | "not-configured"
+      | "timeout"
+      | "rate-limited"
+      | "refusal"
+      | "incomplete"
+      | "http-error"
+      | "invalid-output";
   };
   patientContext: {
     patientId: string;
@@ -64,6 +72,8 @@ interface AiStatus {
   asr: {
     mode: "disabled" | "browser-demo" | "hosted-test" | "local-openai";
     ready: boolean;
+    configured: boolean;
+    acceptance: "accepted" | "ready-for-test" | "not-configured";
     message: string;
   };
 }
@@ -91,6 +101,12 @@ type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
 
 const entityKey = (entity: CriticalEntity) =>
   `${entity.kind}:${entity.start}:${entity.end}`;
+
+const composerDraftKey = (
+  userId: string,
+  patient: Pick<Patient, "id" | "encounterId"> | null,
+) =>
+  `pfh-composer:${userId}:${patient ? `${patient.id}:${patient.encounterId}` : "general"}`;
 
 function speechRecognitionConstructor(): SpeechRecognitionConstructor | null {
   const candidate = window as typeof window & {
@@ -143,36 +159,10 @@ interface ContextMessage {
 
 type ConversationMessage = ChatMessage | ContextMessage;
 
-const archivedActionOpenUi = [
-  "root = ClinicalStack([item0])",
-  'item0 = SafetyNotice("info", "Die frühere offene Änderung wurde beim Kontextwechsel sicher geschlossen. Bitte im aktuellen Patientenkontext neu formulieren.")',
-].join("\n");
 const completedActionOpenUi = [
   "root = ClinicalStack([item0])",
   'item0 = AssistantMessage("Die bestätigte Änderung wurde sicher übernommen.")',
 ].join("\n");
-
-function archiveExecutableMessage(
-  message: ConversationMessage,
-): ConversationMessage {
-  if (
-    message.kind === "context" ||
-    !message.response.components.some((component) =>
-      ["DraftAction", "PatientPicker"].includes(component.type),
-    )
-  )
-    return message;
-  return {
-    ...message,
-    archived: true,
-    streaming: false,
-    response: {
-      ...message.response,
-      components: [],
-      openUi: archivedActionOpenUi,
-    },
-  };
-}
 
 async function post<T>(
   path: string,
@@ -648,7 +638,7 @@ export function AssistantSurface({
   onHandoff: (handoff: AssistantHandoff) => void;
   snapshotRevision: string;
   opening: ConversationOpening;
-  launchPrompt: { id: number; text: string } | null;
+  launchPrompt: { id: number; text: string; autoSubmit?: boolean } | null;
   onSelectPatient: (patientId: string) => void;
   onBusyChange: (busy: boolean) => void;
   workday: WorkdayView | null;
@@ -690,7 +680,10 @@ export function AssistantSurface({
   const executionInFlight = useRef(false);
   const lastRevision = useRef(snapshotRevision);
   const activePatientId = useRef(patient?.id ?? null);
+  const activeEncounterId = useRef(patient?.encounterId ?? null);
+  const activeUserId = useRef(userId);
   const lastResponse = useRef<HTMLDivElement | null>(null);
+  const askDirect = useRef<(text: string) => void>(() => undefined);
 
   const interactionBusy = busy || workflowBusy || externallyBusy;
 
@@ -786,6 +779,12 @@ export function AssistantSurface({
     return () => controller.abort();
   }, [userId]);
 
+  const conversationPatientId = patient?.id ?? null;
+  const conversationEncounterId = patient?.encounterId ?? null;
+  const conversationPatientRoom = patient?.room ?? null;
+  const conversationPatientName = patient?.displayName ?? null;
+  const conversationPatientMrn = patient?.mrn ?? null;
+
   useEffect(() => {
     const controller = new AbortController();
     void fetch("/api/v1/assistant/conversation", {
@@ -809,32 +808,50 @@ export function AssistantSurface({
           prompt: turn.prompt,
           response: turn.response,
         }));
-        setMessages((current) => {
-          if (current.length === 0) return restored;
-          const localIds = new Set(current.map((message) => message.id));
-          return [
-            ...restored.filter((message) => !localIds.has(message.id)),
-            ...current,
-          ];
-        });
+        setMessages(
+          conversationPatientId && conversationEncounterId
+            ? [
+                {
+                  kind: "context",
+                  id: `context-${conversationPatientId}-${conversationEncounterId}`,
+                  label: `Patientenkontext bewusst gewählt · ${conversationPatientRoom ?? "–"} · ${conversationPatientName ?? "Unbekannt"} · Fall ${conversationPatientMrn ?? "–"}`,
+                },
+                ...restored,
+              ]
+            : restored,
+        );
       })
       .catch((failure: unknown) => {
         if (!(failure instanceof DOMException && failure.name === "AbortError"))
           setError("Der kurze Schichtverlauf konnte nicht geladen werden.");
       });
     return () => controller.abort();
-  }, [userId]);
+  }, [
+    conversationEncounterId,
+    conversationPatientId,
+    conversationPatientMrn,
+    conversationPatientName,
+    conversationPatientRoom,
+    userId,
+  ]);
 
   useEffect(() => {
     if (!launchPrompt) return;
-    setPrompt(launchPrompt.text);
     setVoiceReview(null);
-  }, [launchPrompt]);
+    if (launchPrompt.autoSubmit) askDirect.current(launchPrompt.text);
+    else {
+      setPrompt(launchPrompt.text);
+      sessionStorage.setItem(
+        composerDraftKey(userId, patient),
+        launchPrompt.text,
+      );
+    }
+  }, [launchPrompt, patient, userId]);
 
   useEffect(() => {
     if (lastRevision.current === snapshotRevision) return;
     lastRevision.current = snapshotRevision;
-    if (pendingAction) {
+    if (pendingAction && !executionInFlight.current) {
       contextEpoch.current += 1;
       requestAbort.current?.abort();
       requestAbort.current = null;
@@ -847,13 +864,27 @@ export function AssistantSurface({
 
   useEffect(() => {
     const nextPatientId = patient?.id ?? null;
-    if (activePatientId.current === nextPatientId) return;
+    const nextEncounterId = patient?.encounterId ?? null;
+    if (
+      activeUserId.current === userId &&
+      activePatientId.current === nextPatientId &&
+      activeEncounterId.current === nextEncounterId
+    )
+      return;
+    const previousDraftKey = `pfh-composer:${activeUserId.current}:${
+      activePatientId.current
+        ? `${activePatientId.current}:${activeEncounterId.current ?? "unknown"}`
+        : "general"
+    }`;
+    sessionStorage.setItem(previousDraftKey, prompt);
     contextEpoch.current += 1;
     activePatientId.current = nextPatientId;
+    activeEncounterId.current = nextEncounterId;
+    activeUserId.current = userId;
     requestAbort.current?.abort();
     requestAbort.current = null;
     cancelVoice();
-    setPrompt("");
+    setPrompt(sessionStorage.getItem(composerDraftKey(userId, patient)) ?? "");
     setVoiceReview(null);
     setBusy(false);
     setPendingAction((current) => {
@@ -870,11 +901,11 @@ export function AssistantSurface({
         ? `Patientenkontext bewusst gewählt · ${patient.room} · ${patient.displayName} · Fall ${patient.mrn}`
         : "Patientenkontext aufgehoben · keine patientenbezogenen Aktionen möglich",
     };
-    setMessages((current) => {
-      const next = [...current.map(archiveExecutableMessage), marker];
-      return next;
-    });
-  }, [cancelVoice, patient]);
+    // Each patient has a separate private assistant conversation. Never keep
+    // the prior patient's transcript visible while the next scoped thread is
+    // loading.
+    setMessages([marker]);
+  }, [cancelVoice, patient, prompt, userId]);
 
   useEffect(() => {
     if (!online && pendingAction) {
@@ -1022,6 +1053,7 @@ export function AssistantSurface({
       )
         return;
       setPrompt("");
+      sessionStorage.setItem(composerDraftKey(userId, patient), "");
       setVoiceReview(null);
     } catch (failure) {
       if (failure instanceof DOMException && failure.name === "AbortError")
@@ -1036,6 +1068,7 @@ export function AssistantSurface({
       setBusy(false);
     }
   };
+  askDirect.current = (text) => void ask(undefined, text);
 
   const startBrowserVoice = () => {
     const Recognition = speechRecognitionConstructor();
@@ -1162,6 +1195,20 @@ export function AssistantSurface({
             confirmedEntityIds: [],
             receiptId: body.voiceReceiptId,
           });
+          setAiStatus((current) =>
+            current
+              ? {
+                  ...current,
+                  asr: {
+                    ...current.asr,
+                    ready: true,
+                    acceptance: "accepted",
+                    message:
+                      "Echte synthetische Audio-Transkription erfolgreich.",
+                  },
+                }
+              : current,
+          );
         } catch (failure) {
           if (!(
             failure instanceof DOMException && failure.name === "AbortError"
@@ -1198,7 +1245,7 @@ export function AssistantSurface({
 
   const startVoice = () => {
     if (
-      aiStatus?.asr.ready &&
+      aiStatus?.asr.configured &&
       ["local-openai", "hosted-test"].includes(aiStatus.asr.mode)
     )
       void startLocalVoice();
@@ -1213,7 +1260,9 @@ export function AssistantSurface({
   const browserDemoFallbackReady = Boolean(
     aiStatus?.asr.mode === "hosted-test" && speechRecognitionConstructor(),
   );
-  const voiceReady = Boolean(aiStatus?.asr.ready || browserDemoFallbackReady);
+  const voiceReady = Boolean(
+    aiStatus?.asr.configured || browserDemoFallbackReady,
+  );
 
   const stopVoice = () => {
     if (mediaRecorder.current?.state === "recording")
@@ -1422,8 +1471,20 @@ export function AssistantSurface({
                 >
                   {message.response.runtime.degraded && (
                     <div className="assistant-model-status">
-                      Sichere Basisantwort · keine klinische Aktion automatisch
-                      ausgeführt
+                      {message.response.runtime.failure === "rate-limited"
+                        ? "Sprachmodell vorübergehend ausgelastet"
+                        : message.response.runtime.failure === "timeout"
+                          ? "Sprachmodell hat nicht rechtzeitig geantwortet"
+                          : message.response.runtime.failure === "refusal"
+                            ? "Sprachmodell hat diese Anfrage abgelehnt"
+                            : message.response.runtime.failure === "incomplete"
+                              ? "Sprachmodell-Antwort war unvollständig"
+                              : message.response.runtime.failure ===
+                                  "invalid-output"
+                                ? "Sprachmodell-Antwort war nicht sicher lesbar"
+                                : "Sprachmodell nicht verfügbar"}
+                      {" · "}Sichere Basisantwort; keine klinische Aktion
+                      automatisch ausgeführt
                     </div>
                   )}
                   {renderable ? (
@@ -1704,6 +1765,10 @@ export function AssistantSurface({
                 event.currentTarget.style.height = "auto";
                 event.currentTarget.style.height = `${Math.min(event.currentTarget.scrollHeight, 150)}px`;
                 setPrompt(value);
+                sessionStorage.setItem(
+                  composerDraftKey(userId, patient),
+                  value,
+                );
                 setVoiceReview((current) =>
                   current
                     ? {
@@ -1751,7 +1816,9 @@ export function AssistantSurface({
           {voiceReady
             ? browserDemoFallbackReady && !aiStatus?.asr.ready
               ? "Browser-Spracheingabe für synthetische Demo bereit"
-              : "Spracheingabe bereit"
+              : aiStatus?.asr.acceptance === "accepted"
+                ? "Spracheingabe mit echter Testtranskription bestätigt"
+                : "Spracheingabe konfiguriert · echter Audiotest ausstehend"
             : "Spracheingabe in dieser Demo nicht eingerichtet"}{" "}
           · Audio wird nach der Transkription verworfen · keine automatische
           Freigabe
