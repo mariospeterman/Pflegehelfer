@@ -126,15 +126,20 @@ else if (
   if (exitCode !== 0) process.exitCode = exitCode;
 } else if (group === "model" && action === "list")
   console.log(JSON.stringify(await request("/api/v1/ai/status"), null, 2));
-else if (group === "model" && action === "test")
-  console.log(
-    JSON.stringify(
-      await request("/api/v1/ai/model-test", { method: "POST", body: "{}" }),
-      null,
-      2,
-    ),
-  );
-else if (group === "asr" && action === "test") {
+else if (group === "model" && action === "test") {
+  const result = await request("/api/v1/ai/model-test", {
+    method: "POST",
+    body: "{}",
+  });
+  console.log(JSON.stringify(result, null, 2));
+  if (
+    !result ||
+    typeof result !== "object" ||
+    !("ready" in result) ||
+    result.ready !== true
+  )
+    process.exitCode = 1;
+} else if (group === "asr" && action === "test") {
   const audioPath = process.env.PFH_ASR_TEST_AUDIO;
   if (!audioPath)
     throw new Error(
