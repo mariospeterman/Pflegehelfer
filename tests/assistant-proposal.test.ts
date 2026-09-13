@@ -3,11 +3,65 @@ import {
   deterministicAssistantProposal,
   isDoubtfulObservation,
   reviseAssistantProposal,
+  requiresDedicatedClinicalWorkflow,
+  verifyProposalSourceRecords,
   verifyModelProposalAgainstDeterministicCompiler,
 } from "../src/ai/assistant-proposal.js";
 import { resolveOccurrenceTime } from "../src/core/assistant-service.js";
 
 describe("conversational AssistantProposal compiler regressions", () => {
+  it("keeps immutable source records across the Luca correction chain", () => {
+    const first = deterministicAssistantProposal(
+      "Luca mobilisiert, etwa 200 ml getrunken. Gewicht später.",
+      { inputTimestamp: "2026-09-13T08:00:00.000Z" },
+    );
+    const second = reviseAssistantProposal(
+      first,
+      "Korrektur: eher 150 ml. Nora informieren, nicht den Arzt.",
+      {
+        inputTimestamp: "2026-09-13T08:01:00.000Z",
+        namedRecipient: {
+          label: "Nora Frei",
+          role: "registered-nurse",
+        },
+      },
+    );
+    const final = reviseAssistantProposal(
+      second,
+      "Nur Dokumentation und Nachricht, noch nichts abschliessen.",
+      { inputTimestamp: "2026-09-13T08:02:00.000Z" },
+    );
+
+    expect(() => verifyProposalSourceRecords(final)).not.toThrow();
+    expect(final?.sourceRecords).toHaveLength(3);
+    const note = final?.actions.find(
+      (action) => action.type === "note-proposal",
+    );
+    expect(note).toMatchObject({
+      structuredText:
+        "Luca mobilisiert, etwa 150 ml getrunken. Gewicht später.",
+    });
+    expect(note?.sourceRecordIds).toHaveLength(2);
+  });
+
+  it("asks instead of claiming an unsupported natural correction was applied", () => {
+    const previous = deterministicAssistantProposal(
+      "Luca mobilisiert und Morgenpflege erledigt.",
+    );
+    const revised = reviseAssistantProposal(
+      previous,
+      "Eigentlich hat sie sich nur angezogen; laufen machen wir später.",
+    );
+    expect(revised?.ambiguities[0]).toContain("nicht eindeutig");
+  });
+
+  it("does not misclassify ordinary dressing assistance as treatment", () => {
+    expect(
+      requiresDedicatedClinicalWorkflow(
+        "Ich habe ihm beim Anziehen geholfen.",
+      ),
+    ).toBe(false);
+  });
   it("replaces stale work when a correction says only morning care was done", () => {
     const previous = deterministicAssistantProposal("Luca mobilisiert.");
     const revised = reviseAssistantProposal(
