@@ -18,7 +18,10 @@ test.beforeEach(async ({ page, request }) => {
 test("the current approval remains above the fixed composer", async ({
   page,
 }) => {
-  await page.getByRole("button", { name: "Kontext und Verlauf öffnen" }).click();
+  const drawerButton = page.getByRole("button", {
+    name: "Kontext und Verlauf öffnen",
+  });
+  if (await drawerButton.isVisible()) await drawerButton.click();
   await page
     .locator(".patient-context-list button")
     .filter({ hasText: "Anna Beispiel" })

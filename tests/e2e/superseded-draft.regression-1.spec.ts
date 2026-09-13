@@ -23,22 +23,21 @@ async function ask(page: Page, prompt: string) {
   });
 }
 
-test("only the latest corrected selection can be approved", async ({ page }) => {
-  await page.getByRole("button", { name: "Kontext und Verlauf öffnen" }).click();
+test("only the latest corrected selection can be approved", async ({
+  page,
+}) => {
+  const drawerButton = page.getByRole("button", {
+    name: "Kontext und Verlauf öffnen",
+  });
+  if (await drawerButton.isVisible()) await drawerButton.click();
   await page
     .locator(".patient-context-list button")
     .filter({ hasText: "Luca Demo" })
     .click();
 
-  await ask(
-    page,
-    "Luca mobilisiert, etwa 200 ml getrunken. Gewicht später.",
-  );
+  await ask(page, "Luca mobilisiert, etwa 200 ml getrunken. Gewicht später.");
   await ask(page, "Korrektur: eher 150 ml. Nora informieren, nicht den Arzt.");
-  await ask(
-    page,
-    "Nur Dokumentation und Nachricht, noch nichts abschliessen.",
-  );
+  await ask(page, "Nur Dokumentation und Nachricht, noch nichts abschliessen.");
 
   await expect(
     page.getByRole("button", { name: "Auswahl bestätigen" }),
