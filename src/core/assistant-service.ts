@@ -139,8 +139,13 @@ export function toOpenUi(components: AssistantComponent[]): string {
         return `${name} = PatientContextCard(${q(component.patientId)}, ${q(component.title)}, ${q(component.narrative)}, ${JSON.stringify(component.sections)}, ${q(component.sourceLabel)})`;
       case "TaskList":
         return `${name} = TaskListCard(${q(component.title)}, ${component.count}, ${q(component.summary)}, ${q(component.sourceLabel)})`;
-      case "VitalTrend":
-        return `${name} = VitalTrendCard(${q(component.label)}, ${q(component.value)}, ${JSON.stringify(component.points)}, ${q(component.sourceLabel)})`;
+      case "VitalTrend": {
+        const points = component.points.map(
+          ({ secondaryValue, ...point }) =>
+            secondaryValue === null ? point : { ...point, secondaryValue },
+        );
+        return `${name} = VitalTrendCard(${q(component.label)}, ${q(component.value)}, ${JSON.stringify(points)}, ${q(component.sourceLabel)})`;
+      }
       case "HandoverChecklist":
         return `${name} = HandoverDeltaCard(${q(component.title)}, ${component.openCount}, ${q(component.summary)}, ${q(component.sourceLabel)})`;
       case "TeamInbox":

@@ -235,7 +235,7 @@ const VitalTrendCard = defineComponent({
             .object({
               id: z.string().max(64),
               value: z.number(),
-              secondaryValue: z.number().nullable(),
+              secondaryValue: z.number().optional(),
               unit: z.enum(["mmHg", "°C", "%", "/min", "kg"]),
               effectiveAt: z.string().datetime(),
               status: z.enum([
@@ -254,7 +254,7 @@ const VitalTrendCard = defineComponent({
   component: ({ props: { label, value, points, source } }) => {
     const values = points.flatMap((point) => [
       point.value,
-      ...(point.secondaryValue === null ? [] : [point.secondaryValue]),
+      ...(point.secondaryValue === undefined ? [] : [point.secondaryValue]),
     ]);
     const minimum = Math.min(...values);
     const maximum = Math.max(...values);
@@ -293,7 +293,7 @@ const VitalTrendCard = defineComponent({
                     vectorEffect="non-scaling-stroke"
                   />
                   {approved.every(
-                    ({ point }) => point.secondaryValue !== null,
+                    ({ point }) => point.secondaryValue !== undefined,
                   ) && (
                     <polyline
                       className="secondary-series"
@@ -362,7 +362,7 @@ const VitalTrendCard = defineComponent({
                       <td>
                         <strong>
                           {point.value}
-                          {point.secondaryValue === null
+                          {point.secondaryValue === undefined
                             ? ""
                             : `/${point.secondaryValue}`}{" "}
                           {point.unit}
