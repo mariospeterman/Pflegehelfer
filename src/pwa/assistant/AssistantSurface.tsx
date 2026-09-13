@@ -1064,7 +1064,7 @@ export function AssistantSurface({
     if (last?.kind !== "turn" && !pendingAction) return;
     lastResponse.current?.scrollIntoView({
       behavior: "smooth",
-      block: "start",
+      block: "end",
     });
   }, [messages, pendingAction]);
 

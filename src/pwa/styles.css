@@ -626,7 +626,7 @@ input:focus-visible {
   display: flex;
   gap: 12px;
   scroll-margin-top: 152px;
-  scroll-margin-bottom: 190px;
+  scroll-margin-bottom: 220px;
 }
 .assistant-avatar {
   width: 30px;
