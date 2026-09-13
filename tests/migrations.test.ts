@@ -1,6 +1,8 @@
+import type pg from "pg";
 import { describe, expect, it } from "vitest";
 import {
   loadMigrationFiles,
+  runMigrations,
   verifyMigrationHistory,
 } from "../src/infrastructure/migrations.js";
 
@@ -54,4 +56,54 @@ describe("immutable migration ledger", () => {
       verifyMigrationHistory(migrations, history, true),
     ).not.toThrow();
   });
+
+  it.each(["checksum", "name"] as const)(
+    "rejects a historical %s mismatch before pending SQL can have an effect",
+    async (mismatch) => {
+      const migrations = await loadMigrationFiles();
+      const pendingSqlEffects: string[] = [];
+      const client = {
+        query<T>(sql: string, parameters?: unknown[]) {
+          if (sql.includes("pg_advisory_lock"))
+            return Promise.resolve({ rows: [] as T[] });
+          if (sql.includes("pg_advisory_unlock"))
+            return Promise.resolve({ rows: [] as T[] });
+          if (sql.includes("to_regclass"))
+            return Promise.resolve({ rows: [{ present: true }] });
+          if (sql.includes("SELECT version FROM pfh_schema_migrations"))
+            return Promise.resolve({ rows: [{ version: 1 }] as T[] });
+          if (sql.includes("FROM pfh_migration_history"))
+            return Promise.resolve({
+              rows: [
+                {
+                  version: 1,
+                  name:
+                    mismatch === "name"
+                      ? "001_unexpected_name.sql"
+                      : migrations[0]!.name,
+                  checksum:
+                    mismatch === "checksum"
+                      ? "0".repeat(64)
+                      : migrations[0]!.checksum,
+                  provenance: "verified-current-run",
+                },
+              ] as T[],
+            });
+          pendingSqlEffects.push(`${parameters?.length ?? 0}:${sql}`);
+          return Promise.resolve({ rows: [] as T[] });
+        },
+        release() {},
+      };
+      const pool = {
+        connect() {
+          return Promise.resolve(client);
+        },
+      } as unknown as pg.Pool;
+
+      await expect(runMigrations(pool)).rejects.toThrow(
+        "MIGRATION_CHECKSUM_MISMATCH:1",
+      );
+      expect(pendingSqlEffects).toEqual([]);
+    },
+  );
 });

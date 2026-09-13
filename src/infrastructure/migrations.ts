@@ -36,6 +36,31 @@ export function verifyMigrationHistory(
   }
 }
 
+function verifyAppliedMigrationState(
+  migrations: readonly MigrationFile[],
+  appliedVersions: ReadonlySet<number>,
+  history: readonly MigrationHistoryRow[],
+  allowLegacyAttestation: boolean,
+): void {
+  const filesByVersion = new Map(
+    migrations.map((migration) => [migration.version, migration]),
+  );
+  const historyByVersion = new Map(history.map((row) => [row.version, row]));
+
+  for (const version of appliedVersions) {
+    const file = filesByVersion.get(version);
+    if (!file) throw new Error(`MIGRATION_FILE_MISSING:${version}:unknown`);
+    if (!historyByVersion.has(version) && !allowLegacyAttestation)
+      throw new Error(`MIGRATION_HISTORY_MISSING:${version}:${file.name}`);
+  }
+  for (const row of history) {
+    if (!appliedVersions.has(row.version))
+      throw new Error(`MIGRATION_HISTORY_ORPHANED:${row.version}:${row.name}`);
+  }
+
+  verifyMigrationHistory(migrations, history, allowLegacyAttestation);
+}
+
 export async function loadMigrationFiles(
   directory = resolve(process.cwd(), "db/migrations"),
 ): Promise<MigrationFile[]> {
@@ -97,6 +122,30 @@ export async function runMigrations(
         )
       : new Set<number>();
     const appliedThisRun = new Set<number>();
+
+    const historyExisted = await tableExists(
+      client,
+      "public.pfh_migration_history",
+    );
+    if (historyExisted) {
+      const historyBefore = await client.query<MigrationHistoryRow>(
+        `SELECT version,name,checksum,provenance FROM pfh_migration_history
+         ORDER BY version`,
+      );
+      verifyAppliedMigrationState(
+        migrations,
+        appliedBefore,
+        historyBefore.rows,
+        options.allowLegacyAttestation === true,
+      );
+    } else if (appliedBefore.size > 0) {
+      if (options.allowLegacyAttestation !== true)
+        throw new Error("MIGRATION_HISTORY_NOT_INITIALIZED");
+      for (const version of appliedBefore) {
+        if (!migrations.some((migration) => migration.version === version))
+          throw new Error(`MIGRATION_FILE_MISSING:${version}:unknown`);
+      }
+    }
 
     for (const migration of migrations) {
       if (appliedBefore.has(migration.version)) continue;
