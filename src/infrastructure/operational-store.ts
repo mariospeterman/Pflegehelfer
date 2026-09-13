@@ -1236,10 +1236,14 @@ export class InMemoryOperationalStore implements OperationalStore {
   }): Promise<ClinicalProjectionJob | null> {
     void input.leaseDurationMs;
     void input.now;
-    const job = this.clinicalProjectionJobs.find((candidate) =>
-      ["pending", "retry"].includes(candidate.state),
+    const job = this.clinicalProjectionJobs.find(
+      (candidate) => candidate.state !== "delivered",
     );
-    if (!job) return Promise.resolve(null);
+    // Checkpoints are whole-state recovery artifacts. Never project a newer
+    // checkpoint around an older retry/manual hold and later let the older
+    // checkpoint overwrite it.
+    if (!job || !["pending", "retry"].includes(job.state))
+      return Promise.resolve(null);
     job.state = "leased";
     job.leaseOwner = input.workerId;
     job.attempts += 1;
@@ -3451,12 +3455,18 @@ export class PostgresOperationalStore
       attempts: number;
     }>(
       `WITH candidate AS (
-         SELECT organization_id,id FROM clinical_projection_outbox
-         WHERE organization_id=$1 AND (
-           (state IN ('pending','retry') AND next_attempt_at <= $2)
-           OR (state='leased' AND lease_expires_at <= $2)
+         SELECT o.organization_id,o.id FROM clinical_projection_outbox o
+         WHERE o.organization_id=$1 AND (
+           (o.state IN ('pending','retry') AND o.next_attempt_at <= $2)
+           OR (o.state='leased' AND o.lease_expires_at <= $2)
+         ) AND NOT EXISTS (
+           SELECT 1 FROM clinical_projection_outbox earlier
+           WHERE earlier.organization_id=o.organization_id
+             AND earlier.state <> 'delivered'
+             AND (earlier.created_at < o.created_at OR
+               (earlier.created_at=o.created_at AND earlier.id::text < o.id::text))
          )
-         ORDER BY next_attempt_at,id FOR UPDATE SKIP LOCKED LIMIT 1
+         ORDER BY o.created_at,o.id FOR UPDATE SKIP LOCKED LIMIT 1
        )
        UPDATE clinical_projection_outbox o
        SET state='leased',attempts=o.attempts+1,lease_owner=$3,
@@ -3922,6 +3932,12 @@ export class PostgresOperationalStore
     workerId: string;
     acknowledgement: ProviderAcknowledgement;
     retryAt: Date | null;
+    readBackEvidence?: {
+      providerVersion: string;
+      contentHash: string;
+      adapterVersion: string;
+      mappingVersion: string;
+    };
   }): Promise<void> {
     const nextState =
       input.acknowledgement.status === "acknowledged"
@@ -3965,8 +3981,9 @@ export class PostgresOperationalStore
         throw new Error("PROVIDER_ACKNOWLEDGEMENT_BINDING_MISMATCH");
       await client.query(
         `INSERT INTO provider_receipts
-           (organization_id,id,provider_id,outbox_id,external_reference,acknowledgement_hash)
-         VALUES ($1,$2,$3,$4,$5,$6)`,
+           (organization_id,id,provider_id,outbox_id,external_reference,
+            acknowledgement_hash,provider_version,adapter_version,mapping_version,readback_hash)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
         [
           organizationId,
           randomUUID(),
@@ -3976,6 +3993,11 @@ export class PostgresOperationalStore
           createHash("sha256")
             .update(canonicalJson(input.acknowledgement))
             .digest("hex"),
+          input.readBackEvidence?.providerVersion ??
+            input.acknowledgement.providerVersion,
+          input.readBackEvidence?.adapterVersion ?? null,
+          input.readBackEvidence?.mappingVersion ?? null,
+          input.readBackEvidence?.contentHash ?? null,
         ],
       );
       await client.query(

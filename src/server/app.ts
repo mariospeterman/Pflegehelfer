@@ -1186,6 +1186,7 @@ export function buildApp(
       service.snapshot(actorId, query.purpose),
     );
     const workspaceStatus = await workspace.status();
+    const deliveryDiagnostics = await operationalStore.deliveryDiagnostics();
     const syncSummary =
       runtime.profile === "integrated-demo"
         ? await operationalStore.providerDeliverySummary(
@@ -1204,6 +1205,7 @@ export function buildApp(
       // checkpoint outbox remains an internal command-construction detail and
       // must never leak stale delivery state back into the live read model.
       syncSummary,
+      deliveryDiagnostics,
       workspace: workspaceStatus,
       workspaceLinks:
         canUseDetailedWorkspace &&

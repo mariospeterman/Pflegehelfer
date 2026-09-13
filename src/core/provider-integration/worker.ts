@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
   canonicalClinicalCommandSchema,
@@ -56,6 +57,12 @@ export interface ProviderDeliveryStore {
     workerId: string;
     acknowledgement: ProviderAcknowledgement;
     retryAt: Date | null;
+    readBackEvidence?: {
+      providerVersion: string;
+      contentHash: string;
+      adapterVersion: string;
+      mappingVersion: string;
+    };
   }): Promise<void>;
   failProviderDelivery(input: {
     jobId: string;
@@ -135,7 +142,7 @@ function canonicalJson(value: unknown): string {
 async function verifyProviderReadBack(
   adapter: NonNullable<ReturnType<ProviderRegistry["adapterForOperation"]>>,
   command: CanonicalClinicalCommand,
-): Promise<boolean> {
+): Promise<{ providerVersion: string; contentHash: string } | null> {
   const record = await adapter.read({
     resourceType: command.resource.resourceType,
     externalId: command.resource.id,
@@ -146,11 +153,17 @@ async function verifyProviderReadBack(
       candidate.resourceType === command.resource.resourceType &&
       candidate.id === command.resource.id,
   );
-  if (!resource) return false;
+  if (!resource) return null;
   const body = { ...resource.body };
   delete body.resourceType;
   delete body.id;
-  return canonicalJson(body) === canonicalJson(command.resource.body);
+  if (canonicalJson(body) !== canonicalJson(command.resource.body)) return null;
+  return {
+    providerVersion: record.originVersion,
+    contentHash: createHash("sha256")
+      .update(canonicalJson(record))
+      .digest("hex"),
+  };
 }
 
 /**
@@ -239,9 +252,15 @@ export class ProviderDeliveryWorker {
           : await adapter.executeCommand(
               await adapter.prepareCommand(job.payload.command),
             );
+        const readBack =
+          acknowledgement.status === "acknowledged"
+            ? await verifyProviderReadBack(adapter, job.payload.command)
+            : null;
         if (
           acknowledgement.status === "acknowledged" &&
-          !(await verifyProviderReadBack(adapter, job.payload.command))
+          (!readBack ||
+            (acknowledgement.providerVersion !== null &&
+              readBack.providerVersion !== acknowledgement.providerVersion))
         ) {
           await this.store.finishProviderDelivery({
             jobId: job.id,
@@ -261,6 +280,15 @@ export class ProviderDeliveryWorker {
           jobId: job.id,
           workerId: this.options.workerId,
           acknowledgement,
+          ...(readBack
+            ? {
+                readBackEvidence: {
+                  ...readBack,
+                  adapterVersion: adapter.manifest().adapterVersion,
+                  mappingVersion: job.payload.command.mappingVersion,
+                },
+              }
+            : {}),
           retryAt:
             acknowledgement.status === "pending" &&
             job.attempts >= this.options.maximumAttempts

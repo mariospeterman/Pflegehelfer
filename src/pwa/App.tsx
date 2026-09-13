@@ -1012,15 +1012,41 @@ export function App() {
     );
 
   const connected = online && apiReady;
+  const queueCount = (queue: Record<string, number>, states: string[]) =>
+    states.reduce((total, state) => total + (queue[state] ?? 0), 0);
+  const delivery = snapshot.deliveryDiagnostics;
+  const clinicalOpen = delivery
+    ? queueCount(delivery.clinicalProjections, ["pending", "leased", "retry"])
+    : 0;
+  const clinicalReview = delivery
+    ? queueCount(delivery.clinicalProjections, ["manual"])
+    : 0;
+  const providerOpen = delivery
+    ? queueCount(delivery.providerDeliveries, ["pending", "leased", "retry"])
+    : 0;
+  const providerReview = delivery
+    ? queueCount(delivery.providerDeliveries, ["manual"])
+    : 0;
+  const clinicalDelivered = delivery?.clinicalProjections.delivered ?? 0;
+  const providerDelivered = delivery?.providerDeliveries.delivered ?? 0;
   const syncLabel = !connected
     ? "Offline"
-    : snapshot.syncSummary.conflicts
-      ? "Konflikt prüfen"
-      : workday?.providerState === "pending"
-        ? "Übertragung offen"
-        : snapshot.syncSummary.unresolved
-          ? `${snapshot.syncSummary.unresolved} ausstehend`
-          : "Gespeichert · aktuell";
+    : snapshot.syncSummary.conflicts || providerReview
+      ? "Abgleich prüfen"
+      : clinicalReview
+        ? "Medplum prüfen"
+        : clinicalOpen
+          ? "Lokal angenommen · Medplum offen"
+          : providerOpen || workday?.providerState === "pending"
+            ? "Medplum gespeichert · Anbieter offen"
+            : clinicalDelivered > 0 && providerDelivered > 0
+              ? "Medplum gespeichert · Anbieter bestätigt"
+              : snapshot.syncSummary.unresolved
+                ? `${snapshot.syncSummary.unresolved} ausstehend`
+                : "Gespeichert · aktuell";
+  const syncTitle = delivery
+    ? `Lokal angenommen: ${Object.values(delivery.acceptedCommands).reduce((sum, count) => sum + count, 0)} · Medplum gespeichert: ${clinicalDelivered}, offen: ${clinicalOpen}, Prüfung: ${clinicalReview} · Anbieter bestätigt: ${providerDelivered}, offen: ${providerOpen}, Prüfung: ${providerReview}`
+    : syncLabel;
   const opening =
     workflowOpenings[snapshot.currentUser.role] ?? fallbackOpening;
 
@@ -1068,7 +1094,7 @@ export function App() {
           <div className="header-state">
             <span
               className={`connection-state ${connected ? "connected" : "offline"}${workday?.providerState === "pending" ? " pending" : ""}`}
-              title={syncLabel}
+              title={syncTitle}
             >
               <i />
               {syncLabel}

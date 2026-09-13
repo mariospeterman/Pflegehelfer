@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { z } from "zod";
 import {
   type AdapterManifest,
   type CanonicalClinicalCommand,
@@ -14,6 +15,40 @@ import {
   type ReconciliationResult,
   type SyncCursor,
 } from "./contract.js";
+
+const externalReferenceSchema = z
+  .object({ resourceType: z.string().min(1).max(100), externalId: z.string().min(1).max(200) })
+  .strict();
+const providerRecordSchema = z
+  .object({
+    reference: externalReferenceSchema,
+    originVersion: z.string().min(1).max(200),
+    effectiveAt: z.iso.datetime({ offset: true }),
+    recordedAt: z.iso.datetime({ offset: true }),
+    receivedAt: z.iso.datetime({ offset: true }),
+    payload: z.unknown(),
+  })
+  .strict();
+const acknowledgementSchema = z
+  .object({
+    receiptId: z.string().min(1).max(300),
+    idempotencyKey: z.string().min(1).max(300),
+    status: z.enum(["acknowledged", "pending", "rejected", "conflict"]),
+    providerVersion: z.string().min(1).max(200).nullable(),
+    errorCode: z.string().max(200).nullable(),
+    errorClassification: z
+      .enum([
+        "technical",
+        "clinical-content",
+        "mapping",
+        "authorization",
+        "version-conflict",
+      ])
+      .nullable(),
+    providerSnapshot: providerRecordSchema.nullable(),
+    receivedAt: z.iso.datetime({ offset: true }),
+  })
+  .strict();
 
 function clone<T>(value: T): T {
   return structuredClone(value);
@@ -53,7 +88,7 @@ export class HttpProviderSimulatorAdapter implements ProviderAdapter {
     return this.request("/read", {
       method: "POST",
       body: JSON.stringify(reference),
-    });
+    }).then((value) => providerRecordSchema.parse(value));
   }
 
   mapInbound(record: ProviderRecord) {
@@ -89,11 +124,13 @@ export class HttpProviderSimulatorAdapter implements ProviderAdapter {
     return this.request("/commands", {
       method: "POST",
       body: JSON.stringify(prepared),
-    });
+    }).then((value) => acknowledgementSchema.parse(value));
   }
 
   getCommandStatus(receiptId: string): Promise<ProviderAcknowledgement> {
-    return this.request(`/commands/${encodeURIComponent(receiptId)}`);
+    return this.request(`/commands/${encodeURIComponent(receiptId)}`).then(
+      (value) => acknowledgementSchema.parse(value),
+    );
   }
 
   reconcile(request: ReconciliationRequest): Promise<ReconciliationResult> {

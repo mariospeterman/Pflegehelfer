@@ -313,6 +313,11 @@ export interface AppSnapshot {
     unresolved: number;
     conflicts: number;
   };
+  deliveryDiagnostics?: {
+    acceptedCommands: Record<string, number>;
+    clinicalProjections: Record<string, number>;
+    providerDeliveries: Record<string, number>;
+  };
   capabilityProfile: "synthetic-simulator" | "production";
   serverTime: string;
   aiEnabled: boolean;
