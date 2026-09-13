@@ -9,6 +9,10 @@
     "approvedBy": "Pflegehelfer synthetic-demo governance",
     "publishedAt": "2026-09-13T12:00:00+02:00"
   },
+  "guidanceCatalog": {
+    "path": "shared/guidance-catalog.json",
+    "sha256": "a4fba409a1257fd4ada7c5271f1871affda416ebf9c8555c6963aea57da3ef01"
+  },
   "baseGuidance": {
     "path": "assistant/BASE.md",
     "sha256": "10fcbf8d00155830d83ad21e2fd4e73a70dceed8bcd1787f97127830ed530f5b"
@@ -39,42 +43,39 @@
       "sha256": "fc2393d687cf675cd8a6e528ce4b076815953ca04d42520b8d7285fb7312d272"
     }
   ],
-  "roles": [
-    {
-      "id": "pflegeassistenz-srk",
-      "label": "Pflegeassistenz SRK",
-      "capabilityRole": "care-assistant",
-      "workflowIds": ["nursing-day"],
-      "path": "roles/pflegeassistenz-srk.md",
-      "sha256": "df2bfa61bf49a444960d3722ea15c10e2028d8eea69143253505e34555bb0af8"
-    },
-    {
-      "id": "fage-efz",
-      "label": "Fachperson Gesundheit EFZ",
-      "capabilityRole": "registered-nurse",
-      "workflowIds": ["nursing-day"],
-      "path": "roles/fage-efz.md",
-      "sha256": "752174aa8da9334ed2306270e0009771c645796d93fe835e27ba07124122b0cd"
-    }
-  ],
+  "roles": [],
   "workflows": [
     {
       "id": "nursing-early",
       "name": "Wohnbereich Frühdienst",
       "description": "Rapport, Bezugspersonen und expliziter Schichttransfer.",
       "workflowId": "nursing-day",
-      "eligibleRoleProfiles": ["pflegeassistenz-srk", "fage-efz"],
+      "eligibleRoleProfiles": [
+        "pflegeassistenz-srk",
+        "ags-eba",
+        "fage-efz",
+        "pflege-hf",
+        "pflege-fh",
+        "pflege-teamleitung"
+      ],
       "path": "workflows/nursing-early/SKILL.md",
-      "sha256": "e18c2e6daee26f468763224655a6f9de816e54cb09c2311dd133aed64c909d63"
+      "sha256": "a54dec9298614627d424a8c1138c5de0cf341f4dac91c6fd3f18ca3470e8b7d4"
     },
     {
       "id": "nursing-late",
       "name": "Wohnbereich Spätdienst",
       "description": "Offene Teamfragen, Restverantwortung und Rapportwechsel.",
       "workflowId": "nursing-day",
-      "eligibleRoleProfiles": ["pflegeassistenz-srk", "fage-efz"],
+      "eligibleRoleProfiles": [
+        "pflegeassistenz-srk",
+        "ags-eba",
+        "fage-efz",
+        "pflege-hf",
+        "pflege-fh",
+        "pflege-teamleitung"
+      ],
       "path": "workflows/nursing-late/SKILL.md",
-      "sha256": "974c2c0dbbd8f31ff085e12ebd9a521a30470f2d849f4f9cb79dcdec51ac7179"
+      "sha256": "30d4ae1be6801db1d52a4ce4e1762a1e3af2da7d3d56fa4780efcfb46b9a33a5"
     }
   ],
   "providers": [

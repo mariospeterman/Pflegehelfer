@@ -9,6 +9,10 @@
     "approvedBy": "Pflegehelfer synthetic-demo governance",
     "publishedAt": "2026-09-13T12:00:00+02:00"
   },
+  "guidanceCatalog": {
+    "path": "shared/guidance-catalog.json",
+    "sha256": "a4fba409a1257fd4ada7c5271f1871affda416ebf9c8555c6963aea57da3ef01"
+  },
   "baseGuidance": {
     "path": "assistant/BASE.md",
     "sha256": "10fcbf8d00155830d83ad21e2fd4e73a70dceed8bcd1787f97127830ed530f5b"
@@ -39,67 +43,39 @@
       "sha256": "c877ef6d742f1171cba672a4aeb3b084a6ee2421096862116d68b81c71e910ce"
     }
   ],
-  "roles": [
-    {
-      "id": "pflegeassistenz-srk",
-      "label": "Pflegeassistenz SRK",
-      "capabilityRole": "care-assistant",
-      "workflowIds": ["nursing-day"],
-      "path": "roles/pflegeassistenz-srk.md",
-      "sha256": "c3f15b57265cd803d68bc126e66a9d02d15d65665a869fdf69ed52c2ccf3ad43"
-    },
-    {
-      "id": "fage-efz",
-      "label": "Fachperson Gesundheit EFZ",
-      "capabilityRole": "registered-nurse",
-      "workflowIds": ["nursing-day"],
-      "path": "roles/fage-efz.md",
-      "sha256": "d8364902b79ab9284134fc6f1f45cabf8e6857fbb0acb42d99ead4daf0074254"
-    },
-    {
-      "id": "pflege-hf",
-      "label": "Dipl. Pflegefachperson HF",
-      "capabilityRole": "registered-nurse",
-      "workflowIds": ["nursing-day"],
-      "path": "roles/pflege-hf.md",
-      "sha256": "8e9e0a892c3396803c7cb0e137554939402a5ecf5da4fcc98b243ad6bc994eff"
-    },
-    {
-      "id": "arzt",
-      "label": "Ärztlicher Dienst",
-      "capabilityRole": "physician",
-      "workflowIds": ["physician-rounds"],
-      "path": "roles/arzt.md",
-      "sha256": "6f05df24b03202b3af040a5ec87c4cd988d6b06bcb1d763b03cd4017fa681deb"
-    }
-  ],
+  "roles": [],
   "workflows": [
     {
       "id": "nursing-early",
       "name": "Frühdienst Pflege",
       "description": "Versionierte Übergabe, Patientenarbeit und Transfer im Frühdienst.",
       "workflowId": "nursing-day",
-      "eligibleRoleProfiles": ["pflegeassistenz-srk", "fage-efz", "pflege-hf"],
+      "eligibleRoleProfiles": [
+        "pflegeassistenz-srk",
+        "ags-eba",
+        "fage-efz",
+        "pflege-hf",
+        "pflege-fh",
+        "pflege-teamleitung"
+      ],
       "path": "workflows/nursing-early/SKILL.md",
-      "sha256": "3abd44c59b1d1856ea352f425b296b5c2155c431b595016c4370cd76cefc03bd"
+      "sha256": "8febef5baf7cffe56d17a058c0f143a8ecd766b6dcc1a43fdf6f6a54ff5f2e0d"
     },
     {
       "id": "nursing-late",
       "name": "Spätdienst Pflege",
       "description": "Offene Teamfragen zuerst, danach Übergabe und Restverantwortung.",
       "workflowId": "nursing-day",
-      "eligibleRoleProfiles": ["pflegeassistenz-srk", "fage-efz", "pflege-hf"],
+      "eligibleRoleProfiles": [
+        "pflegeassistenz-srk",
+        "ags-eba",
+        "fage-efz",
+        "pflege-hf",
+        "pflege-fh",
+        "pflege-teamleitung"
+      ],
       "path": "workflows/nursing-late/SKILL.md",
-      "sha256": "33dd2a2516642c22287586fe5d91500153fa96b77e1eff8ff01a348d2f69caa0"
-    },
-    {
-      "id": "physician-rounds",
-      "name": "Ärztliche Runde",
-      "description": "Adressierte Fragen, aktuelle Evidenz und geschlossener Rücklauf.",
-      "workflowId": "physician-rounds",
-      "eligibleRoleProfiles": ["arzt"],
-      "path": "workflows/physician-rounds/SKILL.md",
-      "sha256": "c13edb5796642a2df705808ff306862e647e2986eca477a13b588f83bf8a6c27"
+      "sha256": "a0ad204a319312c1151d4b2b2a4f208739aeff985ab9bce171e7b0c6736bb9bf"
     }
   ],
   "providers": [

@@ -36,6 +36,7 @@ const hashedReferenceSchema = z
 
 const guidanceReferenceSchema = hashedReferenceSchema.extend({
   id: idSchema,
+  source: z.enum(["pack", "shared"]).default("pack"),
 });
 
 const roleGuidanceReferenceSchema = guidanceReferenceSchema.extend({
@@ -56,6 +57,35 @@ const providerGuidanceReferenceSchema = guidanceReferenceSchema.extend({
   adapterType: providerIdSchema,
 });
 
+const runtimeGuidanceCatalogSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    roles: z.array(roleGuidanceReferenceSchema).max(100),
+    workflows: z.array(workflowGuidanceReferenceSchema).max(100),
+  })
+  .strict()
+  .superRefine((catalog, context) => {
+    for (const [property, entries] of [
+      ["roles", catalog.roles],
+      ["workflows", catalog.workflows],
+    ] as const) {
+      const ids = entries.map(({ id }) => id);
+      if (new Set(ids).size !== ids.length)
+        context.addIssue({
+          code: "custom",
+          path: [property],
+          message: `${property} catalog ids must be unique.`,
+        });
+      for (const [index, entry] of entries.entries())
+        if (entry.source !== "shared" || !entry.path.startsWith("shared/"))
+          context.addIssue({
+            code: "custom",
+            path: [property, index, "path"],
+            message: "Catalog guidance must stay under config/shared.",
+          });
+    }
+  });
+
 export const runtimeSitePackManifestSchema = z
   .object({
     schemaVersion: z.literal(2),
@@ -70,6 +100,7 @@ export const runtimeSitePackManifestSchema = z
         publishedAt: z.string().datetime({ offset: true }),
       })
       .strict(),
+    guidanceCatalog: hashedReferenceSchema,
     baseGuidance: hashedReferenceSchema,
     siteConfiguration: hashedReferenceSchema,
     siteGuidance: guidanceReferenceSchema,
@@ -89,12 +120,29 @@ export const runtimeSitePackManifestSchema = z
         }),
       )
       .max(100),
-    roles: z.array(roleGuidanceReferenceSchema).min(1).max(100),
-    workflows: z.array(workflowGuidanceReferenceSchema).min(1).max(100),
+    roles: z.array(roleGuidanceReferenceSchema).max(100),
+    workflows: z.array(workflowGuidanceReferenceSchema).max(100),
     providers: z.array(providerGuidanceReferenceSchema).max(40),
   })
   .strict()
   .superRefine((manifest, context) => {
+    for (const reference of [
+      manifest.siteGuidance,
+      ...manifest.departments,
+      ...manifest.stations,
+      ...manifest.roles,
+      ...manifest.workflows,
+      ...manifest.providers,
+    ])
+      if (
+        reference.source === "shared" &&
+        !reference.path.startsWith("shared/")
+      )
+        context.addIssue({
+          code: "custom",
+          path: [],
+          message: "Shared guidance must stay under config/shared.",
+        });
     for (const [property, entries] of [
       ["departments", manifest.departments],
       ["stations", manifest.stations],
@@ -386,6 +434,28 @@ export function loadRuntimeSitePack(
     "root",
     MAX_CONFIGURATION_BYTES,
   );
+  const catalogFile = readReference(
+    trustedRoot,
+    sourcePath,
+    manifest.guidanceCatalog,
+    "root",
+    MAX_CONFIGURATION_BYTES,
+  );
+  const catalog = runtimeGuidanceCatalogSchema.parse(
+    JSON.parse(
+      decodeUtf8(catalogFile.buffer, manifest.guidanceCatalog.path),
+    ) as unknown,
+  );
+  const roles = [...catalog.roles, ...manifest.roles];
+  const workflows = [...catalog.workflows, ...manifest.workflows];
+  for (const [kind, entries] of [
+    ["role", roles],
+    ["workflow", workflows],
+  ] as const) {
+    const ids = entries.map(({ id }) => id);
+    if (new Set(ids).size !== ids.length)
+      throw new Error(`SITE_PACK_DUPLICATE_${kind.toUpperCase()}_ID`);
+  }
   const base = readReference(
     trustedRoot,
     sourcePath,
@@ -408,6 +478,7 @@ export function loadRuntimeSitePack(
   let totalBytes =
     manifestBuffer.byteLength +
     configuration.buffer.byteLength +
+    catalogFile.buffer.byteLength +
     base.buffer.byteLength;
   const addGuidance = (
     reference: z.infer<typeof guidanceReferenceSchema>,
@@ -419,7 +490,7 @@ export function loadRuntimeSitePack(
       trustedRoot,
       sourcePath,
       reference,
-      "pack",
+      reference.source === "shared" ? "root" : "pack",
       MAX_INSTRUCTION_BYTES,
     );
     const body = decodeUtf8(loaded.buffer, reference.path);
@@ -436,8 +507,8 @@ export function loadRuntimeSitePack(
   addGuidance(manifest.siteGuidance, "site");
   for (const item of manifest.departments) addGuidance(item, "department");
   for (const item of manifest.stations) addGuidance(item, "station");
-  for (const item of manifest.roles) addGuidance(item, "role");
-  for (const item of manifest.workflows) addGuidance(item, "workflow");
+  for (const item of roles) addGuidance(item, "role");
+  for (const item of workflows) addGuidance(item, "workflow");
   for (const item of manifest.providers) addGuidance(item, "provider");
   if (totalBytes > MAX_PACK_BYTES)
     throw new Error("SITE_PACK_TOTAL_SIZE_EXCEEDED");
@@ -445,6 +516,7 @@ export function loadRuntimeSitePack(
   const digestInput = [
     `manifest:${sha256(manifestBuffer)}`,
     `configuration:${configuration.hash}`,
+    `catalog:${catalogFile.hash}`,
     ...Object.values(instructions)
       .map(({ id, sha256: hash }) => `${id}:${hash}`)
       .sort(),
@@ -472,7 +544,7 @@ export function loadRuntimeSitePack(
       ]),
     ),
     roles: entriesById(
-      manifest.roles.map(({ id, label, capabilityRole, workflowIds }) => ({
+      roles.map(({ id, label, capabilityRole, workflowIds }) => ({
         id,
         label,
         capabilityRole,
@@ -481,7 +553,7 @@ export function loadRuntimeSitePack(
       })),
     ),
     workflows: entriesById(
-      manifest.workflows.map(
+      workflows.map(
         ({ id, name, description, workflowId, eligibleRoleProfiles }) => ({
           id,
           name,

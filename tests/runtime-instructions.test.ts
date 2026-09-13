@@ -57,6 +57,24 @@ function editManifest(
   writeFileSync(path, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 }
 
+function editCatalog(
+  root: string,
+  pack: string,
+  edit: (catalog: Record<string, unknown>) => void,
+): void {
+  const catalogPath = join(root, "shared", "guidance-catalog.json");
+  const catalog = JSON.parse(readFileSync(catalogPath, "utf8")) as Record<
+    string,
+    unknown
+  >;
+  edit(catalog);
+  const body = `${JSON.stringify(catalog, null, 2)}\n`;
+  writeFileSync(catalogPath, body, "utf8");
+  editManifest(pack, (manifest) => {
+    (manifest.guidanceCatalog as Record<string, unknown>).sha256 = sha256(body);
+  });
+}
+
 afterEach(() => {
   for (const directory of scratchDirectories.splice(0))
     rmSync(directory, { recursive: true, force: true });
@@ -129,11 +147,11 @@ describe("approved runtime instruction packs", () => {
     const beforeConfiguration = parseSiteConfiguration(
       before.siteConfigurationInput,
     );
-    const rolePath = join(packPath, "roles", "fage-efz.md");
+    const rolePath = join(root, "shared", "roles", "fage-efz.md");
     const changedBody = `${readFileSync(rolePath, "utf8")}\nPrefer one short summary.\n`;
     writeFileSync(rolePath, changedBody, "utf8");
-    editManifest(packPath, (manifest) => {
-      const roles = manifest.roles as Array<Record<string, unknown>>;
+    editCatalog(root, packPath, (catalog) => {
+      const roles = catalog.roles as Array<Record<string, unknown>>;
       const role = roles.find(({ id }) => id === "fage-efz")!;
       role.sha256 = sha256(changedBody);
     });
@@ -243,8 +261,8 @@ describe("approved runtime instruction packs", () => {
 
   it("fails closed when a configured title names an unknown capability role", () => {
     const { root, pack: packPath } = scratchPack();
-    editManifest(packPath, (manifest) => {
-      const roles = manifest.roles as Array<Record<string, unknown>>;
+    editCatalog(root, packPath, (catalog) => {
+      const roles = catalog.roles as Array<Record<string, unknown>>;
       roles[0]!.capabilityRole = "super-clinician";
     });
     const pack = loadRuntimeSitePack(packPath, { trustedRoot: root });
@@ -260,12 +278,111 @@ describe("approved runtime instruction packs", () => {
 
   it("rejects a changed file against the published hash instead of mixing revisions", () => {
     const { root, pack: packPath } = scratchPack();
-    const rolePath = join(packPath, "roles", "pflege-hf.md");
+    const rolePath = join(root, "shared", "roles", "pflege-hf.md");
     writeFileSync(rolePath, "# Changed after publication\n", "utf8");
     expect(() => loadRuntimeSitePack(packPath, { trustedRoot: root })).toThrow(
       "SITE_PACK_HASH_MISMATCH",
     );
   });
+
+  it.each([
+    ["Kronenhof", kronenhof],
+    [
+      "Alpenblick",
+      new URL("../config/sites/packs/alpenblick-demo", import.meta.url)
+        .pathname,
+    ],
+  ])(
+    "publishes the complete bounded Swiss role and workflow catalog for %s",
+    (_name, path) => {
+      const pack = loadRuntimeSitePack(path);
+      expect(Object.keys(pack.roles).sort()).toEqual(
+        [
+          "abrechnung-versicherungskoordination",
+          "administration-eintritt",
+          "ags-eba",
+          "apotheker",
+          "arzt",
+          "berufsbildung",
+          "ergotherapie",
+          "ernaehrungsberatung",
+          "fage-efz",
+          "finanzen-cfo",
+          "geschaeftsleitung",
+          "heimleitung",
+          "hr",
+          "it-integration",
+          "logopaedie",
+          "pflege-fh",
+          "pflege-hf",
+          "pflege-teamleitung",
+          "pflegeassistenz-srk",
+          "pharma-assistenz",
+          "physiotherapie",
+          "qualitaet-patientensicherheit",
+          "reinigung",
+          "service-hotellerie",
+          "transport",
+        ].sort(),
+      );
+      expect(Object.keys(pack.workflows).sort()).toEqual(
+        [
+          "cleaning-round",
+          "education-supervision",
+          "finance-review",
+          "home-management-day",
+          "hr-onboarding-training",
+          "intake-discharge",
+          "it-operations",
+          "nursing-early",
+          "nursing-late",
+          "nursing-night",
+          "pharmacy-logistics",
+          "pharmacy-review",
+          "physician-rounds",
+          "quality-review",
+          "service-day",
+          "service-evidence-review",
+          "team-lead-shift",
+          "therapy-day",
+          "transport-day",
+          "workflow-improvement",
+        ].sort(),
+      );
+      for (const role of Object.values(pack.roles)) {
+        const instruction = pack.instructions[role.instructionId]!;
+        expect(instruction.body.length).toBeGreaterThan(700);
+        expect(instruction.body).toContain(
+          "## Zweck, Zielgruppe und erster Schritt",
+        );
+        expect(instruction.body).toContain(
+          "## Wiederkehrende Arbeit und Lesekontext",
+        );
+        expect(instruction.body).toContain(
+          "## Eskalation, Abschluss und Grenzen",
+        );
+        expect(instruction.body).toContain("## Beispiele und Terminologie");
+        expect(instruction.body).toContain("## Freizugebende Quellen");
+        expect(instruction.body).not.toMatch(
+          /patient:read|task:update|provider:operate/,
+        );
+        expect(
+          Object.values(pack.workflows).some((workflow) =>
+            workflow.eligibleRoleProfiles.includes(role.id),
+          ),
+        ).toBe(true);
+      }
+      for (const workflow of Object.values(pack.workflows)) {
+        const instruction = pack.instructions[workflow.instructionId]!;
+        expect(instruction.body).toMatch(/\bread\b/i);
+        expect(instruction.body).toMatch(/\buse\b/i);
+        expect(instruction.body).toMatch(/\bpropose\b/i);
+        expect(instruction.body).toMatch(/\breview/i);
+        expect(instruction.body).toMatch(/\brecord\b/i);
+        expect(instruction.body).toMatch(/\bdeliver\b/i);
+      }
+    },
+  );
 
   it("enforces the bounded size of every approved instruction", () => {
     const { root, pack: packPath } = scratchPack();
