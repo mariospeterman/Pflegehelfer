@@ -1410,7 +1410,10 @@ export function buildApp(
         type: "DraftAction",
         kind: "care-update",
         title: `Offene Prüfung · ${patient.displayName}`,
-        preview: reviewItems.map((item) => item.label).join("\n").slice(0, 1200),
+        preview: reviewItems
+          .map((item) => item.label)
+          .join("\n")
+          .slice(0, 1200),
         actionLabel: "Auswahl bestätigen",
         intentToken,
         sourceLabel: `${plan.sourceRecords?.length ?? 0} gebundene Eingabe${(plan.sourceRecords?.length ?? 0) === 1 ? "" : "n"} · nach Aktualisierung erneut autorisiert`,
@@ -1435,7 +1438,8 @@ export function buildApp(
         ).slice(0, 1200),
         actionLabel: "Erneut prüfen und übernehmen",
         intentToken,
-        sourceLabel: "Gespeicherter Entwurf · nach Aktualisierung erneut autorisiert",
+        sourceLabel:
+          "Gespeicherter Entwurf · nach Aktualisierung erneut autorisiert",
         ...(reviewItems.length > 0 ? { reviewItems } : {}),
       };
     }
@@ -2067,9 +2071,11 @@ export function buildApp(
     let revocation = Promise.resolve();
     const revokeAuthorities = () => {
       if (generatedResponse) assistant.revokeResponseIntents(generatedResponse);
-      revocation = revocation.then(() =>
-        operationalStore.revokeActorAuthorities(actorId),
-      );
+      const responseId = generatedResponse?.id;
+      if (responseId)
+        revocation = revocation.then(() =>
+          operationalStore.revokeResponseAuthorities(actorId, responseId),
+        );
       return revocation;
     };
     const revokeAfterDisconnect = () => {
@@ -2092,7 +2098,10 @@ export function buildApp(
     reply.raw.once("finish", finishResponse);
     const actor = service.user(actorId);
     await contextTransitions.get(actorId);
-    let session = await operationalStore.getOrStartSession(actorId, actor.role);
+    const session = await operationalStore.getOrStartSession(
+      actorId,
+      actor.role,
+    );
     const selectedPatient = body.patientId
       ? service
           .snapshot(actorId, body.purpose ?? actor.defaultPurpose)
@@ -2121,12 +2130,6 @@ export function buildApp(
             session.threadId,
           )
         : null;
-    assistant.revokeActorIntents(actorId);
-    await operationalStore.revokeActorAuthorities(actorId);
-    session = await operationalStore.advanceAssistantRevision(
-      actorId,
-      actor.role,
-    );
     const workingContext = await assistantWorkingContext(
       actorId,
       previousCarePlan,
@@ -2197,9 +2200,11 @@ export function buildApp(
     let revocation = Promise.resolve();
     const revokeAuthorities = () => {
       if (streamedResponse) assistant.revokeResponseIntents(streamedResponse);
-      revocation = revocation.then(() =>
-        operationalStore.revokeActorAuthorities(actorId),
-      );
+      const responseId = streamedResponse?.id;
+      if (responseId)
+        revocation = revocation.then(() =>
+          operationalStore.revokeResponseAuthorities(actorId, responseId),
+        );
       return revocation;
     };
     const revokeAfterDisconnect = () => {
@@ -2218,7 +2223,10 @@ export function buildApp(
     reply.raw.once("finish", finishResponse);
     const actor = service.user(actorId);
     await contextTransitions.get(actorId);
-    let session = await operationalStore.getOrStartSession(actorId, actor.role);
+    const session = await operationalStore.getOrStartSession(
+      actorId,
+      actor.role,
+    );
     const selectedPatient = body.patientId
       ? service
           .snapshot(actorId, body.purpose ?? actor.defaultPurpose)
@@ -2248,12 +2256,6 @@ export function buildApp(
             session.threadId,
           )
         : null;
-    assistant.revokeActorIntents(actorId);
-    await operationalStore.revokeActorAuthorities(actorId);
-    session = await operationalStore.advanceAssistantRevision(
-      actorId,
-      actor.role,
-    );
     const workingContext = await assistantWorkingContext(
       actorId,
       previousCarePlan,

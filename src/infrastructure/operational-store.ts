@@ -426,6 +426,7 @@ export interface OperationalStore {
   ): Promise<{ unresolved: number; conflicts: number }>;
   deliveryDiagnostics(): Promise<DeliveryDiagnostics>;
   releaseIntentAuthority(tokenHash: string): Promise<void>;
+  revokeResponseAuthorities(actorId: string, responseId: string): Promise<void>;
   revokeActorAuthorities(actorId: string): Promise<void>;
   storeVoiceAuthority(
     tokenHash: string,
@@ -1104,6 +1105,16 @@ export class InMemoryOperationalStore implements OperationalStore {
       thread.contextRevision !== input.contextRevision
     )
       return Promise.reject(new Error("ASSISTANT_CONTEXT_STALE"));
+    for (const authority of this.authorities.values())
+      if (
+        !authority.consumed &&
+        authority.record.actorId === input.record.actorId &&
+        authority.threadId === input.threadId &&
+        authority.record.patientId === input.record.patientId &&
+        authority.record.encounterId === input.record.encounterId &&
+        authority.responseId !== input.responseId
+      )
+        authority.consumed = true;
     if (!this.authorities.has(input.tokenHash))
       this.authorities.set(input.tokenHash, {
         record: structuredClone(input.record),
@@ -1300,6 +1311,18 @@ export class InMemoryOperationalStore implements OperationalStore {
     const authority = this.authorities.get(tokenHash);
     if (authority && authority.record.expiresAt >= Date.now())
       authority.consumed = false;
+    return Promise.resolve();
+  }
+  revokeResponseAuthorities(
+    actorId: string,
+    responseId: string,
+  ): Promise<void> {
+    for (const authority of this.authorities.values())
+      if (
+        authority.record.actorId === actorId &&
+        authority.responseId === responseId
+      )
+        authority.consumed = true;
     return Promise.resolve();
   }
   revokeActorAuthorities(actorId: string): Promise<void> {
@@ -2962,9 +2985,7 @@ export class PostgresOperationalStore
       const samePendingProposal =
         prior.rows[0]?.status === "pending" &&
         prior.rows[0].proposal_hash === proposalHash;
-      const proposalId = samePendingProposal
-        ? prior.rows[0]!.id
-        : randomUUID();
+      const proposalId = samePendingProposal ? prior.rows[0]!.id : randomUUID();
       if (prior.rows[0]?.status === "pending" && !samePendingProposal)
         await client.query(
           `UPDATE assistant_proposal_revisions SET status='superseded'
@@ -3680,6 +3701,29 @@ export class PostgresOperationalStore
        WHERE p.organization_id=$1 AND p.id=released.proposal_revision_id
          AND p.status='consumed'`,
       [organizationId, tokenHash],
+    );
+  }
+  async revokeResponseAuthorities(
+    actorId: string,
+    responseId: string,
+  ): Promise<void> {
+    await this.pool.query(
+      `WITH revoked AS (
+         UPDATE safety_authority a SET consumed_at=now()
+         FROM assistant_proposal_revisions p
+         WHERE a.organization_id=$1 AND a.actor_id=$2
+           AND a.authority_type='intent' AND a.consumed_at IS NULL
+           AND p.organization_id=a.organization_id
+           AND p.id=a.proposal_revision_id
+           AND p.source_response_id=$3
+         RETURNING a.proposal_revision_id
+       )
+       UPDATE assistant_proposal_revisions p
+       SET status='superseded'
+       FROM revoked
+       WHERE p.organization_id=$1 AND p.id=revoked.proposal_revision_id
+         AND p.status='pending'`,
+      [organizationId, actorId, responseId],
     );
   }
   async revokeActorAuthorities(actorId: string): Promise<void> {
