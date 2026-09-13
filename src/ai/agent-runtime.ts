@@ -78,11 +78,14 @@ export type AgentModelDecision =
   | {
       kind: "answer" | "clarification-needed" | "no-action" | "safe-handoff";
       text: string;
+      /** Exact references emitted by successful tools during this run. */
+      sourceReferenceIds?: string[];
     }
   | {
       kind: "draft-ready";
       text: string;
       draftReferenceId: string;
+      sourceReferenceIds?: string[];
     };
 
 export interface AgentModelTurn {
@@ -125,6 +128,7 @@ export interface AgentRunResult {
   draftReferenceId?: string;
   trace: AgentTraceEvent[];
   toolCalls: number;
+  sourceReferenceIds?: string[];
 }
 
 export class AgentToolError extends Error {
@@ -257,6 +261,7 @@ export class BoundedAgentRuntime {
     ];
     const calls = new Map<string, number>();
     const draftReferences = new Set<string>();
+    const toolReferences = new Set<string>();
     const controller = new AbortController();
     const timeout = setTimeout(
       () => controller.abort(new Error("AGENT_DEADLINE_EXCEEDED")),
@@ -311,9 +316,17 @@ export class BoundedAgentRuntime {
           latencyMs: Math.round(performance.now() - started),
         });
         if (decision.kind !== "tool-call") {
+          const citedReferences = decision.sourceReferenceIds ?? [];
+          const inventedReference = citedReferences.find(
+            (referenceId) => !toolReferences.has(referenceId),
+          );
           if (
-            decision.kind === "draft-ready" &&
-            !draftReferences.has(decision.draftReferenceId)
+            (decision.kind === "draft-ready" &&
+              !draftReferences.has(decision.draftReferenceId)) ||
+            inventedReference !== undefined ||
+            (decision.kind === "answer" &&
+              toolCalls > 0 &&
+              citedReferences.length === 0)
           ) {
             trace.push({
               sequence: trace.length + 1,
@@ -342,6 +355,9 @@ export class BoundedAgentRuntime {
             text: decision.text.slice(0, 4_000),
             ...(decision.kind === "draft-ready"
               ? { draftReferenceId: decision.draftReferenceId }
+              : {}),
+            ...(citedReferences.length > 0
+              ? { sourceReferenceIds: citedReferences }
               : {}),
             trace,
             toolCalls,
@@ -408,6 +424,7 @@ export class BoundedAgentRuntime {
             "draft"
           )
             draftReferences.add(result.referenceId);
+          toolReferences.add(result.referenceId);
           trace.push({
             sequence: trace.length + 1,
             kind: "tool",

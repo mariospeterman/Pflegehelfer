@@ -180,6 +180,39 @@ function cleanDraft(prompt: string): string {
     .slice(0, 1200);
 }
 
+function generatedCoworkerTextIsSafe(
+  run: AgentRunResult,
+  components: readonly AssistantComponent[],
+): boolean {
+  if (
+    !["answer", "clarification-needed", "no-action"].includes(run.status) ||
+    run.text.trim().length === 0 ||
+    run.text.length > 1200
+  )
+    return false;
+  if (
+    run.status === "answer" &&
+    run.toolCalls > 0 &&
+    (run.sourceReferenceIds?.length ?? 0) === 0
+  )
+    return false;
+  // Generated prose can explain tool results. It can never carry authority,
+  // executable links/tokens, or claim that a side effect already happened.
+  if (
+    /https?:\/\/|intentToken|bearer\s+[A-Za-z0-9._-]+/i.test(run.text) ||
+    /\b(?:ich|wir)\s+(?:habe|haben)\s+(?:dokumentiert|gesendet|freigegeben|abgeschlossen|synchronisiert|übertragen)\b/i.test(
+      run.text,
+    )
+  )
+    return false;
+  const groundedView = JSON.stringify(
+    components.filter((component) => component.type !== "AssistantText"),
+  ).replace(/\s+/g, " ");
+  return [...run.text.matchAll(/\b\d+(?:[.,/]\d+)?\b/g)].every((match) =>
+    groundedView.includes(match[0]),
+  );
+}
+
 function explicitlyRequestsNote(prompt: string): boolean {
   return /^\s*(?:bitte\s+)?(?:notiz|dokumentiere|schreib(?:e)?(?:\s+auf)?|anamnes(?:e|is))\b/i.test(
     prompt,
@@ -851,7 +884,7 @@ export class AssistantService {
       "sync-status":
         "Hier ist der technische Zustell- und Abgleichstatus; er sagt nichts über Dienstanwesenheit aus.",
     };
-    const agentLead = agentRun
+    const fallbackAgentLead = agentRun
       ? agentRun.status === "answer" && agentRun.toolCalls > 0
         ? agentSelectedIntent
           ? groundedAgentLead[agentSelectedIntent]
@@ -864,12 +897,6 @@ export class AssistantService {
               ? "Diese Anfrage braucht den dafür vorgesehenen sicheren Arbeitsablauf."
               : null
       : null;
-    if (agentLead)
-      components.push({
-        type: "AssistantText",
-        message: agentLead,
-      });
-
     const requirePatient = () => {
       if (!patient)
         throw new DomainError(
@@ -1813,6 +1840,29 @@ export class AssistantService {
               "Ich kann Patientenübersicht, Vitalwerte, offene Aufgaben, Übergabe, lokale Richtlinien sowie prüfpflichtige Notiz- oder Arztfrage-Entwürfe vorbereiten.",
           });
         break;
+    }
+
+    const useGeneratedCoworkerText = Boolean(
+      agentRun && generatedCoworkerTextIsSafe(agentRun, components),
+    );
+    if (useGeneratedCoworkerText && agentRun) {
+      if (classification.intent === "unknown")
+        for (let index = components.length - 1; index >= 0; index -= 1)
+          if (components[index]?.type === "UnknownState")
+            components.splice(index, 1);
+      components.unshift({
+        type: "AssistantText",
+        message: agentRun.text.trim(),
+      });
+    } else if (fallbackAgentLead) {
+      components.unshift({
+        type: "AssistantText",
+        message: fallbackAgentLead,
+      });
+      if (agentRun?.status === "answer" && agentRun.toolCalls > 0)
+        warnings.push(
+          "Die generierte Erläuterung wurde wegen fehlender oder widersprüchlicher Quellenbindung nicht angezeigt.",
+        );
     }
 
     const validated = validateAssistantComponents(components);
