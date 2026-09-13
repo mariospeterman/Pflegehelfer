@@ -3,6 +3,18 @@ import pg from "pg";
 import { workflowForRole, type WorkflowDefinition } from "../core/workflows.js";
 import type { DurableIntentRecord } from "../core/assistant.js";
 import {
+  providerIdSchema,
+  providerOutboxPayloadSchema,
+  providerProfileSchema,
+  type CanonicalClinicalCommand,
+  type ProviderAcknowledgement,
+  type ProviderDeliveryStore,
+  type ProviderErrorClassification,
+  type ProviderOutboxJob,
+  type ProviderOutboxPayload,
+  type ProviderProfile,
+} from "../core/provider-integration/index.js";
+import {
   DomainError,
   type AuditEntry,
   type Purpose,
@@ -27,6 +39,17 @@ const { Pool } = pg;
 const organizationId = siteConfiguration.institutionId;
 const departmentId = siteConfiguration.department.id;
 const sessionTtlMs = siteConfiguration.sessionTtlHours * 60 * 60_000;
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value))
+    return `[${value.map((item) => canonicalJson(item)).join(",")}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
+    .join(",")}}`;
+}
 
 function facilityDateKey(value = new Date()): string {
   return new Intl.DateTimeFormat("en-CA", {
@@ -1008,7 +1031,9 @@ export class InMemoryOperationalStore implements OperationalStore {
   }
 }
 
-export class PostgresOperationalStore implements OperationalStore {
+export class PostgresOperationalStore
+  implements OperationalStore, ProviderDeliveryStore
+{
   private readonly pool: pg.Pool;
   constructor(connectionString: string) {
     this.pool = new Pool({
@@ -2424,10 +2449,27 @@ export class PostgresOperationalStore implements OperationalStore {
       occurred_at: Date | string;
     }>(
       `SELECT id::text,event_type,payload,occurred_at
-       FROM domain_events
-       WHERE organization_id=$1 AND id>$2 AND audience @> $3::jsonb
-       ORDER BY id ASC LIMIT $4`,
-      [organizationId, afterId, JSON.stringify({ actorIds: [actorId] }), limit],
+       FROM domain_events d
+       WHERE d.organization_id=$1 AND d.id>$2
+         AND (
+           d.audience @> $3::jsonb
+           OR EXISTS (
+             SELECT 1 FROM assistant_sessions s
+             WHERE s.organization_id=$1 AND s.actor_id=$5
+               AND s.status='active'
+               AND d.audience @> jsonb_build_object(
+                 'roles',jsonb_build_array(s.effective_role)
+               )
+           )
+         )
+       ORDER BY d.id ASC LIMIT $4`,
+      [
+        organizationId,
+        afterId,
+        JSON.stringify({ actorIds: [actorId] }),
+        limit,
+        actorId,
+      ],
     );
     return result.rows.map((row) => ({
       id: Number(row.id),
@@ -2711,6 +2753,285 @@ export class PostgresOperationalStore implements OperationalStore {
     );
     return Boolean(result.rowCount);
   }
+  async enqueueProviderCommand(input: {
+    provider: ProviderOutboxJob["provider"];
+    profile: ProviderProfile;
+    command: CanonicalClinicalCommand;
+    retrySafety?: ProviderOutboxPayload["retrySafety"];
+  }): Promise<{ id: string; inserted: boolean }> {
+    const provider = providerIdSchema.parse(input.provider);
+    const profile = providerProfileSchema.parse(input.profile);
+    if (profile === "production" && input.retrySafety === "idempotent-provider")
+      throw new Error("PROVIDER_IDEMPOTENCY_EVIDENCE_REQUIRED");
+    const payload = providerOutboxPayloadSchema.parse({
+      schemaVersion: 1,
+      command: input.command,
+      retrySafety: input.retrySafety ?? "reconcile-before-retry",
+    });
+    const id = randomUUID();
+    const inserted = await this.pool.query<{ id: string }>(
+      `INSERT INTO provider_outbox
+         (organization_id,id,provider_id,profile_id,operation,idempotency_key,payload,state)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,'pending')
+       ON CONFLICT (organization_id,provider_id,profile_id,idempotency_key)
+       DO NOTHING
+       RETURNING id::text`,
+      [
+        organizationId,
+        id,
+        provider,
+        profile,
+        payload.command.operation,
+        payload.command.idempotencyKey,
+        payload,
+      ],
+    );
+    if (inserted.rows[0]) return { id: inserted.rows[0].id, inserted: true };
+    const existing = await this.pool.query<{ id: string; payload: unknown }>(
+      `SELECT id::text,payload FROM provider_outbox
+       WHERE organization_id=$1 AND provider_id=$2 AND profile_id=$3
+         AND idempotency_key=$4`,
+      [organizationId, provider, profile, payload.command.idempotencyKey],
+    );
+    const row = existing.rows[0];
+    if (!row) throw new Error("PROVIDER_OUTBOX_CONCURRENT_INSERT_LOST");
+    if (canonicalJson(row.payload) !== canonicalJson(payload))
+      throw new Error("IDEMPOTENCY_KEY_PAYLOAD_MISMATCH");
+    return { id: row.id, inserted: false };
+  }
+  async claimProviderCommands(input: {
+    workerId: string;
+    profile: ProviderProfile;
+    limit: number;
+    leaseDurationMs: number;
+    now?: Date;
+  }): Promise<ProviderOutboxJob[]> {
+    const workerId = input.workerId.trim();
+    if (!workerId || workerId.length > 120)
+      throw new Error("INVALID_WORKER_ID");
+    const profile = providerProfileSchema.parse(input.profile);
+    if (!Number.isInteger(input.limit) || input.limit < 1 || input.limit > 100)
+      throw new Error("INVALID_PROVIDER_BATCH_SIZE");
+    if (
+      !Number.isInteger(input.leaseDurationMs) ||
+      input.leaseDurationMs < 1_000 ||
+      input.leaseDurationMs > 5 * 60_000
+    )
+      throw new Error("INVALID_PROVIDER_LEASE_DURATION");
+    const now = input.now ?? new Date();
+    const leaseExpiresAt = new Date(now.getTime() + input.leaseDurationMs);
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const claimed = await client.query<{
+        id: string;
+        provider_id: string;
+        profile_id: string;
+        operation: string;
+        idempotency_key: string;
+        payload: unknown;
+        attempts: number;
+        prior_state: string;
+        latest_receipt_id: string | null;
+      }>(
+        `WITH candidates AS (
+           SELECT organization_id,id,state AS prior_state
+           FROM provider_outbox
+           WHERE organization_id=$1 AND profile_id=$2
+             AND (
+               (state IN ('pending','retry') AND next_attempt_at <= $3)
+               OR (state='leased' AND lease_expires_at <= $3)
+             )
+           ORDER BY next_attempt_at,id
+           FOR UPDATE SKIP LOCKED
+           LIMIT $4
+         ), claimed AS (
+           UPDATE provider_outbox o
+           SET state='leased',attempts=o.attempts+1,lease_owner=$5,
+               lease_expires_at=$6,last_error_class=NULL
+           FROM candidates c
+           WHERE o.organization_id=c.organization_id AND o.id=c.id
+           RETURNING o.*,c.prior_state
+         )
+         SELECT c.id::text,c.provider_id,c.profile_id,c.operation,
+                c.idempotency_key,c.payload,c.attempts,c.prior_state,
+                receipt.external_reference AS latest_receipt_id
+         FROM claimed c
+         LEFT JOIN LATERAL (
+           SELECT external_reference
+           FROM provider_receipts r
+           WHERE r.organization_id=c.organization_id AND r.outbox_id=c.id
+           ORDER BY r.created_at DESC,r.id DESC LIMIT 1
+         ) receipt ON true
+         ORDER BY c.next_attempt_at,c.id`,
+        [organizationId, profile, now, input.limit, workerId, leaseExpiresAt],
+      );
+      const jobs: ProviderOutboxJob[] = [];
+      for (const row of claimed.rows) {
+        const payload = providerOutboxPayloadSchema.safeParse(row.payload);
+        const provider = providerIdSchema.safeParse(row.provider_id);
+        const storedProfile = providerProfileSchema.safeParse(row.profile_id);
+        const valid =
+          payload.success &&
+          provider.success &&
+          storedProfile.success &&
+          payload.data.command.operation === row.operation &&
+          payload.data.command.idempotencyKey === row.idempotency_key;
+        if (!valid) {
+          await client.query(
+            `UPDATE provider_outbox
+             SET state='manual',lease_owner=NULL,lease_expires_at=NULL,
+                 last_error_class='OUTBOX_PAYLOAD_INVALID'
+             WHERE organization_id=$1 AND id=$2 AND state='leased'
+               AND lease_owner=$3`,
+            [organizationId, row.id, workerId],
+          );
+          await client.query(
+            `INSERT INTO domain_events
+               (organization_id,aggregate_type,aggregate_id,event_type,audience,payload)
+             VALUES ($1,'provider-outbox',$2,'ProviderOutboxQuarantined',$3,$4)`,
+            [
+              organizationId,
+              row.id,
+              { roles: ["it"] },
+              { outboxId: row.id, reason: "OUTBOX_PAYLOAD_INVALID" },
+            ],
+          );
+          continue;
+        }
+        jobs.push({
+          id: row.id,
+          provider: provider.data,
+          profile: storedProfile.data,
+          operation: payload.data.command.operation,
+          idempotencyKey: row.idempotency_key,
+          payload: payload.data,
+          attempts: Number(row.attempts),
+          recoveredExpiredLease: row.prior_state === "leased",
+          latestReceiptId: row.latest_receipt_id,
+        });
+      }
+      await client.query("COMMIT");
+      return jobs;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+  async finishProviderDelivery(input: {
+    jobId: string;
+    workerId: string;
+    acknowledgement: ProviderAcknowledgement;
+    retryAt: Date | null;
+  }): Promise<void> {
+    const nextState =
+      input.acknowledgement.status === "acknowledged"
+        ? "delivered"
+        : input.acknowledgement.status === "pending" && input.retryAt
+          ? "retry"
+          : "manual";
+    const lastError =
+      input.acknowledgement.status === "pending" && !input.retryAt
+        ? "technical:MAX_PENDING_ATTEMPTS"
+        : input.acknowledgement.errorClassification
+          ? `${input.acknowledgement.errorClassification}:${input.acknowledgement.errorCode ?? "PROVIDER_REJECTED"}`
+          : null;
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const updated = await client.query<{
+        provider_id: string;
+        idempotency_key: string;
+      }>(
+        `UPDATE provider_outbox
+         SET state=$4,next_attempt_at=$5,lease_owner=NULL,lease_expires_at=NULL,
+             last_error_class=$6
+         WHERE organization_id=$1 AND id=$2 AND state='leased' AND lease_owner=$3
+         RETURNING provider_id,idempotency_key`,
+        [
+          organizationId,
+          input.jobId,
+          input.workerId,
+          nextState,
+          nextState === "retry" ? input.retryAt : new Date(),
+          lastError,
+        ],
+      );
+      if (!updated.rows[0]) throw new Error("PROVIDER_OUTBOX_LEASE_LOST");
+      if (
+        !input.acknowledgement.receiptId ||
+        input.acknowledgement.idempotencyKey !== updated.rows[0].idempotency_key
+      )
+        throw new Error("PROVIDER_ACKNOWLEDGEMENT_BINDING_MISMATCH");
+      await client.query(
+        `INSERT INTO provider_receipts
+           (organization_id,id,provider_id,outbox_id,external_reference,acknowledgement_hash)
+         VALUES ($1,$2,$3,$4,$5,$6)`,
+        [
+          organizationId,
+          randomUUID(),
+          updated.rows[0].provider_id,
+          input.jobId,
+          input.acknowledgement.receiptId,
+          createHash("sha256")
+            .update(canonicalJson(input.acknowledgement))
+            .digest("hex"),
+        ],
+      );
+      await client.query(
+        `INSERT INTO domain_events
+           (organization_id,aggregate_type,aggregate_id,event_type,audience,payload)
+         VALUES ($1,'provider-outbox',$2,$3,$4,$5)`,
+        [
+          organizationId,
+          input.jobId,
+          nextState === "delivered"
+            ? "ProviderDeliveryAcknowledged"
+            : nextState === "retry"
+              ? "ProviderDeliveryPending"
+              : "ProviderDeliveryNeedsReview",
+          { roles: ["it"] },
+          {
+            outboxId: input.jobId,
+            status: input.acknowledgement.status,
+            receiptId: input.acknowledgement.receiptId,
+          },
+        ],
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+  async failProviderDelivery(input: {
+    jobId: string;
+    workerId: string;
+    errorCode: string;
+    errorClassification: ProviderErrorClassification;
+    retryAt: Date | null;
+  }): Promise<void> {
+    const state = input.retryAt ? "retry" : "manual";
+    const result = await this.pool.query(
+      `UPDATE provider_outbox
+       SET state=$4,next_attempt_at=COALESCE($5,next_attempt_at),
+           lease_owner=NULL,lease_expires_at=NULL,last_error_class=$6
+       WHERE organization_id=$1 AND id=$2 AND state='leased' AND lease_owner=$3`,
+      [
+        organizationId,
+        input.jobId,
+        input.workerId,
+        state,
+        input.retryAt,
+        `${input.errorClassification}:${input.errorCode}`,
+      ],
+    );
+    if (result.rowCount !== 1) throw new Error("PROVIDER_OUTBOX_LEASE_LOST");
+  }
   async health(): Promise<boolean> {
     try {
       await this.pool.query("SELECT 1");
@@ -2773,6 +3094,26 @@ export class PostgresOperationalStore implements OperationalStore {
       await client.query(`DELETE FROM domain_events WHERE organization_id=$1`, [
         organizationId,
       ]);
+      await client.query(
+        `DELETE FROM sync_conflicts WHERE organization_id=$1`,
+        [organizationId],
+      );
+      await client.query(
+        `DELETE FROM provider_receipts WHERE organization_id=$1`,
+        [organizationId],
+      );
+      await client.query(
+        `DELETE FROM provider_inbox WHERE organization_id=$1`,
+        [organizationId],
+      );
+      await client.query(
+        `DELETE FROM provider_outbox WHERE organization_id=$1`,
+        [organizationId],
+      );
+      await client.query(
+        `DELETE FROM provider_cursors WHERE organization_id=$1`,
+        [organizationId],
+      );
       await client.query("COMMIT");
     } catch (error) {
       await client.query("ROLLBACK");

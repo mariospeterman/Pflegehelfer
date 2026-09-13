@@ -1,0 +1,182 @@
+import { randomUUID } from "node:crypto";
+import { describe, expect, it } from "vitest";
+import {
+  canonicalClinicalCommandSchema,
+  createSyntheticProviderRegistry,
+  ProviderDeliveryWorker,
+  type CanonicalClinicalCommand,
+  type ProviderAcknowledgement,
+  type ProviderDeliveryStore,
+  type ProviderErrorClassification,
+  type ProviderOutboxJob,
+} from "../src/core/provider-integration/index.js";
+
+function command(key: string): CanonicalClinicalCommand {
+  const id = randomUUID();
+  return {
+    commandId: id,
+    operation: "Observation.write",
+    patientReference: "Patient/p-anna",
+    resource: {
+      resourceType: "Observation",
+      id,
+      body: { status: "final", valueQuantity: { value: 37.8, code: "Cel" } },
+    },
+    expectedProviderVersion: "sim-v1",
+    mappingVersion: "synthetic-v1",
+    correlationId: randomUUID(),
+    causationId: randomUUID(),
+    idempotencyKey: key,
+    approvedAt: "2026-09-13T08:00:00.000Z",
+  };
+}
+
+function job(
+  retrySafety: "idempotent-provider" | "reconcile-before-retry",
+  options: Partial<ProviderOutboxJob> = {},
+): ProviderOutboxJob {
+  const providerCommand = command(`worker-${randomUUID()}`);
+  return {
+    id: randomUUID(),
+    provider: "device-gateway",
+    profile: "synthetic-simulator",
+    operation: providerCommand.operation,
+    idempotencyKey: providerCommand.idempotencyKey,
+    payload: { schemaVersion: 1, command: providerCommand, retrySafety },
+    attempts: 1,
+    recoveredExpiredLease: false,
+    latestReceiptId: null,
+    ...options,
+  };
+}
+
+class RecordingDeliveryStore implements ProviderDeliveryStore {
+  readonly completed: ProviderAcknowledgement[] = [];
+  readonly failures: Array<{
+    errorCode: string;
+    errorClassification: ProviderErrorClassification;
+    retryAt: Date | null;
+  }> = [];
+
+  constructor(private jobs: ProviderOutboxJob[]) {}
+
+  enqueueProviderCommand(): Promise<{ id: string; inserted: boolean }> {
+    throw new Error("not used");
+  }
+
+  claimProviderCommands(): Promise<ProviderOutboxJob[]> {
+    const jobs = this.jobs;
+    this.jobs = [];
+    return Promise.resolve(jobs);
+  }
+
+  finishProviderDelivery(input: {
+    acknowledgement: ProviderAcknowledgement;
+  }): Promise<void> {
+    this.completed.push(input.acknowledgement);
+    return Promise.resolve();
+  }
+
+  failProviderDelivery(input: {
+    errorCode: string;
+    errorClassification: ProviderErrorClassification;
+    retryAt: Date | null;
+  }): Promise<void> {
+    this.failures.push(input);
+    return Promise.resolve();
+  }
+}
+
+describe("bounded provider delivery worker", () => {
+  it("rejects reads, medication writes and mismatched resource types as delivery commands", () => {
+    const valid = command(`validation-${randomUUID()}`);
+    for (const invalid of [
+      { ...valid, operation: "Patient.read" },
+      { ...valid, operation: "MedicationOrder.write" },
+      {
+        ...valid,
+        resource: { ...valid.resource, resourceType: "Communication" },
+      },
+      { ...valid, patientReference: "Encounter/e-anna" },
+    ])
+      expect(canonicalClinicalCommandSchema.safeParse(invalid).success).toBe(
+        false,
+      );
+  });
+
+  it("delivers a leased command through the configured simulator", async () => {
+    const store = new RecordingDeliveryStore([job("idempotent-provider")]);
+    const worker = new ProviderDeliveryWorker(
+      store,
+      createSyntheticProviderRegistry(),
+      { workerId: "worker-a", profile: "synthetic-simulator" },
+    );
+
+    await expect(worker.runOnce()).resolves.toEqual({
+      claimed: 1,
+      delivered: 1,
+      retrying: 0,
+      manual: 0,
+    });
+    expect(store.completed).toHaveLength(1);
+    expect(store.completed[0]?.status).toBe("acknowledged");
+    expect(store.failures).toEqual([]);
+  });
+
+  it("does not blindly resend an expired lease without idempotency proof", async () => {
+    const store = new RecordingDeliveryStore([
+      job("reconcile-before-retry", { recoveredExpiredLease: true }),
+    ]);
+    const worker = new ProviderDeliveryWorker(
+      store,
+      createSyntheticProviderRegistry(),
+      { workerId: "worker-recovery", profile: "synthetic-simulator" },
+    );
+
+    await expect(worker.runOnce()).resolves.toMatchObject({
+      claimed: 1,
+      delivered: 0,
+      manual: 1,
+    });
+    expect(store.completed).toEqual([]);
+    expect(store.failures).toEqual([
+      expect.objectContaining({
+        errorCode: "UNCERTAIN_REMOTE_OUTCOME",
+        errorClassification: "version-conflict",
+        retryAt: null,
+      }),
+    ]);
+  });
+
+  it("retries only explicitly idempotent transport failures", async () => {
+    const registry = createSyntheticProviderRegistry();
+    registry.setSimulatorMode("device-gateway", "down");
+    const safeStore = new RecordingDeliveryStore([job("idempotent-provider")]);
+    const unsafeStore = new RecordingDeliveryStore([
+      job("reconcile-before-retry"),
+    ]);
+    const options = {
+      profile: "synthetic-simulator" as const,
+      retryBaseMs: 1_000,
+      now: () => new Date("2026-09-13T08:00:00.000Z"),
+    };
+
+    await expect(
+      new ProviderDeliveryWorker(safeStore, registry, {
+        ...options,
+        workerId: "worker-safe",
+      }).runOnce(),
+    ).resolves.toMatchObject({ retrying: 1, manual: 0 });
+    expect(safeStore.failures[0]?.retryAt?.toISOString()).toBe(
+      "2026-09-13T08:00:01.000Z",
+    );
+
+    await expect(
+      new ProviderDeliveryWorker(unsafeStore, registry, {
+        ...options,
+        workerId: "worker-unsafe",
+      }).runOnce(),
+    ).resolves.toMatchObject({ retrying: 0, manual: 1 });
+    expect(unsafeStore.failures[0]?.retryAt).toBeNull();
+  });
+});

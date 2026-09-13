@@ -273,18 +273,53 @@ export interface CanonicalResource {
   body: Readonly<Record<string, unknown>>;
 }
 
-export interface CanonicalClinicalCommand {
-  commandId: string;
-  operation: ProviderOperation;
-  patientReference: string;
-  resource: CanonicalResource;
-  expectedProviderVersion: string | null;
-  mappingVersion: string;
-  correlationId: string;
-  causationId: string;
-  idempotencyKey: string;
-  approvedAt: string;
-}
+export const canonicalResourceSchema = z
+  .object({
+    resourceType: z.string().trim().min(1).max(100),
+    id: z.string().trim().min(1).max(200),
+    body: z.record(z.string(), z.unknown()),
+  })
+  .strict();
+
+export const providerCommandOperationSchema = z.enum([
+  "Observation.write",
+  "NursingNote.write",
+  "Task.write",
+  "Communication.write",
+]);
+
+export const canonicalClinicalCommandSchema = z
+  .object({
+    commandId: z.string().trim().min(1).max(200),
+    operation: providerCommandOperationSchema,
+    patientReference: z.string().regex(/^Patient\/[A-Za-z0-9.-]{1,200}$/),
+    resource: canonicalResourceSchema,
+    expectedProviderVersion: z.string().trim().min(1).max(200).nullable(),
+    mappingVersion: z.string().trim().min(1).max(200),
+    correlationId: z.string().trim().min(1).max(200),
+    causationId: z.string().trim().min(1).max(200),
+    idempotencyKey: z.string().trim().min(1).max(300),
+    approvedAt: z.iso.datetime({ offset: true }),
+  })
+  .strict()
+  .superRefine((command, context) => {
+    const expectedResourceType = {
+      "Observation.write": "Observation",
+      "NursingNote.write": "DocumentReference",
+      "Task.write": "Task",
+      "Communication.write": "Communication",
+    }[command.operation];
+    if (command.resource.resourceType !== expectedResourceType)
+      context.addIssue({
+        code: "custom",
+        path: ["resource", "resourceType"],
+        message: `${command.operation} requires ${expectedResourceType}.`,
+      });
+  });
+
+export type CanonicalClinicalCommand = z.infer<
+  typeof canonicalClinicalCommandSchema
+>;
 
 export interface PreparedProviderCommand {
   provider: ProviderId;
