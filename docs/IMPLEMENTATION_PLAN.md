@@ -1,9 +1,20 @@
 # Implementation plan
 
-Last updated: 2026-09-12
+Last updated: 2026-09-13
 Patient-workspace baseline: `479b2f807bb08e755088801e581ab3c17aed3fb6`
 
 The product contract is `docs/PRODUCT_CONTRACT.md`. Work proceeds in six vertical slices on the existing modular monolith and one PWA. A table, migration or simulator alone does not complete a slice; each gate needs a real endpoint-to-storage-to-UI test.
+
+## 2026-09-13 execution checkpoint
+
+Completed coherent increments:
+
+1. Migration history and legacy attestation are verified under the advisory lock before pending SQL.
+2. Published directory-v2 runtime packs securely load exact site/department/station/role/workflow/provider Markdown and bind explicit actor role-profile/station assignments to central policy.
+3. The configured model can select bounded read tools, observe scoped results and continue; the server alone hydrates clinical facts/GenUI and all writes remain in the existing reviewed proposal pipeline.
+4. A separate relational provider-worker kernel implements validated write-only commands, deduplication, leases, bounded recovery, receipt polling and manual quarantine.
+
+Next vertical slice remains G1, not a new fork: move accepted local commands and the provider enqueue into one PostgreSQL transaction, start the leased worker from the application, project its states to the existing GenUI, prove two-worker/restart behavior against PostgreSQL and then remove the checkpoint outbox. After that, proceed to resource-native Medplum reconstruction and G3 shared-thread ACLs. Do not connect both queue implementations in parallel or call the isolated kernel production-complete.
 
 ## 2026-09-12 scoped patient-workspace refinement
 

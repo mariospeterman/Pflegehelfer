@@ -1,597 +1,1139 @@
-# Pflegehelfer — verbindlicher Abschlussauftrag
+# Pflegehelfer — Agentic Coworker, Runtime Markdown and Verified Product Completion
 
-## Natürlicher Coworker, realistische Arbeitsabläufe und nachgewiesene Betriebsfähigkeit
+> **Build low-code institutional configuration over a small, reliable execution layer.**
+> Approved Markdown explains the work. One bounded agent interprets requests and chooses permitted tools. Reusable backend services enforce access, review, persistence and delivery. Staff remain the authors/approvers of their professional work.
+>
+> **Execute this contract; do not deliver another plan-only response.** Rewrite defective implementation where necessary, preserve verified behavior, and leave one coherent product—not a parallel prototype.
 
-**Datum:** 12. September 2026  
+**Instruction date / source recheck:** 13 September 2026
 **Repository:** `mariospeterman/Pflegehelfer`  
 **Branch:** `codex/genui-production-showcase`  
-**Zuletzt bestätigter Ausgangsstand:** `573ff547e9f362acc79f4653240eae091921325d`
+**Rechecked branch head:** `b6d76d9ec8b649e5d9884faf94a098dd9b99e247` (unchanged at this review)
+**Canonical destination:** `docs/execution/PFLEGEHELFER_COMPLETION.md`
+**Evidence index:** `docs/execution/COMPLETION_MATRIX.md` (retain G0–G7)
 
-## 0. Auftrag, Quellen und Ausführungsgrenze
+This document is for the coding agent. Do NOT paste it into the clinical runtime system prompt: deployed role/skill instructions must stay concise and load progressively.
 
-Führe die vorhandene Implementierung zu einem intern vollständigen, reproduzierbaren Produktabschluss. Erstelle weder einen weiteren Prototyp noch eine zweite Architektur. Behalte funktionierende Komponenten und schliesse die offenen Arbeitsketten von der Anmeldung über Datenübernahme und tatsächliche Mitarbeitendenarbeit bis zur Freigabe, Zustellung, Übergabe und Auswertung.
+This is the complete revised contract replacing the attached Runtime Markdown/Workspaces instruction. It preserves its patient/staff privacy, roles, workflows, UI, provider, operations and acceptance requirements, while making the runtime agent loop and low-code boundary explicit. All paths and commands introduced below are implementation targets unless identified as currently verified.
 
-Dieses Dokument konsolidiert die bisherigen Analysen und die Anweisung `Pflegehelfer_Codex_Patient_Workspaces.md`. Es ergänzt die zuletzt gewünschten Anforderungen: hochwertiges, ruhiges Chat-Design mit zurückhaltendem Glasmaterial, professionelle synthetische Patientendaten, realistische Übergabe mit Vorlesemodus, Arbeitsplan, nützliche Themen/Erwähnungen und nachvollziehbare Leistungsnachweise.
+## 0. Mission, precedence and what this document is
 
-**Produktzweck:** Pflegehelfer unterstützt Dokumentation, Informationsabruf, Kommunikation und Arbeitskoordination. Die Software dokumentiert vorhandene medizinische Angaben und von Menschen berichtete Arbeit; sie erfindet keine Befunde, stellt keine Diagnosen, ändert keine Medikamente und trifft keine eigenständigen Behandlungsentscheidungen. Fachlich verantwortliche Menschen beurteilen und genehmigen ihre Arbeit. Eine menschliche Freigabe allein garantiert keine Nicht-Medizinprodukt-Einstufung. Zweck und konkrete Funktionen müssen vor Echtdatenbetrieb fachlich und rechtlich bewertet werden.
+Finish the existing Pflegehelfer application by closing its real end-to-end gaps and reducing unnecessary custom code. This is an implementation contract, not another prototype, visual concept, architecture fork or request for a plan without execution.
 
-**Beleglage des Ausgangsstands:** Die vorherigen Prüfungen sind Quellcodeprüfungen und vom Projekt dokumentierte lokale Tests. Sie ersetzen nicht die hier verlangte eigene Laufzeitabnahme. Reproduziere die relevanten Befunde am tatsächlichen aktuellen SHA. Bereits behobene Punkte nicht wieder als Defekt behandeln. Synthetische Beispiele in diesem Auftrag sind neue Produktspezifikationen, keine Aussagen über tatsächliche Patienten, Arbeitszeiten oder interne Regeln von Tertianum.
+Replace/consolidate the existing canonical completion document with this contract, reconciling any newer explicit user requirement before changing it. Preserve G0–G7 and all still-applicable acceptance IDs; map prior requirements to their retained section/test instead of silently dropping them. Keep `AGENTS.md` a short coding-agent entry point. Consolidate `agent.md` and overlapping historical prompts into references or clearly marked archives. Keep one current `docs/ARCHITECTURE.md`, an evidence-backed status and an exact resume state. Do not erase decision/failure history.
 
-Es wird hier eine Codex-Ausführung angewiesen, nicht ein bereits laufender unbegrenzter Hintergrundprozess. Arbeite im verfügbaren autorisierten Entwicklungs-/Testumfeld. Keine echten Patientendaten, ungefragten Anbieteranschreiben, produktiven Konfigurationsänderungen, offenen kostenpflichtigen API-Tunnel oder destruktiven Eingriffe in fremde Daten. Fehlende Schlüssel und externe Freigaben niemals erfinden.
+The attached source instruction is a requirement baseline, not evidence that code exists. The repository is the implementation baseline. External official sources support the cited engineering/regulatory principles, not a claim of certification. On a conflict: non-bypass safety and applicable law first; explicit current user intent next; then this reviewed contract and reconciled architecture. Document material conflicts rather than silently choosing the convenient version.
 
-## 1. Ein einziger verbindlicher Produktkern
+The source recheck confirmed the branch has not advanced beyond `b6d76d9`. `src/core/site-config.ts` still loads JSON at module initialization; role IDs, one department object and provider routes are enumerated. `src/ai/model-gateway.ts` still chiefly classifies/extracts into a predefined schema and validates against a handwritten compiler; it is not the required dynamic tool-result loop. The migration runner still validates history after pending SQL. The repository's own matrix has G0 PASS and G1–G7 PARTIAL, including shared threads/media, durable pending revisions, identity/isolation, relational delivery workers, resource-native clinical reads, analytics and governed publishing.
 
-> Mitarbeitende sprechen, schreiben oder tippen natürlich. Pflegehelfer kennt den berechtigten Arbeitskontext, fragt nur nach wirklich fehlenden Angaben, zeigt die passende kleine Oberfläche, lässt die tatsächlichen Änderungen prüfen und verarbeitet die freigegebene Arbeit zuverlässig weiter.
+These are source observations, not reproduced incidents. The task author did not run the local app/test suite; the GitHub Actions query returned no runs for this SHA. Reproduce the baseline yourself and do not inherit reported test counts as proof. The green clean-checkout subset is useful but is not the full product finish line.
 
-Behalte folgende Trennung:
+Read the actual current branch before changing code; it may have advanced. Reproduce prior findings before treating them as current defects. Preserve fixes already completed, especially encounter-scoped conversations, explicit source states, stateful provider simulations, handover content snapshots and numbered migrations.
+
+**Product contract:** Pflegehelfer is a role-aware documentation, retrieval, communication and work-coordination coworker. Staff speak, type or tap naturally. The assistant retrieves authorized information, prepares faithful documentation and other proposed changes, and helps maintain working-day continuity. Reviewed actions are accepted durably and delivered to the correct existing systems. Staff do not need to operate Medplum or choose a database during normal work.
+
+**Excluded initial intended uses:** diagnosis, patient prognosis, treatment recommendation, medication prescribing/dose changes, autonomous medical triage, replacement of primary alarms, automated employment decisions, covert employee surveillance and fabricated billing. Existing diagnoses, prescriptions and performed professional actions may be faithfully displayed or documented within authorized scope. Do not censor an existing fact merely because the application must not originate that decision.
+
+Human approval is necessary for relevant actions but does not itself establish medical-device exemption or legal certification. Swiss institutional, cantonal, privacy and intended-use assessments remain deployment requirements.
+
+The role/workflow examples below are proposed synthetic product defaults. They are not an assertion of Tertianum's internal procedures, universal Swiss professional permissions, or actual patients and employees.
+
+### Human-centered design basis, without a false no-code claim
+
+The supplied Weinberg book photographs discuss programming as complex human activity and the need to judge quality meaningfully. They do not establish a Markdown architecture, a no-code claim or healthcare compliance. The separate workflow diagram makes inputs, instructions, outputs and owner review explicit through verbs such as reads/uses/writes. Apply those ideas as clarity of responsibility and measurable human benefit—not as a patient-file database or a claim the book endorses this stack.
+
+Evaluate two outcomes together: less remembering/searching/retyping/correcting for staff, and less site-specific source-code modification for implementers. Count successful work completion and recovery, not feature names, lines of code, cards rendered or whether a response is called “agentic.”
+
+## 1. Execution autonomy: continue until the internal contract is closed
+
+Work autonomously in the authorized development/test environment. Do not stop after the next isolated feature or green subset of tests. Do not treat successful installation, a sidebar button or a simulated acknowledgment as completion of its entire workflow.
+
+Use this loop for every vertical slice:
 
 ```text
-Eine Arbeitssitzung / ein Dienst
-  ├─ allgemeine private Pflegehelfer-Assistenz
-  ├─ private Patientenassistenz je Patient + Encounter
-  ├─ berechtigter Behandlungsteam-Thread
-  └─ freigegebene Abteilungs-/Direktgespräche
-                  │
-          gemeinsame Chat-/GenUI-Oberfläche
-                  │
-       kontextgebundene Lese- und Vorschlagswerkzeuge
-                  │
-         Berechtigungen / Review / Befehlsannahme
-           ┌──────┴────────┐
-           ▼               ▼
-       Medplum          PostgreSQL
-   klinische FHIR-     Sitzungen, Entwürfe,
-   Ressourcen         Abläufe, Freigaben,
-                      Aufträge, Zustellbelege
-           └──────┬────────┘
-                  ▼
-       adapterbasierte Provider-Integration
-       WiCare / careCoach / SAP / Geräte / weitere
+Select an unmet acceptance ID
+→ inspect the relevant code and official contracts
+→ reproduce the defect or define the failing behavior
+→ implement the smallest complete change
+→ run targeted tests against real local stores where relevant
+→ run the application and exercise the UI
+→ inspect persisted records, permissions, traces and delivery receipts
+→ obtain an independent review where available
+→ fix root causes and rerun regression
+→ update evidence and commit a coherent slice
+→ continue to the next unmet acceptance ID
 ```
 
-Das ist eine modulare Anwendung, nicht zwingend ein Dienst pro Kasten. Behalte React/TypeScript, die vorhandene OpenUI-Integration, Fastify, PostgreSQL und Medplum. Verwende vorhandene SDKs und Sicherheitsbibliotheken. Kein neues Kafka/NATS/Flowable/Temporal, keine Agentenflotte und keine zusätzliche Vektordatenbank ohne nachgewiesenen Bedarf und ADR.
+The coding-agent loop, the bounded runtime assistant loop and the production improvement loop are DIFFERENT:
 
-Medplum ist der normalisierte klinische Arbeits- und Integrationsspeicher, nicht automatisch der rechtliche oder operative Master aller Providerdaten. Definiere pro Datendomäne den führenden Anbieter. PostgreSQL ist kein zweites vollständiges EHR, darf aber die notwendigen Entwürfe, genehmigten Auftragsdaten und Zustellbelege zur sicheren Verarbeitung speichern.
+- **Development:** Codex may modify code and synthetic environments within this task's authorization.
+- **Staff assistant:** bounded tools and model calls; no code execution, self-modification or permission changes.
+- **Institution improvement:** propose → simulate → responsible human approval → publish → pilot → compare/rollback.
 
-Markdown beschreibt Institution, Rollen und Arbeitsverfahren. Validierte Metadaten steuern die Ausführung. Live-Patientenakten und Geheimnisse gehören weder in Markdown-Dateien noch in Git. Für den Alltag müssen Mitarbeitende Medplum nicht öffnen. Expertenzugriffe sind getrennt autorisiert, auditierbar und kein Freigabe-Bypass.
+Use independent review agents when available, with specific questions and non-overlapping file ownership. Their opinions do not replace executed tests. Repeated failure means investigate assumptions and data flow, not rerun indefinitely or weaken checks.
 
-## 2. Zuerst prüfen und konsolidieren
+Treat “one go” as one bounded delivery programme with complete, reviewable vertical slices. Do not attempt one huge unverified commit. Start the hardest integrated path early, preserve working code behind a short-lived migration seam only while parity tests run, then delete the retired path. Do not keep old/new staff products indefinitely behind feature flags.
 
-1. Ermittle Branch-HEAD und Unterschiede zum Ausgangs-SHA. Sichere einen sauberen Arbeitsstand ohne fremde Änderungen zu verwerfen.
-2. Lies `AGENTS.md`, `agent.md`, aktive Architektur-/Produkt-/Workflow-Dokumente, ADR-0012, Status, Migrationen und den tatsächlich ausgeführten Code. Fehlende benannte Dokumente nicht vortäuschen; vorhandene Einstiegspunkte nutzen.
-3. Verfolge Anmeldung, Threadwechsel, Entwurfsbearbeitung, Modellaufruf, Freigabe, FHIR-Zustellung, Provider-Worker, Teamnachrichten, Datenaufbewahrung und UI durch sämtliche beteiligten Implementierungen.
-4. Starte App, echte Test-PostgreSQL-Instanz, Medplum und zustandsbehaftete Simulatoren. Führe Baseline-Tests aus und notiere Pflicht-Skips.
-5. Prüfe die Oberfläche in einem echten Browser. Screenshots alleine sind kein Beweis für funktionierende Interaktion; Tests alleine sind kein Beweis für gute Gestaltung.
-6. Lege eine kurze Abschlussmatrix an: Anforderung → Implementierung → Test → Laufzeitbeleg → Status → nächster Schritt. Ergänze keine neue grossflächige Roadmap statt zu implementieren.
+After each coherent slice: commit only authorized project changes, record the exact acceptance IDs and evidence, check the next unmet dependency, and continue without asking the user about minor engineering choices. Stop only for a genuinely non-resolvable external authorization/input, an execution limit, or the completed internal matrix. Continue independent tasks when one item is externally blocked. Do not classify all remaining engineering as external merely because a production credential is absent.
 
-Im Ausgangsstand sind insbesondere noch zu verifizieren bzw. abzuschliessen:
+Operate within explicit time, compute, API and concurrency limits. Do not publish real data, contact vendors, spend unbounded money, rotate institution credentials, reset production stores or expose new public services without separate authorization. Once a paid AI key is enabled, protect the demo with authenticated access and request/budget limits before exposing it through a tunnel.
 
-- dauerhaft wiederherstellbare, editierbare Vorschläge und Mehrfenster-Konflikte;
-- eine atomare lokale Annahme von Freigabe, Auftrag, Audit und Versandjobs;
-- nummerierte unveränderliche Migrationen sowie Encounter-Migrationen für Intake/Visite;
-- Entfernung des Gesamtzustands-`Binary` aus dem normalen Betrieb;
-- relationale Worker, echte Inbound-Verarbeitung und dauerhafte berechtigungsgesteuerte Ereignisse;
-- eingefrorener klinischer Inhalt der Übergabe, nicht nur die Patientenliste;
-- institutionelles OIDC, Mandanten-/Abteilungsisolation und RLS;
-- gemeinsame ACL-Threads, tatsächliche Themenfilter, Bibliothek/Medien;
-- Workflow-Veröffentlichung, Admin, Leistungsnachweise und Verbesserungszyklus;
-- reale LLM-, ASR- und Vorlese-Abnahme;
-- echter Restore-/Rollback-Test und nachgewiesener netzisolierter Betrieb.
+If tools, context or runtime end before completion, persist the exact SHA, uncommitted work, test commands, current failure and next steps in the existing progress document. Report an execution handoff, not “complete” or an imaginary background process. External gates cannot be closed by invention; complete every independent internal task while retaining the exact blocked test.
 
-Behalte bereits umgesetzte Verbesserungen: getrennte Anna-/Luca-Threads, Encounter-Bindung, Originaltexte, Status unbekannt vs. verneint, `DocumentReference` für passende generische Notizen, zustandsbehaftete Provider-Simulatoren, Quelle/Provenance, Schutz vor Vermischung unbestätigter Werte mit abgeschlossener Arbeit und transparente Modellfehler.
+## 2. Keep one small architecture and explicit ownership
 
-## 3. Autonomer Abschlussloop mit Fortschrittskontrolle
+Retain React/TypeScript, the existing OpenUI renderer, the modular Fastify backend, PostgreSQL, Medplum and compatible model/audio adapters. Prefer established SDKs and security libraries over implementing protocols yourself. Do not add an agent fleet, workflow platform, message broker, separate vector database or service mesh without measured need and a reviewed ADR.
 
-Arbeite in vertikalen, nachweisbaren Funktionsabschnitten:
+Implement ONE logical agent definition reused with per-request authorized context, not one shared-memory process or separate model/agent per employee. Concurrent sessions remain isolated. The logical boundaries are instruction pack → agent runtime → tool registry → services/data/adapters; they do not require new network services.
+
+Choose the smallest maintained runtime approach that satisfies the requirements: an existing SDK with tool execution/streaming/budget hooks, or a thin loop over official provider SDKs. Record the choice in one ADR using local-model compatibility, self-hostability, security hooks, removal of current code and operational burden. Reuse existing safe code. Do not build a universal agent framework, an expression language, a generic workflow compiler or a second dependency-injection layer.
+
+PostgreSQL is retained because this product already needs durable drafts, responsibilities, jobs and receipts. It is not mandated because all AI products need another database. Medplum remains the FHIR workspace; do not recreate a FHIR server. Reuse Medplum SDK searches, history, AccessPolicy and supported conditional operations rather than inventing equivalents. A semantic/vector index is optional derived retrieval only; no mandatory vector store and no clinical truth in model memory.
 
 ```text
-Nächste offene Abnahme wählen
-→ Befund reproduzieren / Akzeptanztest schreiben
-→ kleinste vollständige Umsetzung
-→ Unit-/Integrations-/Real-Store-Tests
-→ echten Browser und Datenzustand prüfen
-→ unabhängiges Review der betroffenen Risiken
-→ Fehler korrigieren / Regression
-→ Belege und Fortschritt speichern
-→ nächste offene Abnahme
+Approved institution/department/role/workflow instruction pack
+                              ↓
+General assistant / Patient workspaces / Staff profiles / Team threads
+                              ↓
+                One conversation and GenUI implementation
+                              ↓
+             Authorized context + bounded tools + proposals
+                              ↓
+                  Human review + command acceptance
+                   ┌──────────┴───────────┐
+                   ↓                      ↓
+             Medplum FHIR          Operational PostgreSQL
+          clinical representation  sessions, jobs, approvals,
+                                   events, config and receipts
+                   └──────────┬───────────┘
+                              ↓
+                   Capability-based provider adapters
+                 WiCare / careCoach / SAP / other systems
 ```
 
-Ein Abschnitt ist nicht erledigt, wenn nur Tabellen, Komponenten oder Mock-Endpunkte existieren. Ein Menüpunkt muss seine beworbene Funktion ausführen. Schreibe keine neuen generischen Fallbacks nur, um Prüfungen grün zu bekommen.
+Ownership must be explicit:
 
-Führe am Ende jedes Abschnitts die gemeinsame Regression aus. Verwende Review-Subagenten, sofern verfügbar, mit klaren Prüffragen und getrennten Änderungen. Lasse nicht mehrere Agenten dieselben Dateien unkoordiniert umbauen.
+| Domain                                        | Authority and rule                                                                                                                                 |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Existing provider clinical records            | The designated provider remains authoritative for its domain unless the institution explicitly changes this.                                       |
+| Normalized clinical information               | Medplum FHIR, with original source, version, timestamps, correction state and provenance.                                                          |
+| Working sessions and operational coordination | Pflegehelfer PostgreSQL, with references to clinical records rather than an unnecessary duplicate EHR.                                             |
+| Drafts, proposals, approvals and delivery     | PostgreSQL stores the necessary content and binding until retained/deleted under its policy. An approved pending command is not a semantic cache.  |
+| People and staff memberships                  | Institution identity/directory plus approved application role mappings. Do not model all support/HR personnel as clinicians merely for uniformity. |
+| HR/personnel case information                 | Approved HR system or restricted operational records; never a broadly accessible patient FHIR collection.                                          |
+| Instructions                                  | Reviewed Markdown plus validated metadata, published as immutable runtime packs.                                                                   |
+| AI                                            | Interpretation and presentation, never authority over permissions or factual truth.                                                                |
 
-Bleibt derselbe Fehler nach wiederholten Reparaturen bestehen, untersuche Ursache, Datenmodell und Kontrollfluss; nicht beliebig dieselben Tests wiederholen. Zeit-/Kontext-/Toolgrenzen lösen einen ehrlichen Übergabepunkt mit SHA, Befunden, nächsten Befehlen und offenen Abnahmen aus. Nie behaupten, im Hintergrund unbegrenzt weiterzuarbeiten.
+Do not require an LLM to render deterministic rosters, timestamps, status or approval buttons. Do not ban legitimate FHIR Binary documents/images when removing the whole-application Binary checkpoint.
 
-**Abschlussbedingung:** Alle internen Pflichtabnahmen sind bestanden. Externe Schlüssel, Verträge und institutionelle Freigaben werden getrennt als blockiert dokumentiert; sie machen interne Lücken nicht fertig. Die verbundene KI-Demo bleibt unbestanden, solange kein echter Modell-/Audiotest lief.
+The source-of-truth matrix is per domain and provider INSTANCE: existing SAP/KIS identity, nursing-provider documentation, prescribing-system orders, device observations and Pflegehelfer-owned operational tasks may have different masters. Medplum is the canonical normalized representation, not automatically the legal master of every external field. Importing provider changes normally requires mapping/validation, not human reapproval of each replicated record. All user-originated final changes follow the configured review policy.
 
-## 4. Dokumentation ohne konkurrierende Richtungen
+Do not interpret `schema-valid`, `within numeric range`, `verbatim quote` or `two reviewers` as proof that a reported event truly occurred. The deterministic layer validates authorized execution and structural integrity; the responsible professional confirms what was actually observed/performed.
 
-Halte `AGENTS.md` als kurzen Einstieg mit Sicherheitsinvarianten, tatsächlichen Befehlen und Verweisen. Dieser ausführliche Auftrag gehört beispielsweise nach `docs/execution/PFLEGEHELFER_COMPLETION.md`, nicht als mehrere hundert Zeilen automatisch geladene Duplikate in jede Agentendatei.
+## 3. Baseline audit and concrete inherited findings
 
-Es gibt eine aktive Architektur und einen Produktvertrag. `agent.md`, historische Master-Prompts und ADRs werden auf Widersprüche geprüft. Entweder zusammenführen, auf die kanonische Fassung verweisen oder deutlich als ersetzt archivieren. Architekturentscheidungen nicht rückwirkend umschreiben, um einen Fehler zu verbergen.
+Read all active architecture/product/workflow documents, the existing completion matrix, code on affected paths, migrations and tests. Run the documented baseline before changing behavior. Record actual test coverage, not only counts.
 
-Die aktuelle Entscheidung bleibt: eine zusammenhängende Arbeitssitzung, mehrere berechtigungsgesteuerte Gespräche, ein UI-/Tool-/Freigabe-System. Kein Zurück zu einer einzigen vermischten Patientenchronik und kein zweites Dashboard hinter Feature-Flags.
+Trace these paths end to end:
 
-## 5. UX: professionelles Chat-Produkt statt Formulare mit Chatleiste
+1. JSON/Markdown loading → effective published role/workflow → runtime model request.
+2. Sign-in → effective purpose/role → patient or staff subject → tool permissions.
+3. Conversation and pending draft → correction → final review → command receipt.
+4. Incoming provider data → Medplum → UI; accepted work → remote write → read-back.
+5. Patient/team/staff/HR audiences → search, media, notification, export and revocation.
+6. Handover → plan → interruption → completion/defer → actual receiving shift.
+7. Improvement proposal → reviewed configuration change → activation → measured result.
 
-Pflegehelfer soll die Klarheit aktueller ChatGPT-Oberflächen mit eigener, hochwertiger Markenidentität verbinden. Verwende aktuelle offizielle Referenzen [S01], keine erfundene Behauptung über den neuesten Pixelstand. Unterscheide Web, Mobile und Desktop; kopiere nicht widersprüchliche Plattformmuster. Kein OpenAI-Logo und keine irreführende Produktnachahmung.
+Verify these inherited source-level findings:
 
-### Shell und Navigation
+- `src/core/site-config.ts` currently reads one JSON file at module initialization; roles and provider destinations are enumerated, the department is singular, and `workflows.ts` returns configured descriptions rather than a complete configurable workflow runner. Do not replace this with an arbitrary-code workflow engine; extend reviewed step types and predicates.
+- `tools/pfhctl.ts` currently validates two hard-coded site files instead of an arbitrary pack path.
+- Most non-nursing roles share `support-day`; FaGe and HF/FH are not properly represented as separate configurable profiles.
+- Model prompts remain in TypeScript; developer `AGENTS.md` is not automatically runtime guidance. The gateway's current `classify`/`planCareUpdate` calls do not implement a model-selected sequence of authorized tools with tool-result feedback. Loading Markdown into those calls alone is not completion of the runtime-agent requirement.
+- The proposal verifier still insists on some fixed German messages and handwritten semantic patterns. Do not add more brittle branches as the default response.
+- The migration runner verifies recorded checksums after applying pending SQL. Verify history before ANY new schema/data change, with an explicit safe legacy-attestation path.
+- Clinical reconstruction still depends on the entire application checkpoint. Provider work is not yet fully relational/leased.
+- Shared patient/team/direct ACL threads, real library/media, persistent proposal resumption, production OIDC/RLS and genuine restore are still listed as incomplete.
 
-Desktop: ruhige einklappbare Seitenleiste, breite aber gut lesbare Gesprächsspalte, optionaler Detailinspektor. Mobile: Drawer, kleine Kopfzeile, sichtbarer relevanter Patient-/Audience-Kontext und ein stabiler Composer. Keine zweite permanente Modulnavigation.
+A source-level finding is a hypothesis to reproduce, not evidence that a real production incident happened.
 
-Empfohlene Einträge:
+## 4. Runtime Markdown packs: implement the missing product capability
+
+### 4.1 One authoring format, not parallel configuration systems
+
+Evolve `config/sites` and `PFH_SITE_PACK_PATH`; do not add a disconnected second configuration mechanism. Support importing the current single-file JSON packs through one documented migration. The final normal path loads a directory manifest and referenced instruction files. One immutable published pack is swapped atomically into the registry; a run must not mix a new SITE.md with old policy/workflow metadata. Configuration changes are scoped per institution/site, not mutable globals shared between tenants.
+
+Use this target layout. Names may be normalized consistently, but every listed role and workflow must have substantive guidance and a tested mapping, not empty placeholders.
 
 ```text
+config/sites/
+  tertianum-kronenhof/
+    site.json                         # manifest, references, departments,
+                                      # providers, role-policy bindings, defaults
+    SITE.md                           # operating context and general guidance
+    stations/
+      rehabilitation-2.md
+      long-term-care-1.md
+      # institution-defined units reference their parent department in site.json
+    providers/
+      wicare/PROVIDER.md               # approved supported use/freshness/limitations
+      carecoach/PROVIDER.md            # documentation only, not invented APIs
+      sap/PROVIDER.md                  # installed backend services, not UI automation
+      devices/PROVIDER.md
+      directory/PROVIDER.md
+    departments/
+      rehabilitation.md
+      long-term-care.md
+      nursing.md
+      medical-service.md
+      pharmacy.md
+      therapies.md
+      hotel-service-cleaning.md
+      transport.md
+      administration-finance.md
+      hr.md
+      management.md
+      quality-it.md
+    roles/
+      pflegeassistenz-srk.md
+      ags-eba.md
+      fage-efz.md
+      pflege-hf.md
+      pflege-fh.md
+      pflege-teamleitung.md
+      arzt.md
+      apotheker.md
+      pharma-assistenz.md
+      physiotherapie.md
+      ergotherapie.md
+      logopaedie.md
+      ernaehrungsberatung.md
+      transport.md
+      service-hotellerie.md
+      reinigung.md
+      administration-eintritt.md
+      abrechnung-versicherungskoordination.md
+      heimleitung.md
+      geschaeftsleitung.md
+      finanzen-cfo.md
+      hr.md
+      berufsbildung.md
+      qualitaet-patientensicherheit.md
+      it-integration.md
+    workflows/
+      nursing-early/SKILL.md
+      nursing-early/workflow.json
+      nursing-late/SKILL.md
+      nursing-late/workflow.json
+      nursing-night/SKILL.md
+      nursing-night/workflow.json
+      physician-rounds/SKILL.md
+      pharmacy-review/SKILL.md
+      pharmacy-logistics/SKILL.md
+      therapy-day/SKILL.md
+      transport-day/SKILL.md
+      service-day/SKILL.md
+      cleaning-round/SKILL.md
+      intake-discharge/SKILL.md
+      service-evidence-review/SKILL.md
+      team-lead-shift/SKILL.md
+      home-management-day/SKILL.md
+      finance-review/SKILL.md
+      hr-onboarding-training/SKILL.md
+      education-supervision/SKILL.md
+      quality-review/SKILL.md
+      it-operations/SKILL.md
+      workflow-improvement/SKILL.md
+      ... corresponding workflow.json where executable progression is required
+    references/
+      README.md                       # approved source inventory; no invented SOPs
+      sources.json                    # source IDs, licenses, approval/freshness metadata
+  alpenblick-demo/
+    site.json
+    SITE.md
+    ... independent configuration demonstrating another center
+```
+
+Use a small common `config/assistant/BASE.md` for product interaction instructions and, only where it prevents actual duplication, explicitly referenced `config/shared/` guidance. The BASE file does not replace security code. Its version is reviewed and recorded. Do not load Codex/developer AGENTS.md into the clinical assistant.
+
+Every provider descriptor states the verified operations, source ownership, delays, fallback and escalation from available documentation; endpoints, secrets and mappings are in the manifest/adapter configuration, not invented in prose. A new instance of an existing adapter is configuration; a new undocumented API is not.
+
+`SKILL.md` follows the open Agent Skills packaging convention where practical: `name`, `description`, Markdown body and optional metadata pointing to the workflow definition. Its existence does not automatically integrate with the app; YOU MUST implement the loader and test that approved content reaches the actual LLM request. Do not enable arbitrary `scripts/` execution or rely on experimental `allowed-tools` as a security boundary.
+
+Use one source for each value. Workflow progression lives in its validated definition; role entitlements live in reviewed capability profiles; guidance lives in Markdown. A generated manifest may reference them, but must not contain a competing hand-maintained copy. Shared role-independent guidance can be referenced explicitly; avoid an elaborate inheritance/templating language.
+
+### 4.2 What belongs in files and what does not
+
+Markdown contains institution procedures, department/station practice, role responsibilities, terminology, documentation style, collaboration etiquette, examples and the approved purpose/limits of integrations. Validated metadata contains stable IDs, profile bindings, step types, predicates, supported tool IDs, provider instance references and publication rules. The manifest represents institution → sites → departments → stations/units without creating a custom unlimited hierarchy language. Rooms/beds/current occupancy are operational locations, not Markdown security identities.
+
+Live patients, current staff lists, rosters, qualifications, assignments, conversations, payroll, absence reasons, passwords and tokens DO NOT belong in Git or per-person Markdown files. Import actual identities/assignments from the directory or administer them in the database. The pack references those sources and defines mappings. Synthetic identities may be fixtures stored separately from production configuration.
+
+“Configure staff via Markdown” means define role guidance, approved policy bindings and the directory mapping—not create an editable `nora.md` that grants Nora permissions or contains her private life.
+
+### 4.3 Runtime loading and precedence
+
+At sign-in and every relevant context change, resolve an approved immutable pack version, effective institution/site/department/station, acting role, current workflow/step and permitted skill catalog. Load only the necessary instruction bodies. Initially provide compact skill names/descriptions; a read-only `load_workflow_skill` tool loads the selected approved body by ID. A deterministic required workflow may preload its current skill without an extra model call. Cache by content hash and authorized scope, not globally by role label. Do not include the entire center's SOP library and every role at each request.
+
+There must be no arbitrary filesystem tool in the clinical agent. The loader resolves approved manifest references under a fixed root and checks the published hash/version. A hash alone is integrity evidence, not approval: the active publication record and permissions are required. Unknown/retired/unapproved references fail safely.
+
+The model request should be assembled from:
+
+1. Non-overridable product/safety instructions.
+2. Approved institution, relevant department and station/unit guidance.
+3. Approved role guidance and selected workflow/skill instructions.
+4. Authorized work/session/proposal context.
+5. Bounded clinical or operational tool results, clearly marked as data.
+6. The current employee's request.
+
+No document, profile bio, chat message, attachment or provider text can promote itself into a system instruction. Markdown cannot redefine implemented tool contracts, reveal other users' private material or enable a forbidden operation. Conflicts between machine-readable policy and prose must be rejected or surfaced for publication review; never resolved by silently expanding access.
+
+Validate references, UTF-8, file sizes, duplicate IDs, schema version, dependencies and publication signatures/hashes. Deny path traversal, symlink escape, remote includes, executable MDX/HTML, YAML object constructors and unbounded aliases. No downloads initiated by an instruction file.
+
+Store instruction IDs, pack version and hashes with the request/approval provenance. Do not persist private chain-of-thought or include patient text in debugging logs.
+
+### 4.4 Role identity must be extensible without arbitrary new powers
+
+Replace exhaustive job-title branching with stable configured role/profile IDs built from a SMALL, reviewed catalog of implemented capabilities. Keep forbidden operations absent. Configurable labels are not new clinical licenses.
+
+A site owner can instantiate or narrow a preapproved capability profile. Expanding the central approved ceiling requires a distinct security/professional-governance review, not a normal workflow edit. Publishing a new title cannot bypass this ceiling. Separate qualification, functional role, assignment, delegation and acting purpose.
+
+A person can be both nurse and team lead. Require explicit acting context where the purposes differ; do not union all entitlements into a global superuser. A staff profile's subject is never the executing principal. Use institution-approved capability profiles and contextual constraints rather than replicating professional job titles across route, UI, schema and model enums. Pinned workflow versions preserve continuity, but current permission revocations and security restrictions take effect immediately, including on pending approvals.
+
+### 4.5 Publication and acceptance
+
+Implement:
+
+```text
+Edit Markdown/metadata or describe a change in admin chat
+→ generate a draft diff
+→ validate references/policy
+→ preview actual runtime conversation
+→ run relevant scenarios
+→ responsible person approves
+→ publish immutable version
+→ activate for NEW sessions
+→ compare outcomes / roll back deliberately
+```
+
+Do not hot-read unreviewed file edits into active care. Do not claim Markdown is executable merely because it is listed in a manifest.
+
+Mandatory proof: change a late-shift Markdown instruction to present unresolved team questions first; show the exact approved body/hash in the model-request test, demonstrate its user-visible effect, and prove that editing it cannot grant permission. With AI disabled, executable workflow metadata still drives the safe step order.
+
+Structural change such as moving a required step is made in validated metadata through the same review. Prose-only edits change guidance, not secretly executable security rules.
+
+### 4.6 Concrete authoring example and proof of execution
+
+Use plain human-readable guidance such as this illustrative `roles/fage-efz.md` body:
+
+```markdown
+# FaGe EFZ — working guidance
+
+Begin with the assigned shift handover and the tasks already authorized for me.
+Explain changes briefly, preserve uncertainty, and ask only for missing information.
+When I report work, show what you understood and which existing tasks it affects.
+Keep incomplete work open. Offer the responsible nursing contact when I ask for help.
+My actual permissions come from my approved profile, qualification and assignment,
+not from this document. Do not diagnose, prescribe or invent performed work.
+```
+
+A role guide can use approved German in the deployed pack. An illustrative portable workflow instruction file is:
+
+```markdown
+---
+name: nursing-late
+description: Guide an assigned employee through the approved late-shift workflow.
+metadata:
+  pflegehelfer-definition: workflow.json
+---
+
+# Spätdienst
+
+Show the authorized unanswered team questions first, then the incoming handover.
+Offer “Kurzfassung” and “Vorlesen” using the same approved source content.
+After the required handover checks, show the actual remaining work and appointments.
+Keep the conversation natural. Preserve paused work when another room needs attention.
+At shift end identify unresolved responsibilities; never invent completion.
+```
+
+The corresponding `workflow.json` owns actual allowed step order, predicates and transitions. The prose must agree with it. If a manager asks to put questions before handover and that changes a mandatory step sequence, draft BOTH the required metadata change and its explanation for review. Do not claim a prose edit changed enforced workflow order when only a greeting changed.
+
+Keep the site's manifest responsible for selecting the role/profile/workflow references. Do not duplicate the same role eligibility list in every file. The runtime context test must inspect the actual outbound adapter request, not just test that a file was read somewhere.
+
+### 4.7 The reads / uses / proposes / records contract
+
+For each role workflow document:
+
+- **reads:** which authorized source/tool results it needs;
+- **uses:** which approved skill/reference version guides the interaction;
+- **proposes:** which draft outputs and requests it may prepare;
+- **human reviews:** which actor reviews which content/audience;
+- **records/delivers:** which backend command and destination own the accepted result.
+
+Example intake:
+
+```text
+site manifest selects intake-discharge skill
+  → reads existing admission + approved document references through tools
+  → uses approved required-information list
+  → proposes missing/conflicting items in GenUI
+  → staff reviews and supplies only gaps
+  → stores revision/approval in PostgreSQL
+  → delivers permitted DocumentReference/clinical changes through adapters
+```
+
+The production equivalent of `request.md`/`gaps.md` is usually a scoped record/view, not a patient file on disk. An exported report can be an authorized document artifact without becoming the live state store.
+
+Provide a plain-language admin assistant that drafts changes to the same Markdown/metadata sources. It must show exactly what text, mandatory transitions, routing and permissions would change. A prose request cannot silently change a capability ceiling. New workflow using existing capabilities is configuration-only; new action semantics or a new provider protocol require reviewed implementation and tests.
+
+## 5. Every Swiss role needs a useful, distinct working session
+
+Research current official Swiss role/training descriptions and the actual institution's approved responsibilities before finalizing production profiles. Use BAG, SRK, OdASanté/SBFI, relevant professional bodies and cantonal/institution rules as appropriate. Record sources and disagreements. General federal descriptions do not supply a universal activity-permission matrix.
+
+The following are synthetic defaults to IMPLEMENT and test, not legal role grants:
+
+| Profile                                | Guided day and useful outputs                                                                                                                          | Important boundary                                                                                                                              |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pflegeassistenz / Pflegehelfende SRK   | Handover → assigned basic support/personal care → report performed work and observations → questions to responsible nursing → transfer unfinished work | Activities/measurement entry only under institution-approved competence and assignment; no prescribing or independent treatment decisions.      |
+| AGS EBA                                | Assigned care, everyday support and logistical tasks → evidence → escalation                                                                           | Separate qualification profile; do not equate with FaGe or HF/FH.                                                                               |
+| FaGe EFZ                               | Handover → assigned nursing/medical-technical work within approved competencies → documentation → team coordination → handover                         | Not an alias of SRK or HF; medication context is read-only in this product's initial scope, regardless of what the profession may do elsewhere. |
+| Pflegefachperson HF                    | Handover → nursing coordination and existing care priorities → review/escalation → rounds collaboration → responsibility transfer                      | New clinical judgments are made by the qualified human, not by the general assistant.                                                           |
+| Pflegefachperson FH                    | Equivalent product workflow with separately represented qualification and local responsibility                                                         | Do not invent an HF/FH hierarchy of legal permissions solely from educational labels.                                                           |
+| Pflege-Teamleitung / Schichtleitung    | Team brief → coverage/assignment review → unowned or blocked responsibilities → authorized delegation → shift transfer                                 | Operational leadership is not access to employees' private assistant histories or unrestricted patient charts.                                  |
+| Ärztlicher Dienst                      | Addressed team questions → source-linked rounds queue → response/decision documentation → follow-up owners → closure                                   | No AI-authored diagnosis/prescription; formal orders remain in the verified authorized system.                                                  |
+| Apotheker/in                           | Existing medication lists and discrepancies → reconciliation/review questions → attributed response → outstanding items                                | No automatic medication changes.                                                                                                                |
+| Pharma-Assistent/in / pharmacy support | Supply/preparation/logistics queue → completion/exception → pharmacist handoff                                                                         | No independent pharmacist authority; exact local responsibilities must be verified.                                                             |
+| Physio / Ergo                          | Appointments → current authorized changes and goals → intervention reported by therapist → outcomes → follow-up                                        | Do not infer clinical treatment from an LLM plan.                                                                                               |
+| Logopädie / Ernährungsberatung         | Profession-specific schedule and authorized existing plans → session notes → questions → coordination                                                  | Show only relevant information; preserve existing human-approved swallowing/diet instructions without inventing recommendations.                |
+| Transport                              | Transport queue → minimum identity/destination/assistance requirements → pickup/completion/exception                                                   | No broad diagnoses, reports, pharmacy details or private family messages.                                                                       |
+| Service / Hotellerie                   | Team brief → meals/room/service work → requests → completion → exception                                                                               | Only operationally necessary preferences and approved instructions.                                                                             |
+| Reinigung                              | Scheduled and requested room work → approved hygiene procedure → completion/room-release status → issues                                               | Necessary precautions without unrestricted diagnosis access; no sensor-based productivity surveillance.                                         |
+| Administration / Eintritt / Austritt   | Existing intake import → missing administrative data → documents/coverage/appointments → tracked requests                                              | No clinical sign-off merely because intake is administered.                                                                                     |
+| Abrechnung / Versicherungskoordination | Approved service evidence → gaps/duplicates → reviewed export → rejection resolution                                                                   | No invented care/time or automatic billing from tags. External insurers are separate authorized recipients, not internal superusers.            |
+| Heimleitung                            | Operating brief → coverage, unresolved operational requests, quality exceptions → approved changes → progress review                                   | Minimum necessary individual work info for defined responsibilities; no private transcripts or default clinical access.                         |
+| Geschäftsleitung / CEO                 | Aggregated institutional brief → decisions, owners and improvement review                                                                              | Seniority does not grant unrestricted patient or HR case access.                                                                                |
+| Finanzen / CFO                         | Completeness and approved financial/process aggregates → reconciliation → planned review                                                               | No autonomous tariff decisions or unexplained revenue projections.                                                                              |
+| HR                                     | Employee onboarding/offboarding, required documents, training/qualification expiry and approved requests → assignment to owners → completion           | Personnel confidentiality; no patient access or clinical chat-mining; no automatic hiring, disciplinary or dismissal decisions.                 |
+| Berufsbildung                          | Authorized onboarding/training tasks → supervision appointments → human-reviewed learning records                                                      | Distinguish student/supervisor permissions; do not treat general work telemetry as a competence assessment.                                     |
+| Qualität / Patientensicherheit         | Authorized incident/review queue → source examination → reviewed improvement → closure                                                                 | Separate case access and purpose; no ability to rewrite original staff evidence.                                                                |
+| IT / Integration                       | Service health → failed jobs → scoped diagnosis of integration faults → controlled resolution                                                          | Technical admin is not clinical sign-off or access to all HR/private content.                                                                   |
+
+Specialist intensive-care/emergency departments may use configurable briefing, logistics, rounds and documentation workflows. Existing certified alarms/monitoring/PDMS remain primary. Do not add autonomous acuity sorting or emulate a PDMS under this task.
+
+Each role Markdown must contain: purpose, audience, first step, recurring responsibilities, permitted read context, typical proposed outputs, escalation destination, closure/handover behavior, prohibited inferences, terminology, realistic positive/negative examples and links to approved sources. Each enabled role gets at least one meaningful end-to-end scenario. Do not satisfy this with the same three generic steps and a different heading.
+
+Implement workflow variation through reusable step types, data queries and Markdown—not a custom TypeScript workflow per profession. Scheduling/payroll/HR vendors remain authoritative where present; do not rebuild a whole ERP to demonstrate HR onboarding and operations.
+
+## 6. One working session; several explicit conversation scopes
+
+Use one chat renderer, one composer implementation, one context service and one command pipeline. Support these logical scopes:
+
+- **General assistant:** private to the employee; their current authorized workday.
+- **Patient assistant:** private conversation about one patient and encounter.
+- **Patient-team:** shared treatment-team discussion with explicit membership/audience.
+- **Department/team:** shared operational collaboration for that team.
+- **Direct colleague conversation:** messages between named authorized participants.
+- **Staff-context assistant:** requester's private assistant view concerning a colleague's permitted profile/work responsibilities; NOT access to that colleague's private assistant.
+- **Restricted personnel case:** HR workflow with distinct purpose/audience, only when enabled; never the public staff profile.
+
+Use existing thread tables and explicit membership/subject fields; do not implement six unrelated chat products. Reuse schemas where correct but never equate all audiences.
+
+Every message, proposal, tool result, recording, attachment, event and draft carries origin institution/site, department where applicable, thread, actor, subject kind/reference, encounter where applicable, audience and context revision. General handover can fetch multiple authorized patients intentionally; random prior patient chat must not become global memory.
+
+A scope change preserves useful drafts, scroll position and work continuity but revokes outdated executable authority. A later response is attached to the scope captured when the request began. Two tabs can use different subjects safely; a shared mutable “current patient” cannot silently retarget their requests. Require per-tab/per-request scope/version confirmation and explicit conflict handling.
+
+Never restore a live action token merely from an old chat message. Restore a proposal, reload permitted source state, revalidate and issue fresh review authority.
+
+## 7. Patient profile/work chat: familiar contact, not simulated patient
+
+Selecting a patient opens their private assistant conversation, with a compact contact-style header:
+
+```text
+[Photo/initials] Anna Beispiel · Zimmer 001
+Geburtsdatum · aktiver Aufenthalt
+Pflegehelfer zu Anna · Nur meine Assistenz
+
+[Chat] [Profil] [Verlauf] [Werte] [Team] [Mehr]
+```
+
+Use a permitted source photo or initials; no scraped patient photos or AI-generated likeness of a real person. Photo and room do not replace independent identifiers. Clicking the header expands a read-only profile inspector/sheet using the same source records.
+
+Profile sections: preferred name/language, approved short biography and care preferences, communication/accessibility needs, current encounter/location, documented diagnoses, allergies with explicit known/unknown/negative state, existing care/rehab goals, tasks/appointments, values, medication context, documentation timeline and authorized files.
+
+Do not infer habits, personality, diagnoses or treatment from the image or biography. Existing clinical information remains attributed, timestamped and versioned. Medication order, administration, reported use and reconciliation discrepancy are not one undifferentiated list. No generic medication editor.
+
+Provide useful quick lenses without making users repeatedly ask the same query. A true time-series chart uses timestamps and units, an accessible table, source freshness and separate pending/corrected states. Do not draw equally spaced time points unless the graph explicitly represents measurement order. Avoid invented trend/normality judgments.
+
+**Presence rule:** patients are not messaging contacts in this initial product. Show “System verbunden”, “Datenstand 08:42” or “Übertragung ausstehend” in the system area, not “Anna online”. The AI author remains Pflegehelfer, never the patient.
+
+The Team lens explicitly changes audience. Publishing private content requires a visible content/audience preview. A profile is a view, not a new clinical data authority.
+
+## 8. Staff profiles and chats: implement the requested feature without impersonation
+
+Selecting Nora, a team lead or Heimleitung opens a contact-style STAFF workspace with:
+
+- authorized profile image/initials and display name;
+- institution/site/team, professional and functional role;
+- work contact details, short approved professional bio and relevant directory information;
+- permitted shift/duty responsibility and routing information;
+- a clearly labelled system connection indicator, optional permitted availability and freshness;
+- three explicit modes: **Assistenz zum Arbeitskontext**, **Gemeinsame Arbeit/Plan**, **Direktnachricht**.
+
+### Assistenz zum Arbeitskontext
+
+Pflegehelfer answers the REQUESTER from records the requester is allowed to access. A team lead can ask about Nora's assigned open responsibilities only where the configured supervisory relationship and purpose permit. It must not read Nora's private assistant transcript, unsent drafts, personal memory or unrelated DMs. It does not become “Nora's AI twin”.
+
+A clinical manager may see appropriately scoped clinical responsibilities. A Heimleitung without clinical access sees the permitted operational summary, not patient details obtained indirectly through Nora's task list. HR access does not imply patient access. Directory access does not imply work-detail access. Do not query a broad dataset and rely on the model to redact it.
+
+### Gemeinsame Arbeit/Plan
+
+Use the same task/assignment records as the employee's own workday. Show role-appropriate status, owners, planned times and explicit exceptions. Updating an assignment requires authorized review, version checks, a reason when appropriate and notification/acceptance under local policy. Past completed work cannot be silently edited by a manager. A question about someone's work is not permission to change it.
+
+### Direktnachricht
+
+Clearly indicate that sending contacts the real person or duty queue. The actual authenticated sender authors the message. AI-assisted text remains a draft until the sender chooses Send. Replies are human-authored and separately identifiable. An explicitly simulated teammate in the demo must be visibly labelled as a simulator.
+
+“Ask Pflegehelfer about Nora” and “Send to Nora” must never be visually interchangeable. Switching into DM must not send prior assistant text or include private context automatically.
+
+### Staff example
+
+```text
+Heimleitung opens Nora's profile → Assistenz zum Arbeitskontext
+“Welche organisatorischen Aufgaben warten heute auf Nora?”
+
+Pflegehelfer retrieves permitted published work only:
+“Zwei offene Aufgaben in deinem Zuständigkeitsbereich.
+Eine Rückmeldung zur Dienstkoordination und eine Schulungsbestätigung.”
+
+[Öffnen] [Nora schreiben]
+
+Selecting “Nora schreiben” opens a DM draft with visible audience.
+The system never quotes Nora's private assistant conversation.
+```
+
+### Privacy and presence
+
+Default to duty/availability labels such as “im Dienst”, “abwesend”, “Status unbekannt”, with source and freshness. Never expose the reason for absence to a general directory viewer. Private health, personnel disputes, compensation and performance evaluations belong in specifically authorized systems/scopes.
+
+Connection heartbeat, scheduled duty and willingness to receive a message are distinct. Optional online status must use actual consented/permitted signals with short expiry; no invented status and no continuous presence-history analytics. “Offline” does not imply unreachable or not working. Disable typing/read receipts where institution policy requires. Read/display does not imply responsibility accepted.
+
+A Call action can launch the approved phone/telephony integration through explicit user action. Do not build a conferencing stack, auto-dial, record calls or claim a functioning connector that does not exist.
+
+## 9. General chat, sidebar and real navigation functions
+
+Preserve one modern assistant shell. Recommended staff sidebar:
+
+```text
+Pflegehelfer                       [collapse]
+Tertianum Kronenhof · Demo
 Suche
 Mein Assistent
 Geplant / Arbeitsplan
-Team / Erwähnungen
+Team & Erwähnungen
 Bibliothek
   Dokumente
   Bilder
-Zugewiesene Patienten / Bewohnende
+Patienten / Bewohnende
+Mitarbeitende / Dienstkontakte
 Angeheftet / Verlauf
-Profil / Darstellung
-Administration nur bei Berechtigung
+Profil · Darstellung
+Administration (authorized only)
 ```
 
-`Mein Assistent` öffnet den allgemeinen privaten Thread direkt. Er sendet nicht nur „Übergabe“ in einen weiterhin aktiven Patientenchat. `Geplant` öffnet einen tatsächlichen Arbeitsplan aus Aufgaben/Terminen. `Bibliothek` durchsucht und öffnet echte autorisierte Ressourcen statt eine allgemeine SOP-Frage zu senden. Eine als Gesprächssuche beschriftete Suche muss auch berechtigte Gespräche durchsuchen; sonst korrekt als Patientensuche benennen.
+Role-specific visibility matters: HR has no clinical patient list; service gets its permitted queue/context. Do not show every feature to everyone merely disabled.
 
-Patienten öffnen einen privaten Assistenzthread **über** diese Person. Das Patientenbild ist Identitätshilfe, nicht Avatar einer imitierenden Patienten-KI. Kein „online“, „tippt“, erfundener Patientendialog, Social-Media-Ranking oder Feed. Die Arbeits-/Schichtfortschritte bleiben beim Threadwechsel bestehen.
+`Mein Assistent` switches to the general private thread before displaying general work. `Geplant` is an actual plan, not a label sending “What is open?” into the wrong patient chat. `Bibliothek` retrieves real documents. Staff-profile navigation returns the intended subject and never destroys a paused patient episode. Search covers only the types it advertises and checks permission before returning hits, counts or snippets.
 
-Kontexttabs wie Chat, Profil, Verlauf, Werte, Team und Mehr benutzen dieselben Daten und Dienste. Teamtab ist ausdrücklich ein anderer Empfängerkreis. Vor Veröffentlichung privater Inhalte Audience anzeigen und prüfen lassen.
+Patient/staff tabs are lenses and explicitly scoped conversations, not separate duplicated engines. Technical Medplum/provider consoles are expert tools. Ordinary Details opens a clear Pflegehelfer view; expert links require separate authorization and cannot bypass clinical review.
 
-### Keine visuelle oder funktionale Verdopplung
+## 10. Visual design and visual inspection are deliverables
 
-Eine Aktion erhält einen dauerhaft auffindbaren Status, nicht gleichzeitig Toast, Banner, Chatkopie und weitere identische Karte. Vollzogene Anfragen kompakt zusammenfalten statt beim Wiederöffnen erneut abzuspielen. Referenzen auf denselben Bericht in Plan, Profil und Team sind keine mehrfach gespeicherten Berichte.
+Use current official ChatGPT web/mobile references and the existing OpenUI/Vercel-style patterns as design references. Record the actual reference and date. Do not claim a “latest pixel-perfect ChatGPT clone” or copy trademarks. The product should have comparable clarity, spacing, restrained navigation and fluid composer behavior with its own identity.
 
-Ein Patientenwechsel stellt dessen Scrollposition, erlaubte Entwürfe und Eingabe wieder her. Ein neuer Teamhinweis springt nicht ungefragt in einen anderen Raum und reisst den Lesefokus nicht weg.
+The requested visual direction is white/near-black, pharmaceutical blue and restrained red, supporting system/light/dark. Build ONE semantic token system. Standard actions use blue or neutral; red retains urgent/error meaning. Status always has text/icon, not color alone.
 
-## 6. Designsystem: Pharma-Blau, Rot, Weiss/Schwarz und kontrolliertes Glas
+Keep the original blue geometric Edelweiss and negative-space plus. Refine one canonical SVG source for 16/24/32px and launcher sizes, with unique mask IDs and proper theme contrast. Red can be a separate accent, not a protected red-cross imitation or official Swiss shield. Do not claim legal clearance from a color change; public brand review remains separate. Use no official Tertianum logo.
 
-Das Design soll handwerklich hochwertig und präsentationsstark wirken. „Awwwards-artig“ ist ein Qualitätsanspruch an Typografie, Abstände, Materialwirkung und Details, keine Verpflichtung zu Animationen oder ein behaupteter Award.
+Use a single maintained SVG icon set with consistent stroke/size; remove emoji/Unicode substitutes for core navigation. Give accessible labels to microphone, send, stop, listen, pause, expand, attachment, search, contact, assign, reply, approve and discard. Typical bedside targets should be 44–48 CSS pixels as a design goal; accurately test applicable WCAG requirements rather than claiming this is every criterion's minimum.
 
-**Eine** semantische Tokenbibliothek für Light, Dark und System. Nutze Weiss/leichtes Neutral als helle Grundfläche, Near-Black als dunkle, gut kontrastierendes Blau für primäre Interaktion und zurückhaltendes Rot für Marke bzw. ausdrücklich dringende/fehlerhafte Zustände. Erfolg kann ein kleines neutrales oder grünes Signal haben; nicht jede akzeptierte Dokumentation muss grossflächig grün sein.
+Glassy depth is allowed on the drawer/composer/toolbar only when it adds useful hierarchy. Use controlled blur, subtle light edges and static inexpensive effects. Clinical data, medication lists, tables and approval surfaces stay sufficiently opaque. No animated refraction behind numbers, heavy WebGL or decorative motion. Provide reduced transparency, reduced motion and forced-color/high-contrast support. Measure mobile rendering costs.
 
-Glas ist jetzt ein gewünschtes Material, aber nur dort, wo es verständliche Ebenen unterstützt: beispielsweise Drawer, Composer-Rand oder kompakte Werkzeugleiste. Erzeuge eine glaubhafte subtile Wirkung durch stabile Hintergründe, feine Lichtkante, zurückhaltende Unschärfe und sparsame Schatten. Keine verzerrten Buchstaben, Flüssigkeitsanimation über Zahlen, farbigen Reflektionen unter Medikamenten oder permanent animierten Shader/WebGL-Flächen.
+Composer requirements: auto-grow, multiline, clear send vs dictation vs listening state, cancellation, safe-area/virtual-keyboard handling, no hidden truncation and no text loss during subject switching. Do not automatically summon the keyboard when opening a profile. Keep source/patient/audience identity visible without a giant header.
 
-Klinische Inhalte, Messwerte, Tabellen, Warnhinweise und Freigaben stehen auf ruhigen ausreichend deckenden Flächen. Höchstens wenige gleichzeitige Glaslagen; mobile GPU-Kosten messen. Biete „Reduzierte Transparenz“ als Einstellung und deckenden Fallback; respektiere `prefers-reduced-motion`, erkannten Kontrastbedarf und Forced Colors. Kontrast über dem tatsächlich zusammengesetzten Hintergrund prüfen, nicht nur Tokenfarben vergleichen. WCAG 2.2 AA anstreben [S02]; funktionale Information nie nur farblich vermitteln.
+Use compact progressive disclosure. Do not repeat the same approval in a toast, banner, chat bubble and profile card. Show one durable status with links to detail. Preserve scroll position; incoming messages never hijack the active subject. No blank cards or “coming soon” buttons presented as completed functionality.
 
-Verwende eine konsistente gepflegte SVG-Icon-Bibliothek, möglichst die bereits verwendete. Keine Mischung aus Emoji, Unicode-Hamburgern und unterschiedlichen Strichstärken. Eindeutige Symbole für Suche, Mikrofon, Senden, Stop, Vorlesen, Pause, Ausklappen, Anhang, Kalender, Patient, Team, Bearbeiten, Verwerfen und Status. Icon-only-Buttons erhalten zugängliche Labels; wichtige seltene Aktionen zusätzlich Text. Praktisches Bedienziel 44–48 CSS-Pixel, ohne das fälschlich als universelle WCAG-Mindestregel zu bezeichnen.
+**Visual test matrix:** 360×800, 390×844, tablet portrait/landscape, 1024px and 1440px; system/light/dark, 200% zoom, keyboard navigation, reduced transparency/motion and virtual keyboard. Inspect screenshots and actual interaction after every UI slice. Check text contrast over actual composited backgrounds, focus order, menus, labels, tooltips, reading order and no horizontal overflow.
 
-Composer: automatische Höhe, Spracheingabe auch bei vorhandenem Text, Aufnahme-/Sendestatus, Abbrechen, kein Abschneiden mit virtueller Tastatur, safe-area und `dvh`, keine ungewollte Tastatur beim Patientenwechsel. Keine stille Kürzung langer Diktate. Kontextchips dürfen Eingabe- und Sendenflächen nicht überdecken.
+A screenshot that looks good is not proof of correct function; a passing Playwright selector is not proof of good design. Record both.
 
-### Marke
+## 11. Handover: exact content, useful guidance and human acknowledgment
 
-Bestehenden eigenständigen blauen Edelweiss-/Negativraum-Plus-Entwurf beibehalten und verfeinern. Eine kanonische SVG-Quelle, korrekte eindeutige Masken-IDs, Favicon und maskierbare PWA-Icons. Auf 16/24/32 Pixeln sowie in beiden Themes prüfen.
+Start the configured nursing shift with its actual incoming handover, not a marketing introduction or fixed “step 1 of 10”. If none exists, state that and provide an authorized recovery path rather than invent a prior report.
 
-Kein rotes Kreuz auf Weiss, kein offizielles Schweizer Wappen und keine amtliche Anmutung. Rot bleibt getrennte Akzentfarbe. Auch andere Farben sind keine automatische rechtliche Freigabe; Verwechslungsgefahr prüfen und vor Veröffentlichung entsprechend bewerten [S03]. Keine offiziellen Tertianum-Markenassets ohne Erlaubnis.
+Provide a compact roster with expand/collapse and these four sections per patient:
 
-## 7. Realistische synthetische Demo statt sieben voneinander isolierter Beispielsätze
+1. **Kurzprofil / Achtung:** relevant documented diagnoses/care context and confirmed existing precautions.
+2. **Seit der letzten Schicht:** source-backed changes, performed work and reported outcomes.
+3. **Offen / ungeklärt:** questions, missing information, pending reports and ownership gaps.
+4. **Nächste Schicht:** actual tasks with owner, time/window, reason/source and dependencies.
 
-Baue einen deterministisch reproduzierbaren Demodatensatz, standardmässig etwa zwölf fachlich stimmige Personen mit zunächst sechs zugeteilten Patienten in der Referenzschicht. Zusätzlich Testprofile mit null, zwei und zwölf Zuteilungen; nie eine feste Sechserzahl im Anwendungscode. Alle Daten, Mitarbeitenden, Dokumente, Anordnungen und Telefonnummern sind erfunden und als synthetisch gekennzeichnet.
+Distinguish no new entry from no symptoms. “What to watch” comes from an existing human-approved plan or explicit staff instruction, not new model triage. Show newer unverified reports visibly alongside previous confirmed facts; do not conceal them under an older normal value.
 
-**Institution:** `Tertianum Kronenhof · Demo`. Gut sichtbarer, aber nicht überall wiederholter Hinweis: keine offizielle Installation oder Empfehlung, keine echten Patientendaten eingeben. Ein zweiter unabhängiger fiktiver Standort hat andere Abteilungen, Schichten und Provider-Routen.
+Persist exact content, patient/encounter IDs, source/version read-set, cutoff, task ownership and snapshot digest. Preserve the current snapshot improvements. New information creates an append-only addendum with appropriate acknowledgment; do not silently rewrite an acknowledged snapshot. Record receipt/transfer explicitly; listening is not comprehension and acknowledgment is not performed care.
 
-Nutze einen eingefrorenen Demo-Ausgangszeitpunkt und einen steuerbaren Szenariotakt. Zeige die Simulationszeit. Im Produktivmodus sind diese Steuerungen deaktiviert. Beispieldaten beim täglichen Reset nicht still als neu erhobene reale Messungen umdatieren.
+Support partial acceptance, questions and late-arriving staff. Routine progression can require the defined handover checks, but never block established emergency communication or legitimate urgent work until every patient has been acknowledged. Such interruption is explicit and leaves the unreviewed roster visible.
 
-### Vorgeschlagene Fallvielfalt
+TTS reads the frozen visible content, with pause/repeat/speed/stop and optional section focus using actual segment data. A question can pause the readout and return to the same point. Playback cannot trigger microphone-derived approval. A voice “verstanden” must be deliberately captured and bound to the displayed item; higher-assurance signatures are not silently inferred from ambient speech.
 
-Die folgenden Geschichten sind Autorenvorgaben für Fixtures, keine medizinischen Empfehlungen:
+## 12. Handover → plan → work → interruptions → next shift
 
-| Synthetische Person | Bereits dokumentierter Ausgangskontext                                                               | Damit nachzuweisender Ablauf                                                      |
-| ------------------- | ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| Anna Beispiel       | Rehabilitation nach versorgter Hüftfraktur; Mobilitätsziel und Hilfebedarf im bestehenden Pflegeplan | Morgendliche Unterstützung, Therapieabhängigkeit, Rückfrage, Unterbrechung        |
-| Luca Demo           | Rekonvaleszenz nach Pneumonie; bereits dokumentierter Diabetes Typ 2                                 | Mahlzeit/Trinkmenge, Teilabschluss, Mengenberichtigung ohne Behandlungsvorschlag  |
-| Mei Muster          | Bekannter Schlaganfall mit dokumentierten funktionellen Einschränkungen                              | Therapiekoordination und exakt übernommene Hilfsmittel-/Kommunikationshinweise    |
-| Jonas Beispiel      | Dokumentiertes Parkinson-Syndrom                                                                     | Geplante Hilfe, Pausierung, spätere Fortsetzung entsprechend bestehendem Plan     |
-| Eva Demo            | Bereits dokumentierte kognitive Einschränkung                                                        | Biografie/Routinen, Angehörigenfrage, keine Persönlichkeitsdiagnose durch KI      |
-| Samir Muster        | Nachbehandlung bei bekannter Herzinsuffizienz                                                        | Quellengebundener Messverlauf und Medikationsabgleich, kein neues Dosieren        |
-| Ruth Beispiel       | Bekannte Arthrose und dokumentierte chronische Beschwerden                                           | Schmerzbericht mit Verneinung/Zeitbezug und menschlicher Rückmeldung              |
-| Paul Demo           | Rehabilitation nach Knieoperation                                                                    | Termin/Transport, vorhandener Wundbericht, freigegebene synthetische Bildreferenz |
-| Aline Muster        | Französische Hauptsprache, dokumentierter Unterstützungsbedarf                                       | Mehrsprachige Oberfläche/Transkription und Therapietermin                         |
-| Theo Beispiel       | Bekannte COPD                                                                                        | Bestätigte Messwerte plus gesonderter unbestätigter Testwert, keine KI-Triage     |
-| Mila Demo           | Dokumentierte Seh-/Höreinschränkung                                                                  | Zugängliche Kommunikation, Service mit minimalem Kontext                          |
-| Noah Beispiel       | Wiederaufnahme nach früherem abgeschlossenen Aufenthalt                                              | Derselbe Patient, neuer Encounter; alte Chats/Entwürfe nicht umhängen             |
+Derive the work plan from assignments, existing care/therapy plans, appointments, accepted carry-over and explicit spontaneous tasks. Keep patient appointments, staff roster and individual work plan conceptually distinct.
 
-Jedes Profil enthält plausible Stammdaten, Encounter/Standort, dokumentierte Diagnosen mit Status/Quelle, Allergiestatus, vorhandene Medikation nur lesbar, Pflege-/Rehaziele, Hilfsmittel, Kommunikationsbedürfnisse, Termine, Aufgaben, 1–2 Wochen zeitlich konsistente Ereignisse und mindestens eine relevante Quellverknüpfung. Nicht jede Person benötigt jede denkbare Diagnose.
+Each plan row contains patient/room, time window, actual activity, reason/order reference, accountable role/person, prerequisites/assistance and status. The model may explain an order suggested from published operational constraints; it cannot invent clinical priority from diagnoses or vital signs. Infeasible double staffing/appointments must be visible rather than silently overbooked.
 
-Medikamente und pflegerische Vorgaben nur als fachlich überprüfte **vorgegebene** Fixture-Daten. Keine LLM-generierten Behandlungsempfehlungen als Ergebnis des Produkts darstellen. Kodierte Diagnosen/Assessments nur mit verifizierten, zulässigen Begriffen; nicht aus dem Gedächtnis Codes erfinden. Lizenzpflichtige interRAI-/BESA-/LEP-Inhalte nicht kopieren. Beispielschema ohne geschützte Fragebögen genügt, solange keine Zertifizierung behauptet wird.
+Starting an activity opens the correct patient/encounter episode. Pausing, resuming, completion, partial completion, deferral, cancellation and transfer have explicit meanings. Merely viewing another profile does not start/stop a care timer. A stopped timer is not evidence of care. Legitimate handover of unfinished work must be possible without falsely completing it.
 
-Avatare dürfen neutrale Illustrationen/Initialen sein. Keine Fotos realer Pflegebedürftiger aus dem Web. Keine medizinischen Originalbilder manipulieren. Datensatzprüfungen müssen Referenzen, Alter, Zeitfolge, Encounter, Negation, Medikationslisten und absichtlich eingebaute Konflikte prüfen; gewollte Konflikte sind ausdrücklich markierte Testfälle.
+Example: “Luca beim Waschen geholfen, zum Frühstück begleitet, fast alles gegessen, etwa 200 ml getrunken. Gewicht später.” Prepare only supported relevant changes. Retain approximation. Defer the existing weight task. Do not invent a measurement or a follow-up. Structured fluid balance is used only when that supported data type/mapping exists; otherwise preserve the report honestly.
 
-## 8. Rollen fachlich unterscheiden, ohne ein universelles Schweizer Berufsrecht zu erfinden
+On nurse-call mirror interruption, preserve the original episode and show a return path. The primary alarm remains independent. The day remains open after the planned morning list, supporting family requests, toileting, transport, documentation and unplanned work.
 
-Konfiguriere reale unterschiedliche Demonstrationsabläufe für Pflegehelfende SRK/Pflegeassistenz, AGS falls aktiviert, FaGe EFZ, Pflegefachpersonen HF/FH, Ärztinnen/Ärzte, Apothekerinnen/Apotheker, pharmazeutische Unterstützung, Physio/Ergo/Logopädie, Transport, Service/Reinigung, Administration/Abrechnung, Heimleitung, HR, IT sowie Qualität.
+At shift close reconcile unapproved proposals, unsent records, deferred responsibilities and unanswered questions. Reuse approved records instead of generating duplicates. Receiving duty person/team acknowledges the precise outgoing responsibilities. Track unaccepted transfer and an institution-approved escalation without assigning to the first user in a list.
 
-Nicht nur neue Rollenlabels über identischen Rechten anlegen. Eine Pflegefachperson kann je nach Konfiguration koordinieren/prüfen; FaGe und Pflegeassistenz haben eigene Kompetenz-/Delegationsprofile. Pharmazieprüfung und Logistik sind getrennt. Management sieht standardmässig aggregierte Betriebsinformationen; HR keine Patientenakte; IT keine automatische fachliche Schreibberechtigung. Versicherungsakteure wären eine eigene externe, minimal berechtigte Audience, nicht interne Mitarbeitende.
+Account for Europe/Zurich time, DST, overnight shifts, multi-role assignments and staff covering more than one department. Do not compute an overnight shift solely from today's calendar date and a fixed global activeShiftId.
 
-Berechtigung ergibt sich aus Identität, Institution, Abteilung, Funktion, Qualifikation/individueller Freigabe, Auftrag/Delegation, Behandlungsbeziehung, Zweck, Aktion und aktuellem Zustand. Titel oder Markdown erteilt keine Rechte. Schweizer konkrete Tätigkeitsgrenzen müssen institutions- und gegebenenfalls kantonsspezifisch bestätigt werden [S04]. Alle Demo-Rechte tragen den Hinweis „synthetische Organisationsregel, nicht universelle Berufsbefugnis“.
+## 13. A genuine bounded agent, not an MD-wrapped intent classifier
 
-Ein nicht zugeordneter oder dienstfremder Mitarbeiter erhält eine zulässige Klärungsmöglichkeit, nicht automatisch den ersten Patienten. Pflegefreigaben benötigen keine universelle Vier-Augen-Pflicht; zusätzliche Prüfung erfolgt nur nach veröffentlichter sachgerechter Regel. Passkey/MFA bestätigt Identität bzw. Assurance, nicht die medizinische Wahrheit und nicht automatisch eine qualifizierte elektronische Signatur.
+### 13.1 Runtime responsibilities
 
-## 9. Übergabe als echter geführter Arbeitsbeginn
+Implement one reusable agent runtime whose model can choose permitted read/prepare tools, inspect their actual results, decide whether another read or clarification is needed and produce a grounded answer or editable proposal. Do not make the normal natural-language path a compulsory `intent enum → fixed card → fixed sentence` pipeline.
 
-Nursing startet automatisch in der richtigen bestehenden/neu zugeteilten Sitzung. Kein Blank Chat, kein Marketingtext und kein fest codiertes „Schritt 1 von 10“ bei jeder Anmeldung. Falls keine Übergabe vorliegt, das ehrlich anzeigen und keinen fiktiven Nachtdienstbericht erzeugen.
+The model decides **how to investigate and communicate within the granted scope**. The deterministic workflow service decides **which obligations exist and which transitions are currently valid**. The command gateway decides **what can be committed after the human's action**. They must not become three competing interpreters of clinical truth.
 
-Zeige zuerst eine kompakte, ausklappbare Liste der zugeteilten Patienten mit Quelle/Zeitraum und Fortschritt. Die Übersicht ist auch bei vielen Personen scanbar. Patientenzahl und Reihenfolge stammen aus Aufgaben/Zuteilung.
+A simple direct UI query/action may bypass the model and invoke the same authorized service. For open-ended language, the model must be able to adapt the next tool call to a previous result rather than have every possible dialogue programmed in advance.
 
-Pro Patient werden diese vier Bereiche angeboten, als lokale Adaption strukturierter Übergabekommunikation [S05]:
+### 13.2 Required runtime loop
 
-1. **Kurzprofil und Achtung:** relevante bereits dokumentierte Diagnosen/Behandlungsanlass, Hilfebedarf und aktive bestätigte Hinweise. Nicht die gesamte Anamnese.
-2. **Seit der letzten Schicht:** tatsächlich dokumentierte Veränderungen, erledigte Interventionen und Ergebnisse mit Autor/Zeit/Quelle.
-3. **Offen oder ungeklärt:** unbeantwortete Fragen, fehlende/nicht geprüfte Angaben, noch unbestätigte Meldungen. Nicht behaupten, die Vorschicht habe etwas übersehen, wenn das nicht dokumentiert ist.
-4. **Nächste Schicht:** konkrete vorhandene/geprüfte Aufgaben mit wem, wann, warum, Abhängigkeit und der Möglichkeit zur Verantwortungsübernahme.
-
-Hintergrund neutral, Änderungen blauer Akzent, offene Fragen amber/neutral, Aufgaben klar blau. Rot nur für ausdrücklich dokumentierte dringende Zustände, nicht für beliebige Diagnosen. Immer Überschrift/Text/Icon zusätzlich zur Farbe. Relevante ungeprüfte Meldungen dürfen nicht in geschlossenen Details unsichtbar werden.
-
-Möglicher fiktiver Bildschirminhalt:
+Use this observable control flow, implemented with current supported SDK/tool-calling mechanisms:
 
 ```text
-Übergabe Nacht → Früh                 2 von 6 geprüft
-Anna Beispiel · 001 · aktiver Fall
+Authenticate employee and pin request's subject/audience/context
+  → resolve approved pack/profile/workflow and eligible skills/tools
+  → assemble minimal relevant context, pending proposal and source references
+  → invoke replaceable model
+  → model requests an allowed tool OR responds
+      → validate requested tool, args, current access and scope server-side
+      → execute bounded read/draft-preparation service
+      → return compact typed result with versions/freshness/errors
+      → append authorized tool result and continue the bounded model run
+  → answer OR ask one concise blocking question OR persist a draft/revision
+  → present grounded text and useful GenUI
+  → STOP at human review for final side effects
 
-KURZPROFIL
-Rehabilitation nach Hüftfraktur; Hilfe gemäss bestehendem Plan.
-
-SEIT DER NACHT
-05:50 Unterstützung beim Toilettengang dokumentiert.
-Keine weiteren Ereignisse im vorliegenden Nachtbericht angegeben.
-
-OFFEN / BEACHTEN
-Angehörigenfrage zur Austrittsplanung noch unbeantwortet.
-Bestehender Mobilitätshinweis: Details aus Pflegeplan öffnen.
-
-HEUTE
-07:30 Morgenpflege · Lea · gemäss Pflegeplan
-08:40 vereinbarter Transport zur Physiotherapie · Transportteam
-
-[Vorlesen] [Rückfrage] [Zur Kenntnis genommen] [Nächste Person]
+Human edits/approves exact content
+  → deterministic gateway reloads current authorization/read-set
+  → atomically accepts local command and delivery jobs
+  → workers deliver/reconcile
+  → truthful receipts/events update the relevant workspace
 ```
 
-Nicht aus fehlenden Ereignissen „stabile Nacht“ oder „keine Beschwerden“ ableiten. „Worauf achten“ enthält vorhandene von Menschen verantwortete Anweisungen, keine vom Modell neu erfundenen Überwachungs-/Behandlungsempfehlungen.
+Draft creation/autosave can be a scoped operational write. It is not a final clinical write, publication, task completion or provider update. Separate these clearly in tool effect classes and UI.
 
-### Inhalt und Bestätigung
+Supported terminal outcomes: `answer`, `clarification-needed`, `draft-ready`, `awaiting-review`, `no-action`, `safe-handoff`, `cancelled`, `budget-exhausted`, `failed`. A run does not sit in a costly loop waiting for a nurse to respond. Store resumable state and release compute. Runtime state records IDs, tool events and pending work—not hidden model reasoning.
 
-Baue einen unveränderlichen Übergabe-Snapshot aus Datenelementen, Versionen, Quellzeiten, ausstehenden Aufträgen und Verantwortlichkeiten. Speichere den Inhalt, nicht nur einen Hash der Roster-IDs. Eine Zusammenfassung ist eine abgeleitete Darstellung dieses Inhalts. Bei nachträglicher Änderung Addendum/neue Version und erneute passende Kenntnisnahme.
+Do not let the clinical agent execute shell/SQL, edit its own instructions, install skills, grant rights, call arbitrary URLs or use browser automation on providers. MCP is optional transport over the SAME authorized tool registry, not a requirement for every internal function. Do not enable arbitrary remote MCP servers, tool discovery that widens access, or executable scripts bundled in unreviewed skills. A coding agent's toolset is not appropriate for the deployed care assistant.
 
-Bestätigen bedeutet Kenntnisnahme/Übernahme der benannten Version, nicht bewiesenes Verstehen oder erledigte Pflege. Rückfragen, „später prüfen“, Teilübernahme und Übergabe an zuständige Dienstrolle funktionieren. Empfangende Schicht bestätigt die reale Übergabe. Offene Verantwortung bleibt bis zur wirksamen Annahme sichtbar; unbeantwortete Übergaben haben einen freigegebenen Eskalationspfad.
+### 13.3 Small, typed, well-documented tool registry
 
-## 10. Vorlesen, Sprache und kleine Rückfragen
+Expose only the tool subset needed for the current purpose. Prefer useful combined queries over dozens of near-duplicate tiny tools. The following are semantic examples, not a requirement to create a service for every name:
 
-Vorlesen ist ein eigener TTS-Pfad, nicht die ASR-Funktion. Implementiere `tts.readout` neben `asr.transcription` hinter austauschbaren Adaptern.
+| Tool family       | Examples                                                                                                 | Effect boundary                                                        |
+| ----------------- | -------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| Guidance          | `list_available_skills`, `load_workflow_skill`, `read_approved_reference`                                | Approved IDs only; no arbitrary files/network.                         |
+| Work              | `get_my_work`, `get_handover`, `get_work_episode`, `get_open_responsibilities`                           | Requester's allowed assignment/shift, real records.                    |
+| Patient           | `resolve_patient_candidates`, `get_patient_context`, `get_observation_series`, `get_recent_changes`      | Candidate lookup does not itself silently select a patient for writes. |
+| Collaboration     | `resolve_allowed_recipient`, `get_authorized_thread`, `find_existing_question`, `get_staff_work_context` | Requester access; no impersonation or private transcript leakage.      |
+| Knowledge/library | `search_approved_policy`, `search_authorized_documents`, `get_document_excerpt`                          | Source/classification/freshness included; requester's ACL.             |
+| Drafts            | `prepare_work_update`, `revise_proposal`, `prepare_message`, `prepare_configuration_change`              | Scoped draft only, never final clinical mutation or publication.       |
+| Views             | `prepare_view` or supported structured UI output                                                         | Allowlisted components and server-owned data references.               |
 
-Vorlesen gibt den sichtbaren, versionierten Übergabetext wieder: Person, Kontext, Änderungen, offen, Aufgaben. Keine zweite generative Erzählung mit neuen Fakten. Numerische Werte, Verneinungen und Daten bleiben korrekt. Steuerung: Start, Pause, Fortsetzen, Wiederholen, nächste Person, Geschwindigkeit, Stop; markiere den aktuell gelesenen Bereich, soweit echte Audio-/Segmentinformationen vorliegen.
+The authenticated approval route is NOT a model-accessible tool. Even if an SDK supports automatic tool execution, its dispatcher must categorically reject direct final-write/permission/publish operations from the runtime agent.
 
-Der Mikrofonknopf darf für eine Rückfrage unterbrechen. Danach gezielt zur Stelle zurückkehren. TTS-Playback darf nicht als neue Mitarbeitendenaussage aufgenommen oder als „verstanden“ ausgeführt werden. Vorlesen bestätigt nichts automatisch; Sprachbestätigungen müssen klar auf den sichtbaren Schritt gebunden sein und dürfen kritische Signaturen nicht nebenbei auslösen.
+Every tool has a stable name/version, purpose, strict input/output schema, effect class, server policy check, limits, known errors and representative examples. Do not expose raw provider credentials or let arguments override actor/tenant/purpose. Use server-bound references; any model-supplied patient/recipient identifier is rechecked for existence and access. Descriptions and “readOnly” annotations are hints, not security enforcement.
 
-Produktiv nur geprüfte lokale/zugelassene TTS-/ASR-Datenwege; eine Browserstimme ist nicht automatisch lokal. Patientendaten nicht über beliebige Systemstimmen oder externe Speech-Dienste leiten. Lautsprecherausgabe braucht bewussten Start und Privatsphäre-Hinweis; keine Namen auf einem öffentlichen Sperrbildschirm. Roh-Audio standardmässig transient. Aufnahme/Playback bei Sperre, Kontextwechsel und Berechtigungsentzug sicher stoppen bzw. dem ursprünglichen Kontext zuordnen.
+Tool results contain the smallest useful content plus source/resource references, version, effective/recorded time, freshness/completeness and permitted status. No unrestricted FHIR bundles, full-facility snapshots or broad SQL results followed by LLM redaction. A tool returning no match must distinguish unavailable/restricted/unknown from a verified negative without exposing forbidden existence.
 
-## 11. Übergabe → Arbeitsplan → laufender Dienst
+### 13.4 Bounded runs, interruptions and costs
 
-Nach der Übergabe öffnet Pflegehelfer den echten heutigen Plan. Zeilen enthalten Patient/Zimmer, Zeit oder Zeitfenster, Tätigkeit, Grund/Quellauftrag, zuständige Person/Rolle, notwendige zweite Person/Hilfsmittel, Abhängigkeit und Status. Zimmerwechsel verändern nicht die Patientenidentität.
+Configure maximum wall time, model turns, read fan-out, retrieved bytes/tokens, draft count, retry attempts and cost per run/user/site. Choose measured defaults and include their values in operator configuration; do not invent clinical performance guarantees. Detect repeated identical tool calls or no progress. Cancel promptly when possible; after durable command acceptance, canceling display generation cannot silently undo accepted work.
 
-Planquellen sind bestehende Pflege-/Therapieaufträge, Termine, übernommene Restaufgaben und explizite spontane Aufträge. Nicht sämtliche Krankheiten in Aktivitäten umwandeln. Keine Pflicht, jede Person vor einer pauschalen Frühstückszeit abzufertigen.
+Parallelize only independent authorized reads. Avoid speculative prefetch of unrelated patients. Do not hold database locks while an LLM, human or provider responds. Fairness: a slow run for one employee must not block another employee's task acknowledgment or emergency contact.
 
-Eine Reihenfolgehilfe darf eindeutige operative Einschränkungen benutzen: vereinbarte Termine, Personalverfügbarkeit, gegebene Hilfebedarfe, Wünsche und die vom Team festgelegte Priorität. Zeige „Vorgeschlagene Reihenfolge“ mit kurzer Begründung. Bei unmöglichem Plan Konflikt sichtbar machen, nicht überbuchen oder Ziele/Behandlung eigenständig ändern. Fachliche Priorität wird nicht vom allgemeinen LLM aus Vitalwerten erfunden.
+Stream honest progress such as “Ich suche die offenen Fragen” and actual generated content where useful. Do not expose chain-of-thought. Guardrails, tracing and SDK exporters must not send PHI to an external telemetry endpoint by default. Bounded internal trace metadata is sufficient for operational debugging; detailed synthetic traces may be retained for evaluation.
 
-Ein Tap auf eine Aufgabe öffnet den passenden Patiententhread/Encounter und eine Arbeitsepisode. Start/Pause/Fortsetzen/Abschluss erzeugen nachvollziehbare Zeitsegmente. Jede durchgeführte Teilaktivität hat ihren tatsächlichen Status. Stopp allein dokumentiert keine Leistung. Vorzeitiges Schichtende ist mit begründetem Übergeben möglich; niemand muss Tätigkeiten fälschlich als abgeschlossen markieren.
+### 13.5 Context and memory without cross-person leakage
 
-Unterbrechung: Entwurf speichern, Episode pausieren, neuen Kontext bewusst bestätigen; dann Rückkehrkarte mit noch offenen Punkten. Ein reiner Blick in eine andere Akte startet/stoppt keinen Timer. Auch nach Abschluss der geplanten Runde bleibt der Dienst für Klingeln, Angehörige, Lagerung, Transport und andere ungeplante Arbeit offen.
+Assemble context from the active immutable pack and current authorized work, recent relevant employee/assistant turns, pending proposal revision and selected source/tool results. Keep live facts separate from dialogue. Do not use a summary of yesterday's chat instead of a current medication/source query.
 
-## 12. Natürlich erfassen, sinnvoll prüfen, einmal freigeben
+Context compaction may produce a derived private session summary with references and uncertainty. It cannot turn an assumption into a fact or cross patient/encounter/audience boundaries. Revalidate sources before final actions. General handover deliberately fetches multiple assigned patients through an authorized aggregate tool; it does not import arbitrary private patient chats into global memory.
 
-Ein frei formulierter Bericht kann mehrere passende Vorschläge erzeugen. Der Nutzer sieht Bedeutung und Ziel, keine `CareEventProposal`-Felder. Kleine Abweichungen inline bearbeiten; „Ändern“ darf nicht das Dialogfenster schliessen und vollständiges Neuschreiben verlangen.
+Instructions load on demand. Pasting every skill, every employee, all patients and a large raw FHIR Bundle into the prompt is not “agentic memory.” No vector database is required for structured work/vital queries. Optional later semantic retrieval remains rebuildable, source-linked and permission-filtered.
 
-Beispiel:
+### 13.6 Preserve meaning, simplify the handwritten compiler
+
+Keep one proposal envelope with a small set of typed action subtypes. It can contain reported work, observations, task changes, communications, operational transitions, uncertainty and evidence. Do not create a profession-specific ontology or 100 unrelated intent types.
+
+The server supplies trusted actor/tenant/time/proposal IDs, cryptographic hashes, provider routes and approval authority. The model should not calculate cryptographic IDs or manufacture exact long numeric character offsets. Stable reference handles alone are not bearer authority: the backend always checks them against the current caller and scope. Evidence can reference a current/earlier scoped message, quote, selected task, provider resource/version or explicit inline edit; server code resolves/verifies those references.
+
+Remove arbitrary exact-German-text matching as a validity requirement. Preserve original staff wording and optional visible professional reformulation, negation, attribution, uncertainty, chronology and requested actions. Deterministic code validates supported effects, units, structural consistency, ownership, versions and approval. Semantic ambiguity leads to review/clarification. Do not assert that regex proves what happened.
+
+Replace the expanding linguistic parser with evaluated model/tool behavior gradually: keep existing safety scenarios, add adversarial/held-out paraphrases, prove parity/improvement, then remove obsolete lexical branches. Keep reliable numeric/unit parsers and explicit no-model controls where valuable. Do not loosen safety by accepting every schema-valid output, and do not retain a broad fallback parser that falsely claims unknown free speech was understood.
+
+A prohibited NEW treatment/order cannot be smuggled through a task/note endpoint. An authorized human's report that a prescribed action already happened can still be documented faithfully without the app originating or executing the clinical decision. Product scope restrictions apply across all API entry points.
+
+### 13.7 Durable revision and review
+
+When a user changes a draft, update the SAME proposal with a new immutable revision and supersede old executable authority. Show which fields/actions changed; preserve original provenance. Restoring a pending draft after refresh/restart reloads the actual current revision, sources and permission checks. Do not demand that the user retype the entire report.
+
+Ordinary direct-message Send or an explicit permitted task-completion control can itself be the required human approval. Do not force two confirmation dialogs for the same low-risk action. AI-prepared multi-action clinical updates receive one visible selected-action review where policy permits; high-assurance actions retain their justified additional review. Human review is meaningful content review, not a blanket approval of any future model output.
+
+Required scenario:
 
 ```text
-„Luca beim Waschen geholfen, zum Frühstück begleitet.
-Fast alles gegessen und etwa 200 ml getrunken.
-Gewicht machen wir später. Nora bitte informieren.“
+Employee: Luca mobilisiert, etwa 200 ml getrunken. Gewicht später.
+Assistant: retrieves the relevant existing task; prepares supported draft effects.
+Employee: Korrektur: eher 150 ml. Nora informieren, nicht den Arzt.
+Assistant: resolves authorized Nora or asks if ambiguous; revises SAME proposal.
+Employee: Nur Dokumentation und Nachricht, noch nichts abschliessen.
+Assistant: deselects completion; preserves deferred weight and approximation.
+Approve → one durable accepted command; no duplicate records or extra follow-up.
 ```
 
-Pflegehelfer nutzt aktuelle Aufgaben und berechtigte Empfänger, trennt erledigte Arbeit von geplanter Arbeit und fragt nur nach nicht bestimmbarer Information. Es erfindet weder Gewicht noch Medikamentengabe noch medizinischen Grund. „Etwa“ bleibt erhalten. Flüssigkeitsmengen werden nur dann strukturiert gebucht, wenn der entsprechende Workflow/das Mapping umgesetzt ist; andernfalls ehrlich als berichtete Information dokumentieren.
+### 13.8 Prove actual agent behavior
 
-Ein gemeinsamer Review darf Dokumentation, zulässige Beobachtung, benannte Task-Änderung und eine ausdrücklich gewünschte Kommunikation umfassen. Jeder Effekt ist sichtbar, einzeln abwählbar, inhaltlich editierbar und mit lokalen/externen Zuständen versehen. Keine zweite Freigabe nur wegen technisch getrennter Dienste.
+A passing implementation must demonstrate that the model chooses tools and reacts to results through the SAME runtime used in the app. A prerecorded OpenUI string, fixed intent enum or edited mock response is not sufficient.
 
-Ein sofort gemeldeter extremer Wert bleibt sichtbar als berichtet/ungeprüft; er wird nicht zu „normal“ korrigiert, nicht durch einen älteren bestätigten Wert verdeckt und nicht als abschliessend validierte Leistungsevidenz verwendet. Bestehende Notfallkommunikation ist unabhängig von digitaler Gegenzeichnung. Ein sensibler berichteter Inhalt darf nicht deshalb aus der Dokumentation verschwinden, weil das System keine Diagnose stellen darf.
+Use held-out variants of “Prepare my handover.” In one fixture a question is already answered; in another an answer is pending; in another a source is unavailable. The agent must inspect tool results and produce the appropriate grounded answer/review without a new scenario-specific route. A test ledger can record skill ID, tool name, arguments stripped of secrets, result-reference IDs and terminal status. Do not store private chain-of-thought.
 
-## 13. #Themen mit wirklichem Nutzen, aber ohne verdeckte Diagnostik
+A deterministic fixture model is valid for CI protocol/retry/authorization tests, but cannot be reported as real model competence. With actual configured local or authorized synthetic-hosted models, repeat the workflow and model-swap evaluation. Better models should improve understanding and clarification without source changes to permissions, adapters or workflows.
 
-Erweitere die vorhandene Standort-Taxonomie, statt eine neue klinische Ontologie zu bauen. Beispiele: `#Mobilisation`, `#Sturzprävention`, `#Schmerz`, `#Flüssigkeit`, `#Ernährung`, `#Wunde`, `#Ausscheidung`, `#Schlaf`, `#Angehörige`, `#Transport`, `#Austritt`.
+Safe degraded mode remains available: direct rosters/records, explicit task controls, verbatim draft capture and visible “assistant unavailable.” No final write should depend on a model falsely reassuring the user.
 
-Stable IDs, lokalisierte Labels, Synonyme, Beschreibung, Sensitivität und zugelassene Verwendung. Das System kann „schtuzgefahr“ als möglichen Begriffsvorschlag **Sturzgefahr** anbieten; die klinische Aussage wird nicht allein anhand einer Schreibkorrektur erzeugt.
+## 14. #Topics, @mentions and live collaboration
 
-Beim Bericht schlägt Pflegehelfer maximal wenige passende Themen vor und erklärt bei Bedarf die Fundstelle. Mitarbeitende können übernehmen, entfernen oder ändern. Freigegebene Themen ordnen Beiträge, Aufgaben und Dokumente und ermöglichen gespeicherte Filter. Daraus entstehen dynamische Ansichten wie „offene Mobilisationsfragen“ oder „Beiträge zur Sturzprävention“, nicht zusätzliche Kopien der Patientendaten.
+Use a small governed taxonomy with stable IDs, localized labels, synonyms, audience, sensitivity, owner and version. Start with useful topics such as Mobilisation, Sturzprävention, Schmerz, Ernährung, Flüssigkeit, Wunde, Ausscheidung, Schlaf, Angehörige, Transport, Austritt and Dienstkoordination.
 
-**Drei Ebenen strikt trennen:**
+The assistant may suggest a few grounded topic labels. Approval creates real metadata on the appropriate message/document/task reference. Implement actual filters and saved views, not buttons that merely submit another unimplemented prompt. Removal/correction must update results without leaving hidden stale labels.
 
-- Thema/Kategorie: „Dieser Beitrag handelt von Mobilisation/Sturzprävention“.
-- Klinische Aussage: „Eine Fachperson hat am Zeitpunkt X ein Risiko dokumentiert“.
-- Aktiver Hinweis: geprüfter, verantworteter Hinweis mit Status, Quelle, Gültigkeit/Review und gegebenenfalls passendem FHIR `Flag` [S06].
+Separate:
 
-„Sturzgefahr erkannt → Patient automatisch als Risikopatient markieren“ ist nicht zulässig als neue autonome Schlussfolgerung. Ist das Risiko bereits vom Provider oder einer berechtigten Person bestätigt, darf eine abgeleitete Kategorie auf diese Quelle verweisen. Andernfalls bleibt es ein Themen-/Reviewvorschlag. Unbekannt, verneint, historisch, fraglich, bestätigt und erledigt unterscheiden.
+- discussion topic;
+- human/provider-authored clinical statement;
+- active governed safety notice/Flag.
 
-Pflichttests: „keine Sturzgefahr festgestellt“, „Sturz vor fünf Jahren“, „Sturzgefahr bitte fachlich prüfen“, „keine akuten Schmerzen“, „Suizidgedanken verneint“, „historischer Eintrag“, „neue Verneinung bei noch aktivem bestätigtem Hinweis“. Keine falsche positive Markierung, keine automatische Löschung eines bestehenden Warnhinweises, keine blockierte Dokumentation ausdrücklich berichteter Sorge.
+“Keine akuten Schmerzen”, “Sturz vor fünf Jahren”, “Suizidgedanken verneint” and “Sturzgefahr bitte prüfen” cannot create a new confirmed positive condition. Topic search can find the statement while preserving its polarity/time. Existing confirmed notices cannot be deleted by a new casual tag. A label never autonomously triggers billing, a diagnosis, an alarm or a task.
 
-Ein Tag erzeugt weder eine Rechnung noch eine Diagnose, Aufgabe oder Alarmmeldung. Solche Effekte müssen als separate zulässige Vorschläge sichtbar genehmigt werden. Topic-Zahlen sind keine Patientenprävalenz und keine Teamleistungskennzahl.
+Resolve @person/@duty-role through the permitted directory. Show ambiguity rather than selecting the first match. A mention does not widen audience; provide an explicit authorized sharing/delegation workflow or deny appropriately. All authored comments have time, author, version and reply references. A report comment is an addendum/reference, not a silent overwrite of signed documentation.
 
-## 14. @Erwähnungen, Berichte, Team und Benachrichtigungen
+Implement acknowledgments, answers, resolution, reassignment and duty-role takeover using existing responsibility rules. A user's deliberate Send is approval of their authored ordinary message; do not add an unnecessary second confirmation to every text. AI-generated messages and publication of private material receive an appropriate visible review.
 
-Ersetze Freitext-Routing durch berechtigte Verzeichnisauflösung: `@Nora` und `@Pflegefachperson-Spätdienst` ergeben eine sichtbare konkrete Person oder Dienstwarteschlange. Bei Mehrdeutigkeit Auswahl; niemals ersten Treffer still verwenden. Ein Name/Hashtag erweitert keine Rechte.
+Notifications have separate server-stored, delivered, seen where supported, responsibility-accepted and resolved states. Durable SSE/replay and unread counters must recheck audience; revoked members cannot retrieve past payloads. Staff/patient mentions, attachments, counts and search suggestions must not leak restricted existence. Read does not equal accepted.
 
-Private Assistenz, Patiententeam, Abteilung und DM haben unterschiedliche Audiences. Vor dem Teilen: Empfänger/Kreis und zu veröffentlichender Inhalt sichtbar. Private Diktate und Entwürfe werden nicht ungefragt in die Patientenakte oder Teamchronik kopiert. Eine normale selbst geschriebene Nachricht kann mit bewusstem „Senden“ genehmigt werden; keine unnötige zweite Bestätigung für jedes Wort.
+In-app delivery while connected is different from background OS push. Do not claim reliable air-gapped background PWA alarms. Approved phone/primary alarm paths remain accessible independently.
 
-Mehrteilige Kommentare, Antworten, Übernehmen, Rückfrage, Auflösen und Reassignments sind dauerhaft gespeichert. Ein Kommentar auf einen freigegebenen Bericht ist eine verknüpfte Ergänzung, keine unsichtbare Änderung des signierten Originals. Klinisch relevante Entscheidungen aus dem Teamchat werden über den normalen Review in eine passende dokumentierte Aktion übernommen. Keine automatisch medizinisch verbindliche Anordnung aus einem Chat ableiten.
+## 15. Library, knowledge and profile media
 
-Zustände unterscheiden: im Server gespeichert, zugestellt, gesehen soweit tatsächlich gemessen, verantwortlich angenommen, beantwortet, gelöst. Off-duty-Personen müssen durch autorisierte Dienstzuständigkeit vertretbar sein. Duplikatsuche berücksichtigt nur zugängliche Inhalte und verrät keine geschützte Thread-Existenz.
+Implement one permission-controlled library for documents and images, filtered by permitted patient, team, subject, topic, type and date. A menu named “Bibliothek” must find/open actual resources. Display author/source, status, effective date and version.
 
-In-App-Benachrichtigungen und dauerhafte SSE-Ereignisse: audience-gefiltert, wiederaufnehmbar, mit dedupliziertem Unread-Status. Zeige einen ruhigen Neuigkeitenhinweis statt automatischen Kontextwechsel. Dringlichkeit kommt aus expliziter Eingabe/veröffentlichter Regel, nicht nur aus `#`.
+Uploads need authorization on bytes and metadata, file type/size validation, quarantine/scanning where applicable, explicit subject/encounter binding, safe thumbnails and retention. No public patient image URLs, leaked EXIF location in derivatives, unsafe SVG/HTML rendering or secrets in logs. Original-document policies are distinct from sanitized derivatives. Do not promise that a PWA can prevent every screenshot.
 
-Für normale mobile Push-Zustellung ist ein gesondert freigegebener Kanal nötig; Browserhintergrundbetrieb ist keine Garantie. Im Air-Gap weder Apple/Google Push noch öffentliche Dienste heimlich voraussetzen. Auf Sperrbildschirmen standardmässig keine Patientendetails. Primäre Klingel-/Notrufsysteme bleiben unabhängig; Pflegehelfer spiegelt nur autorisierte Ereignisse. Für dringende reale Hilfe muss der etablierte Kanal zugänglich bleiben.
+Patient/staff avatars are directory/media references with ACLs, not biometric identification. Demo may use initials or licensed fictional illustrations. Do not generate clinical wound images and present them as genuine evidence. Provide synthetic placeholders or clearly labelled approved teaching fixtures.
 
-## 15. Profil, Berichte, Werte und Bibliothek
+Approved organizational SOPs and news remain separate classes. Knowledge records need audience, owner, source, version, approval/effective/review/expiry dates and withdrawal handling. Answers cite the current permitted source and distinguish unavailable from negative information. No vector database is required for initial structured/full-text lookup.
 
-Profilbereiche: Kurzüberblick, Persönliches/Bedürfnisse, bestätigte Diagnosen, Medikation lesend, Werte, Pflege-/Therapieziele, Aufgaben, Verlauf, Dokumente/Bilder. Eine professionelle Biografie beruht auf vorgegebenen/zugelassenen Informationen, nicht auf Modellfantasie.
+Loop/Staffbase or other intranet access is an optional authorized read connector with synthetic fixtures; exact tenant access remains external. No scraping private systems or sending patient/staff confidential content into public search. Air-gap means controlled import/DMZ, not a hidden internet dependency.
 
-Unbekannt, nicht geliefert, nicht berechtigt, veraltet, widersprüchlich und ausdrücklich verneint unterscheiden. Fehlende Allergieliste bedeutet nicht Allergiefreiheit. Klinische Zusammenfassungen verlinken Autor, effektive Zeit, Erfassungszeit, Status und Quelle. Unsichere Werte bleiben sichtbar getrennt.
+## 16. Human approval and durable command acceptance
 
-Vitalgrafik mit **echter Zeitachse**, konsistenter Einheit, Legende und zugänglicher Tabelle. Nicht gleiche Abstände für 07:00, 07:05 und 13:00 suggerieren. Keine erfundenen Zwischenwerte, Trendpfeile oder Normalitätsurteile. Ein einzelner Wert bleibt ein einzelner Wert. Zeitformat der Institution und DST prüfen.
+Finish ONE PostgreSQL transaction for local acceptance of a reviewed action set. Correct every active document that asks for a global “atomic cross-store transaction”: the implementable requirement is atomic LOCAL acceptance plus recoverable external delivery, not distributed magic. That local transaction persists:
 
-Eine Bibliothek für Dokumente und Bilder, mit Ansichten je Patient, Thema, Typ und Zeitraum. Backend-ACL auf Bytes, Metadaten, Suchtreffer und Thumbnails. Upload → Scope/Dateityp/Grösse prüfen → gegebenenfalls Quarantäne/Scan → explizite Zuordnung → Review → Speicherung/Referenz. Keine öffentlichen Patientenbild-URLs. Unnötige EXIF-Ortsdaten aus Derivaten entfernen, Originale gemäss dokumentierter Policy behandeln. Kein Versprechen, Betriebssystem-Screenshots technisch vollständig verhindern zu können.
+- checked current authority and one-use token consumption;
+- immutable proposal revision/hash and selected actions;
+- actor/purpose/subject/audience and relevant source read-set;
+- accepted command and idempotency receipt;
+- appropriate local workflow changes;
+- audit/domain event and remote projection/delivery jobs.
 
-Institutionswissen hat Besitzer, Version, Audience, Freigabe, Gültigkeit, Ablauf und Widerruf. Interne News sind keine klinische SOP. Optionaler Loop/Staffbase-Connector bleibt ein autorisierter Leseadapter; fehlende Authentifizierung nicht mit Scraping umgehen. Websuche nur getrennt freigegeben ohne Patientendaten. Standardbetrieb benötigt keine Vektordatenbank.
+Network/model/provider calls do not run inside a long database transaction or global queue. If the response is lost, the same request ID/payload returns the original receipt. A different payload with the same key is rejected. Two tabs cannot consume the same approval twice.
 
-## 16. Austauschbare LLMs ohne wachsenden deutschen Regelcompiler
+Bind approval to current actor, acting role, tenant/site/department, thread, patient/encounter or other subject, context revision, workflow/policy version, proposal revision, sources and selected recipients. Translate relative deadlines into visible absolute times with an explicit reference time before approval; do not silently shift them when a delayed job executes.
 
-Eine kontextreiche Interpretation plus passende Werkzeuge ist der Normalfall, keine Agentenflotte. Deterministische Logik sichert Referenzen, Berechtigungen, Versionen, Einheiten, explizite Aktion, zulässige Zustandswechsel und Ausführung. Versuche nicht, jede deutsche Formulierung als Regex zu implementieren.
+Provider changes may be imported automatically as source data without forcing staff to reapprove every replicated item. Staff-originated writes require the relevant human review. Autonomous generation of a draft or draft autosave is not a final clinical write.
 
-Behalte den generischen Vorschlag mit typisierten ausführbaren Unterarten. Entferne willkürliche Voraussetzungen, dass erlaubte Nachrichten genau vorgegebenen deutschen Texten entsprechen. Originalaussage als Provenance erhalten; optionale Umformulierung sichtbar. Gültiges JSON beweist keine Wahrheit.
+Use item-level states: draft → locally accepted → clinical projection delivered → designated provider confirmed; otherwise pending/rejected/conflict/manual review. Do not merge unrelated subsystem health into a misleading “everything synchronized”.
 
-Kontextbuilder liefert berechtigte relevante Tools, aktuelle Aufgabe, Episode, Sitzung, jüngste passende User-/Assistententurns und den konkret ausstehenden Vorschlag. Quellen können frühere Nachrichten und Provider-Versionen sein. Ein späteres „statt 200 nur 150 ml“ darf keine fingierte aktuelle Quellspanne brauchen. Der letzte ausdrückliche Änderungswunsch erzeugt eine neue Revision, ersetzt aber keine anderen Quellen/Fakten heimlich.
+Model explicit dependencies within a reviewed action set. An independently valid note can be accepted even when an unrelated message cannot be sent, if that partial result is clear and authorized; a dependent completion must not be reported successful before its prerequisite evidence is accepted. Do not compensate a failed external operation by silently deleting a signed clinical record. Preserve addenda/corrections and put ambiguous delivery into reconciliation. “Approve all” is not a promise of atomic success in every external system.
 
-Zustand und Inhalt eines Vorschlags sind serverseitig dauerhaft, thread-/patient-/encountergebunden und gegen parallele Bearbeitung geschützt. UI zeigt die neue Fassung; alte Freigabetokens werden ungültig. Beim Wiederöffnen keine aktive Schreibberechtigung aus der Chat-Historie rekonstruieren ohne erneute Prüfung.
+Unusual reported values remain prominently visible with verification state and original provenance. They are not quietly normalized, erased or used as independently confirmed completion evidence. Institution-approved data-quality rules may require extra review, but urgent care/contact must not wait for a digital countersignature. Do not invent a universal medical threshold policy under this engineering task.
 
-Keine fixe globale Patientenauswahl, kein ungefiltertes Roh-FHIR für das Modell, kein direkter SQL-/Shell-/beliebiger HTTP-/FHIR-Schreibzugriff. Die Backendtools verwenden Medplum und Adapter. Ein Modellwechsel ändert nicht Rollen oder erlaubte Effekte.
+## 17. Medplum reconstruction, migration safety and provider workers
 
-Strikte Modell-Transport-DTOs getrennt von Domänenvalidierung: unterstützte Schemaformen, Pflichtfelder/nullable Werte, zusätzliche Eigenschaften verboten, Verweigerungen, unvollständige Ausgabe, Output-Budgets und Limits prüfen [S07]. Eine bestandene HTTP-Healthprobe ist keine Modellabnahme. Keine stille Kürzung bei 1.200 Zeichen. Gemeinsame Limits für Editor, ASR, Kontext und Vorschlag sichtbar behandeln.
+Replace normal whole-state-checkpoint reconstruction with resource-scoped ClinicalDataPort operations and durable operational repositories. Keep supported Medplum SDK features; do not build a second FHIR server. Retain legacy checkpoint access only in an explicit, bounded migration path until parity is proved, then remove it from ordinary runtime.
 
-Nutzung eines bereits verfügbaren SDKs ist einem neuen eigenen Agentenframework vorzuziehen. Halte Provider-/Modell-IDs konfigurierbar; am Umsetzungstag offizielle Modelle und tatsächliche Accountfähigkeit prüfen, nicht historische Namen blind übernehmen. Eine stärkere KI darf besser verstehen und formulieren, aber keine zusätzliche Schreibmacht bekommen.
+Do not duplicate task authority: if PostgreSQL owns a work responsibility and FHIR Task is its interoperability projection, record that mapping; provider-owned tasks retain their source authority. Never create two independent mutable lifecycles for the same assignment.
 
-## 17. Verbundene Modell-, ASR- und TTS-Demo
+Migration correction is mandatory and re-confirmed at this SHA: read and validate applied migration history, names and checksums BEFORE any pending migration mutates the database. A changed/missing/ambiguous legacy history must fail without new effects unless an explicit reviewed migration manifest authorizes the specific recovery. Apply each new migration and its ledger update atomically where supported. Capture previous-release fixtures; do not test only empty database installation.
 
-Implementiere einen echten Setup-/Testpfad für: Modell, Mikrofontranskription und Vorlesen. Keine Schlüssel im Browser, Repository, Screenshot oder Chat. Hosted-Modus nur ausdrücklich synthetisch freigegeben; Produktion lokal ohne heimlichen Cloud-Fallback. `store:false` und Buffer-Löschung ersetzen nicht die Datenschutzprüfung des externen Dienstes.
+Test the historical note projection, missing encounter references, intake/rounds migration and tenant scoping with migration provenance. Unknown encounter mapping is quarantined for review, never attached to the current or first patient by default. Preserve accepted audit evidence; no destructive reset as a migration strategy.
 
-Zustände: nicht konfiguriert, konfiguriert, Test bereit, Smoke-Test bestanden, Szenarioabnahme bestanden, produktiv freigegeben. Auf Token-/Refusal-/429-/Timeout-/Schemafehler nicht „AI erfolgreich“ mit einem unerwähnten Ersatzparser melden.
+Use relational provider inbox/outbox/cursors/receipts/conflicts with stable IDs, unique deduplication keys, bounded leases and `FOR UPDATE SKIP LOCKED` where appropriate. Process retries, poison records, lease expiry and lost acknowledgments. Two workers must not produce duplicate effective side effects. Providers without idempotency need supported unique identifiers/read-back and an explicit uncertain-outcome reconciliation state, not blind resend.
 
-Mit vorhandenen Schlüsseln oder autorisiertem lokalen Runtime: tatsächliche Aufnahme → ASR → editierter Text → mehrstufiger Dialog → Vorschlag → Review → Speicherung testen [S08]. Keine erfundenen Transkriptstrings als einzigen Audiotest. Bei fehlendem Key internen Integrationscode fertigstellen, exakten Testbefehl bereitstellen und die externe Abnahme offen lassen.
+Incoming source changes pass authentication, matching, mapping, profile validation and source version handling. Avoid feedback loops when own outbound writes return through inbound. Track corrections/tombstones and concurrent edits where supported; do not use silent last-write-wins for clinical disagreement.
 
-Öffentliche Demo mit bezahltem Modell nur hinter geeignetem Testzugang, Raten-/Parallelitäts-/Upload-/Budgetlimits. Keine beliebigen fremden API-Ziele oder vom Client gesetzte „synthetic“-Flags akzeptieren. Minimales Audit ohne Inhaltsleak.
+Source ownership and provider capabilities are per operation/instance and configuration-driven, not `if providerName` branches in the PWA. Credentials are secret references. A new adapter requires code for its documented contract; a new instance of an implemented adapter should require configuration only. Do not promise Markdown can implement an undocumented proprietary API.
 
-## 18. Verlässliche Freigabe: lokale Atomizität, externe Zustellbelege
+Keep real WiCare/careCoach/SAP/device operations individually gated until documentation, authentication, sandbox behavior, mappings and acceptance are verified. Generic worker/adapter/test-IdP work is INTERNAL. Read access can be activated independently from write access.
 
-Nicht „eine vollständig atomare Transaktion über alle Provider“ versprechen. Implementiere **eine lokale PostgreSQL-Transaktion** für:
+Proof must start with empty Medplum and a stateful external fake provider:
 
-- endgültige aktuelle Autorisierung und Verbrauch der gebundenen Freigabe;
-- unveränderliche Vorschlagsrevision, Inhalts-/Audience-Hash, ausgewählte Aktionen;
-- angenommener Auftrag und Idempotency-/Receipt-Datensatz;
-- unmittelbar passende operative Zustandsänderungen;
-- Audit-/Domain-Event sowie FHIR-/Provider-Zustelljobs.
+```text
+Provider initial dataset → durable import → Medplum → staff view
+→ reviewed staff change → remote delivery → provider read-back
+→ independent later provider edit → inbound → correct staff view
+```
 
-Keine Modell-/Provider-/Netzwerkaufrufe innerhalb langer DB-Transaktionen. Netzwerkverarbeitung danach durch Worker. Bei Lost Response wiederholte genehmigte Anfrage mit demselben Payload erhält denselben Receipt. Ein anderer Payload unter gleicher ID wird abgewiesen. Nicht auf „Token verbraucht“ stoppen, wenn der Nutzer lediglich die verlorene Antwort erneut abfragt.
+The fake provider persists across restart, validates current versions and can deliberately reject/delay/conflict. An acknowledgment alone is not a read/write round-trip proof.
 
-Freigabe bindet Actor/Rolle/Zweck, Institution/Abteilung, Thread, Patient/Encounter, Kontextrevision, Workflow-/Policyversion, Vorschlagsversion, Quellen-Readset, gewählten Empfängerkreis und absolute Zeitparameter. Klinische Priorität und Frist bei der Ausführung nicht aus einem verspäteten `Date.now()` neu erzeugen. Explizit konfigurierte relative Fristen haben einen sichtbaren Bezugszeitpunkt.
+## 18. Authentication, authorization and revocation
 
-Ein getrennter Qualitätsstatus darf ein extremes berichtetes Datum nicht löschen. Der ausführbare Review schützt Authentizität und Arbeitswahrheit, ist aber keine Behauptung der medizinischen Richtigkeit. Vorhandene autorisierte Provideränderungen können automatisch als Quellprojektion eingelesen werden; sie brauchen nicht erneut eine manuelle Pflegehelfer-Bestätigung für jeden Sync.
+Implement production OIDC/BFF using mature libraries and an actual isolated test IdP. Endpoint/client/claim/certificate configuration is external deployment input; the working OIDC integration itself is not an external blocker. Prefer integrating with existing identity rather than inventing passwords.
 
-Jedes relevante Item zeigt klar: Entwurf → freigegeben/lokal angenommen → Medplum übernommen → extern bestätigt bzw. ausstehend/abgelehnt/Konflikt. Staff-Labels kompakt, technische Details optional. Kein globales grünes „alles synchron“, wenn einzelne passende Änderungen warten.
+Use appropriate authorization code/PKCE, state/nonce, server validation, HttpOnly/Secure/SameSite cookies, CSRF defenses, rotation, logout, expiry and revocation. Never accept demo identity headers or a client-supplied role in production. Do not expose test IdP admin credentials or broad Medplum keys through the public tunnel.
 
-## 19. Datenmigration, Medplum und Providerabschluss
+Deny by default based on effective identity, role/capability profile, individual qualification/delegation, institution/site/department, assignment/treatment relationship or supervisory relationship, purpose, audience, resource state and operation.
 
-Löse das ganze Anwendungscheckpoint-`Binary` als normale Betriebsquelle ab. Erhalte das bestehende FHIR-/ClinicalDataPort-Fundament. Baue ressourcenspezifische Reads/Projektionen und versionierte operative Zustände; keine zweite universelle Zustandsmaschine.
+RLS and repository predicates/composite foreign keys protect all operational objects, with connection-pool tenant isolation. Tests must run using the real limited application DB role, not a superuser that bypasses RLS. Choose and document the Medplum project/AccessPolicy boundary appropriate to each institution; tags and UUID prefixes alone are not authorization.
 
-Migrationen sind neue nummerierte Dateien mit Prüfsumme und Schema-Version. Bereits ausgeführte Migrationen nicht weiter verändern. Übernimm historische Fixture-Versionen aus dem Repository in Tests. Insbesondere: fehlende Encounter bei Intake/Visite, Thread-Scope und `QuestionnaireResponse`→`DocumentReference` mit Quellidentität, Migrations-Provenance und sicheren Konfliktzuständen behandeln. Kein `now()`-Encounter oder first-patient default zur stillen Reparatur. Unklar zuordenbare Altdaten quarantänisieren/reviewen.
+The subject of a staff query is NOT its executing principal. Opening an employee profile must never run tools with that employee's credentials. Delegation is explicit, narrow, time-bound and audited.
 
-Medplum-Projektionen verwenden geeignete FHIR-Ressourcen und festgelegte Schweizer Profile. Eine generische Notiz ist nicht automatisch ein QuestionnaireResponse. Keine gesamte Patientenakte in einer generischen JSON/Binary-Ressource. Prüfe die konfigurierte Medplum-Transaktionsfunktion durch absichtlich fehlschlagende Bundles [S09]. Das beweist nur die Medplum-Transaktion, nicht globale Atomizität.
+No routine manager/HR access to private assistant histories. Any exceptional legal/investigative process is separately governed and audited; do not promise end-to-end secrecy that deployment admins cannot technically guarantee. The product's normal routes and analytics must not expose private histories. Clinic break-glass must not become an HR/private-chat bypass.
 
-Provideradapter bleiben operationsweise aktiviert. Quellen-/Zieldomänen, Mappingversion, Initialimport, Cursor, Nachrichtenversion, Konfliktstrategie, Tombstones/Korrekturen wo unterstützt, Freigabe und Zustellbelege dokumentieren. Kein unkontrolliertes Last-write-wins bei klinischen Konflikten.
+Test revoked role, departed staff member, expired delegation, stale IdP claim and queued approved job. Preserve accepted work and provenance while pausing actions that require renewed authorization; never silently delete approved evidence.
 
-Relationale Inbox/Outbox, kurze Leases, `FOR UPDATE SKIP LOCKED` wo passend, Backoff, poison/manual state und Recovery. Remote Side Effects sind nicht magisch exactly-once: mit Provider-Idempotenz bzw. geeigneten eindeutigen Referenzen/Read-back sichern. Bei unklarer externer Wirkung nicht blind erneut nicht-idempotent senden.
+## 19. Real LLM, ASR and TTS activation—not just key fields
 
-Zustandsbehafteter externer Fake-Provider muss Wiederanlauf, aktuelle Versionen und echte Konfliktvergleiche können, nicht nur einen Status-Schalter. Nachweis ab leerem Medplum: Initialdaten kommen **vom** Provider; Pflegehelfer liest sie; Mensch schreibt; Provider übernimmt; Read-back bestätigt; spätere externe Änderung erscheint über Inbound wieder im richtigen Profil. Kein direkter Seed des Pflegehelferzustands als Ersatz dieses Tests.
+Preserve model/provider replaceability and local-first production. Hosted use is synthetic-development only unless separately approved. Never assume a historic or marketing model name is available: inspect official docs and test actual account/runtime compatibility. Support the common local and hosted paths without hard-coding business logic to one model.
 
-WiCare/careCoach/SAP/Geräte nur anhand echter Verträge aktivieren. Produktwebseiten sind keine vollständigen API-Spezifikationen. Ohne WSDL/API-Doku, Mapping, Auth, Sandbox und Abnahme bleibt die einzelne reale Operation gesperrt. Fertige generische Worker und Fake-Provider sind intern lieferbar. Bestehende Systeme nicht per Screen-Scraping oder direkten DB-Schreibzugriff umgehen.
+Use strict transport schemas supported by the selected API, separate from richer domain validation. Handle required/nullable properties, unions, refusal, truncated/incomplete output, context limits, rate limits, timeout and cancellation. Do not silently truncate at 1,200 characters or label fallback output as real-model success. Use sensible bounded input/output budgets and long-utterance tests.
 
-## 20. Identität, Isolation und Konfigurierbarkeit vollständig anschliessen
+Record states distinctly: unconfigured, configured, smoke-tested, scenario-accepted, production-approved. A successful `/models`, a key in `.env` or one valid JSON answer is not clinical-language acceptance. Persist acceptance evidence against exact model/runtime/prompt/schema versions, not just a process-local timestamp.
 
-Implementiere generische OIDC-Anmeldung mit realem Test-IdP im isolierten Integrationsprofil. Institutionelle Endpoint-/Claim-/Zertifikatseinstellungen sind Deployment-Inputs; der OIDC-Code selbst ist interne Arbeit. Nutze bewährte Bibliotheken, sichere BFF-Sitzungen, HttpOnly-/SameSite-Cookies, passende CSRF-/State-/Nonce-/PKCE-Kontrollen, Rotation, Logout und Session-Widerruf. Produktion akzeptiert keine Demo-Header. Den Test-IdP nicht mit offenen Demopasswörtern im öffentlichen Tunnel anbieten.
+Speech pipeline: actual microphone/file bytes → local/approved ASR → visible editable transcript → same conversation/proposal path. General work questions need no patient; patient documentation needs an explicit scope. Highlight uncertainty in numbers, negations, names, medication mentions, body side and times where evidence supports it. Never fabricate calibrated confidence when the engine supplies none.
 
-Mandant/Standort/Abteilung/Audience in Repositoryabfragen, zusammengesetzten Referenzen und Constraints sowie RLS als zweite Schutzebene. RLS nicht mit Superuser-/BYPASSRLS-Verbindungen „testen“. Connection-Pooling darf keinen Tenantkontext vererben. Kein Zugriff auf fremde Nachrichten, FHIR-Projektionen, Fotos, Zähler, Suche, Tags, Benachrichtigungen oder exportierte Dateien.
+TTS is distinct: read approved visible content, not an independently embellished summary. Verify audio response format and bounded streaming/download; a header and arbitrary bytes are not a usable speech response. Stop safely on lock/context change and avoid recapturing synthesized speech as staff instructions. Raw and generated audio are transient by default.
 
-Medplum AccessPolicies ergänzen die fachliche Gateway-Prüfung [S10]. Operativer Admin ist nicht automatisch klinischer Superuser. Expertenlinks nur bei entsprechender separater Berechtigung; kein eingebetteter FHIR-Editor, der normale Reviews aushebelt.
+Run real synthetic microphone/ASR/LLM/TTS scenarios when a key/runtime is available within the authorized budget. Use held-out speech/text cases, including Swiss German, German and relevant French/Italian workflows. Synthetic TTS-to-ASR loopback is useful integration testing but does not demonstrate human dialect accuracy. Do not claim specialist clinical acceptance from automated graders alone.
 
-Site-Pack erweitern statt neues Konkurrenzformat: Institution → mehrere Standorte/Abteilungen → Rollen/Kompetenzen → Schichten/Workflow → Providerinstanzen → Topics/UI. Runtime-Zuteilungen gehören in DB/Planungsprovider; keine Produktivpatienten in Git. Ein Pack referenziert bekannte implementierte Aktionen und zentral genehmigte Rechte; neue berufliche Befugnisse brauchen verantwortete Freigabe, nicht beliebigen YAML-Text.
+Keys stay server-side, never in files committed to Git or logs. Browser speech may use remote infrastructure; keep it explicitly a synthetic fallback. `store:false` does not override a provider's retention policies. Use no hidden cloud fallback for production-local mode.
 
-Adminfläche: Standort/Abteilung, Verzeichnis-/Rollenmapping, veröffentlichte Workflowversionen, Provideroperationen/Quellenrouting, Topicverwaltung, Bibliotheksfreigaben, Modelsetup, Betriebsstatus, aggregierte Auswertung. Einfacher Workfloweditor mit Vorschau genügt. Draft → validieren → simulieren → verantwortet freigeben → unveränderlich publizieren → aktivieren. Laufende Dienste bleiben gepinnt, Rollback ist nachvollziehbar.
+## 20. Administration and governed improvement
 
-## 21. Leistungsnachweise: berechtigte Erlöse sichern, niemals Arbeit erfinden
+Provide a separate, compact admin area within the product with capability-based entry. Do not expose infrastructure menus to bedside staff.
 
-„Abrechnungspotenzial maximieren“ wird ausschliesslich als **vollständige, korrekte und zulässige Abbildung wirklich erbrachter Leistungen** umgesetzt. Keine Hochstufung, fiktiven Minuten, suggestiven Schweregradformulierungen oder automatischen Gebühren aus Diagnosen/Hashtags.
+Required working functions:
 
-Speichere aus derselben genehmigten Arbeit einen referenzierten Leistungsnachweis: Patient/Encounter/Setting, tatsächliche Aktivität, durchführende Person(en) und Rolle, effektiver Zeitpunkt, Erfassungs-/Freigabezeit, Zeitsegmente/Unterbrechungen soweit erfasst, Status durchgeführt/teilweise/nicht durchgeführt, Menge/Einheit/Material falls relevant, Auftrag/Pflegeplanreferenz, Freigabe, Nachtrag/Korrekturgrund, Quell-/Providerbelege.
+- institution/site/department setup and terminology;
+- directory import and staff/profile/membership mapping;
+- qualification/delegation records and expiry, with restricted evidence;
+- role capability profiles and effective-permission preview;
+- Markdown/metadata editor and actual runtime preview;
+- draft/validation/simulation/review/publish/activation/rollback of workflows;
+- provider instances, supported operations, source ownership and secret references;
+- AI/audio endpoint setup and actual test results;
+- topic registry and library approval;
+- system/jobs/conflicts/audit/retention health;
+- permitted operational analytics and improvement proposals.
 
-Geplante Zeit ≠ tatsächlich erfasste Zeit. Zeit in einem Zimmer ≠ Pflegeleistung. Zwei Mitarbeitende können an einer Aktivität beteiligt sein; Attribution getrennt halten, nicht automatisch doppelte Patientenminuten berechnen. Mehrere Tags, ein Bericht und eine Taskreferenz dürfen nicht mehrfach verrechnet werden. Rückdatierungen als Nachtrag kenntlich machen. Pausen/Unterbrechungen und nicht geleistete Arbeit nicht als durchgeführte Leistung buchen.
+An admin can describe a configuration change naturally. The assistant produces a reviewable diff and tests; it does not silently publish it. Security-impacting changes require the appropriate separate reviewer. No normal workflow editor can grant itself policy-publishing authority.
 
-**Setting ist entscheidend:** Pflegeheim, Spitex, stationäre Rehabilitation und ärztliche/therapeutische Leistungen haben unterschiedliche Regeln. Das BAG beschreibt Pflegeleistungen und Voraussetzungen, nicht eine universelle „Timer × Tarif“-Abrechnung [S11]. Bestehende Bedarfsermittlung, Zulassung, erforderlicher Auftrag und geltende Regeln bleiben beim verantwortlichen Prozess.
+Real staff membership updates are ordinary directory/DB administration, not site-code edits. Permission preview should explain allowed/denied reasons without exposing hidden records. Include non-clinical HR and manager scenarios, not only IT simulator controls.
 
-Implementiere eine übersichtliche Reviewansicht: belegt; Pflichtangabe fehlt; möglicher Doppelbeleg; Auftrag/Zuordnung zu prüfen; für freigegebenen Abrechnungsweg vorbereitet; übertragen/bestätigt. Zeige niemals „abrechenbar“, wenn nur eine Zeit gemessen wurde. Tariffunktionen sind separat versionierte, verifizierte Adapter/Regeln mit Gültigkeitsdatum und Setting. Solange kein echter Tarifvertrag vorliegt, nur ein deutlich fiktives Demotarifprofil bzw. Dokumentationsvollständigkeit zeigen; keine reale CHF-Umsatzprognose vortäuschen.
+Self-improvement consumes permitted structured process metrics and approved feedback, not everyone's private transcripts. It may propose less repetitive wording, different question routing, useful quick actions or step ordering. It cannot change clinical facts, rights, patient risk labels or metrics to make results look better.
 
-Menschliche Prüfung der geleisteten Arbeit vor regulärem Dokumentations-/Leistungs-Write-back; Rechnungsfreigabe, wo nötig, durch Abrechnung. Es dürfen nicht bei jedem Export alle bereits signierten Leistungen neu geschrieben werden. Korrekturen, Ablehnungen und gegebenenfalls Storno laufen referenziert und nachvollziehbar.
+## 21. Service evidence, billing support and value measurement
 
-## 22. Auswertungen und Verbesserungen für Kader
+Create one accepted work event with actual performer(s), role, patient/encounter where relevant, activity, effective time, recorded/approved time, status, appropriate quantity/unit, task/order reference, time segments if deliberately tracked, source/proposal revision and delivery links.
 
-Nutze bestehende PostgreSQL-Domain-Events und wenige definierte Views, keine neue Analytics-Plattform ohne Skalierungsgrund. Ereignisse entstehen nach Commit; bestätigte Aktionen, Fehler, Modellvorschläge und tatsächliche Providerzustellung nicht vermischen. Event-/Patient-/Auftragsreferenzen deduplizieren.
+Reuse references from this event for notes, task evidence and reporting. Multiple tags/messages/attachments do not create multiple services. Distinguish planned time, actual reported time, interruption, concurrent participation and corrections. Two staff at one activity do not automatically mean two identical billable patient services.
 
-Definiere ein Datenwörterbuch mit Nenner und Messfenster. Zunächst: Zeit bis Dokumentation/Freigabe, wiederholte Erfassung, Bearbeitungsschritte pro abgeschlossener Aktivität, offene Übergabepunkte, Antwort-/Übernahmezeiten, Queuealter, Konfliktrate, Entwurfsänderung/Akzeptanz, Modell-/ASR-Latenz und Kosten. Task abgeschlossen ist kein unabhängiger Qualitätsbeweis. Modellgrader nicht allein über fachliche Korrektheit entscheiden lassen.
+Provide an evidence-completeness review: documented, missing required information, possible duplicate, assignment/order to review, ready for the approved export path, delivered/rejected. Billing classification/tariff rules are setting-specific, versioned and separately approved. No real CHF revenue forecast, charge submission or upcoding from model interpretation or timers. Real billing prerequisites remain with authorized workflows and providers.
 
-Baseline vor Einführung und gleichartig erhobene Pilotwerte dokumentieren; Fallmix, Schichten, Auslastung und Messmethode berücksichtigen. Zeitgewinn, nutzbare Kapazität, vermiedene Überstunden und tatsächlicher Geldnutzen getrennt. Keine Kausalität oder garantierte Einsparung aus einem kurzen Vorher/Nachher-Vergleich behaupten.
+Initial analytics should use a small documented event dictionary and PostgreSQL views: documentation delay, repeated entry, correction steps, unresolved transfer, answer/ownership latency, job age, sync failures, model/ASR latency/cost and staff-reported usefulness. Denominators, windows, missing data and deduplication are explicit.
 
-Heimleitung/CEO erhält betriebliche Übersicht, CFO prüfbare finanzielle Sicht, Qualitätsrolle fachlich notwendige Fälle und HR Personal-/Schulungsprozesse ohne Patientenakten. Gruppenminimum und zulässige Filter gegen Rückidentifikation; Aggregate mit kleinen Fallzahlen begrenzen. Kein Ranking langsamer Mitarbeitender, keine versteckte Aktivitätserfassung, Sprach-/Emotions-/Persönlichkeitsbewertung [S12]. Kultur/Teamwork nur durch geeignete transparente freiwillige Rückmeldungen und moderierte Prozesse, nicht heimlich aus Chats schätzen.
+Heimleitung/CEO sees permitted aggregate operations; team leads may see the specific individual work needed to coordinate their team. HR personnel workflows are separate. Do not ban useful supervision, but do not turn it into covert surveillance, chat sentiment analysis, automatic staff scoring or disciplinary recommendations. Presence duration is not productivity.
 
-Verbesserungszyklus tatsächlich implementieren: beobachtetes Problem + Belege → Änderungshypothese → Vorschau eines Workflow-/Text-/Routingdiffs → synthetische Tests → zuständige menschliche Freigabe → begrenzter Pilot → definierte Messung → Beibehalten/Rollback. Der Agent veröffentlicht nicht selbst und ändert niemals Berechtigungen, klinische Fakten oder Belege zur Verschönerung der Kennzahlen.
+Baseline and pilot measurements use comparable definitions and identify shift/case-mix differences. Time saved, available capacity and realized money saved are distinct. Do not claim causality or ROI from synthetic data; show the measurement mechanism.
 
-## 23. Betrieb, Aufbewahrung und Smartphone
+Demonstrate one improvement cycle with synthetic process evidence: identify a routing delay → propose a duty-role routing change → preview diff → regression tests → human approval → versioned pilot → compare → retain/rollback. Label results as simulated.
 
-Repräsentative Profile: lokale synthetische Entwicklung, zugangsbeschränkte verbundene Demo, institutioneller Read-only-Pilot, kontrollierter Write-Pilot. Kein gemeinsamer unsicherer „Demo“-Schalter für Echtdaten. Datenklasse serverseitig, saubere Trennung der Datenbanken, Schlüssel, Endpoints und Modellrechte.
+## 22. Synthetic demo data and complete role demonstrations
 
-Production-on-prem kann Internetfreiheit haben; externe Provider-/Intranetverbindungen erfolgen nur freigegeben über DMZ/Connector. Teste tatsächlich blockierten Egress. Modelle, Bibliotheken, Icons und Schriften kommen aus freigegebenen lokalen Assets; keine unbemerkten CDNs. Lizenz- und Herkunftsnachweise, lockfiles, SBOM, Signaturen, Scans, Upgradeplan.
+Keep `Tertianum Kronenhof · Demo`, with an explicit non-affiliation and synthetic-data notice. Do not use real patient/employee identifiers, actual private photos or official brand assets without permission. Maintain the existing approximately fifteen longitudinal fictional profiles rather than rewriting them gratuitously. Standard nursing assignment may contain six patients; also test zero, two and twelve.
 
-Getrennte Retention für klinische Records, Audit, Chat, Entwürfe, Audio, Medien und Analytics. Sweeper mit Legal-Hold-/Archivregeln; Chatlöschen löscht keine bereits genehmigte Patientenakte. Logs/Metriken keine Freitexte/Patientennamen/Labels; Datenminimierung auch bei Fehlermeldungen.
+Use a controlled scenario clock and disclose it. Include plausible and source-tagged historical diagnoses, encounters, read-only medication context, care needs/preferences, tasks, appointments, 1–2 weeks of related events, intentional discrepancies and a readmission with a new encounter. Do not invent codes from memory or reproduce licensed interRAI/BESA/LEP materials without authorization.
 
-Echte Backups und Wiederherstellung der operativen DB, Medplum, Dokumentinhalte und benötigten Schlüssel in isolierter Umgebung. Danach prüfe Patientenreferenzen, freigegebene Berichte, Übergaben, akzeptierte Aufträge, offene Jobs und Belege. Prüfsumme einer JSON-Datei ist nur Smoke-Test. Restore darf ausgelieferte Aktionen nicht erneut senden; Recovery-/Reconciliation-Szenario notwendig. RPO/RTO messen statt behaupten. Destruktiver Schema-Rollback ist nicht immer sicher; getesteten Restore/Forward-Fix vorsehen.
+Add fictional staff for every enabled role, with professionally plausible short bios, explicit qualifications and multi-role examples. Staff availability and shift assignments are real fixture data; simulated messages are marked. No AI-generated profile claim is treated as verified professional qualification.
 
-PWA auf freigegebenen Geräten; BYOD nur mit lokaler Policy. Minimaler Offlineumfang, klar veraltete Daten, keine breite Akte im Browser. Offline-Entwürfe nur nach konfigurierte Schutz-/Retentionsregeln; ohne sichere Offline-Freigabe nur Entwürfe, keine falsche Synchronisation. Keine pauschalen Remote-Wipe-/Attestation-Versprechen für reine PWA. Native Hülle nur bei tatsächlich geforderter Gerätesicherheit/Funktion.
+Two independent institution fixtures must differ in departments, shift timing, terminology, staff-role mapping, workflow order, instruction wording and provider routing. Same built application, different reviewed pack. Do not modify TypeScript to onboard the second center. Also test two concurrent tenants in the same deployment if that is the supported target; separate deployments do not prove shared-runtime isolation.
 
-`pfhctl` muss echte Ergebnisse liefern: preflight, site validate/activate, identity test, provider capabilities/test, model test, asr test, tts test, migrations status, status, backup/restore-test und demo scenario/reset. Vorhandene Befehle erweitern, keine dekorativen Platzhalter.
+Required end-to-end demonstrations:
 
-## 24. Ausführungsreihenfolge und messbare Abschluss-Gates
+1. **Nursing:** exact handover/readout → plan → care episode → report → edit/approve → interruption → resume → team response → deferral → outgoing transfer → receiving shift and addendum.
+2. **Physician:** addressed questions → source-linked rounds → human response → task ownership → closure, no prescribing.
+3. **FaGe/HF/SRK differences:** relevant authorized work, distinct guidance and denied actions; no cosmetic-only role differences.
+4. **Staff profile:** team lead opens Nora → asks permitted work question → tries private transcript access (denied) → sends DM deliberately → Nora replies → separate audit/audience.
+5. **Heimleitung:** operating brief → appropriate unresolved work → contacts lead → proposed process change, no implicit clinical access.
+6. **HR:** onboarding/training/expiry task → restricted staff case → allowed supervisor notification without confidential reason → closure; no patient information.
+7. **Pharmacy and therapy:** distinct queues and outcomes, not the same generic support-day script.
+8. **Transport/service/cleaning:** minimum required context, completion and exception without broad chart access.
+9. **Administration/finance:** imported intake gaps, approved service evidence and review/export status without invented billing.
+10. **Provider round trip:** independent source data, review, delivery/read-back, conflict and restart.
+11. **Configuration:** Markdown edit + reviewed workflow change → second site/profile/session uses it; old session pinned and revocation immediate.
+12. **Connected AI/audio:** unfamiliar phrasing and multiple corrections from real audio with actual configured services, or an explicit unpassed credential/runtime gate.
 
-Sicherheitsinvarianten gelten in jedem Abschnitt. Implementiere nicht zuerst sämtliche Oberflächen über unzuverlässigen Schreibwegen.
+## 23. Operations, installation and real recovery
 
-| Gate                            | Vollständig zu liefern                                                                                  | Beleg                                                                    |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| G0 — gemeinsamer Iststand       | Quellenprüfung, konsolidierter Vertrag, lauffähige Baseline, offene Matrix                              | aktueller SHA, genaue Befehle, echte Skips                               |
-| G1 — zuverlässiger Kern         | lokale Annahme, Migrationen, Receipt-/Outbox-/Inbox-Worker, ressourcenbasierte Rekonstruktion           | Real-DB-/Medplum-Crash-, Parallelitäts- und Migrationstests              |
-| G2 — kompletter Arbeitstag      | realistische Fixtures, Rollen, genaue Übergabe, Vorlesen, Plan, Episode, Unterbrechung, Review, Empfang | Browser + Datenzustand, zwei aufeinanderfolgende Dienste                 |
-| G3 — Kommunikation/Organisation | private/gemeinsame Threads, @, #, echte Filter, Benachrichtigungen, Bibliothek/Bilder                   | Drei-Nutzer-/Zwei-Site-ACL- und Replaytests                              |
-| G4 — natürliche verbundene KI   | kompatibler Modelladapter, dauerhafte Korrekturen, ASR/TTS, begrenzte GenUI                             | echte synthetische Modell-/Audiocalls oder ausdrücklich extern blockiert |
-| G5 — Standort/Betrieb           | Test-IdP/OIDC, Isolation/RLS, Admin/Workflows, zweite Institution, Retention, Restore, Egress           | same binary, zwei Sites, zwei Replikas/Worker, Restore-Abnahme           |
-| G6 — Nutzen/Leistungsnachweise  | geprüfte Evidenz, richtige Zustellreferenzen, Baseline/Analytics, freigegebener Verbesserungszyklus     | prüfbarer Demoprozess ohne Doppelleistung/Umsatzfantasie                 |
-| G7 — UI-/Gesamtabnahme          | finale konsistente Glass/Light/Dark-Oberfläche, belastbare Performance, Clean-Checkout, CI              | Screenshots/Traces, Checkliste, CI am finalen Implementierungs-SHA       |
+Support a documented clean development/demo stack and the selected on-prem/private-cloud deployment. Do not mandate Kubernetes for a small center if a simpler supported environment suffices. Preserve an air-gap/import path with pinned artifacts, local fonts/icons, hashes/signatures, license inventory, SBOM and no unexpected external telemetry.
 
-Gates dürfen technisch sinnvoll überlappen, aber nicht durch neue Featurebezeichnungen als abgeschlossen erscheinen. UI-Abnahme begleitet jede Produktänderung; G7 ist keine erste visuelle Prüfung am Projektende.
+No hidden state from the developer's existing database in the clean-setup test. No demo super-admin credentials on real-data devices. Public hosted-key demos require authentication, upload/model/response limits, rate limiting, cost cap and safe resets. A successful ngrok HTTP status is reachability evidence only.
 
-## 25. Pflicht-Regressionen
+Use current configuration loading consistently in CLI and services; no CLI test should accidentally ignore `.env.demo` and report the wrong runtime. Extend actual commands before documenting them as working. Minimum target functions:
 
-Führe die bisherigen relevanten Tests weiter und ergänze mindestens diese Verhaltensbelege. Nicht überlappende Suites addieren, um eine grössere Gesamtzahl zu behaupten.
+```text
+pfhctl preflight
+pfhctl site validate <path>
+pfhctl site inspect <path>
+pfhctl site preview <path> --role <id> --workflow <id>
+pfhctl site publish <path>
+pfhctl site activate <version>
+pfhctl identity test
+pfhctl provider capabilities <instance>
+pfhctl provider test <instance>
+pfhctl model test
+pfhctl asr test <synthetic-audio>
+pfhctl tts test
+pfhctl migrations status
+pfhctl demo scenario <name>
+pfhctl backup create
+pfhctl backup restore-test
+pfhctl status
+```
 
-### Arbeitstag und Datenwahrheit
+These are target commands, not claims that they currently exist. Reuse existing group names and avoid adding decorative wrappers. Every command should perform and report the relevant real operation.
 
-- Allgemein → Anna → Luca → allgemein: separater Verlauf, Entwurf und gleiche Dienstkontinuität; „Mein Assistent“ löst keinen Patientenprompt aus.
-- Gleicher Patient mit neuem Encounter: alte Entwürfe bleiben im alten Aufenthalt, nicht still übertragen.
-- Zwei Browserfenster bearbeiten unterschiedliche Patienten/Vorschläge: klare Konflikt-/Scopebehandlung, kein falsches Ziel.
-- Nach Kontextwechsel treffen ASR/Modellantworten ein: ursprünglicher Scope, kein Schreiben auf neuen Patienten.
-- „Nur Morgenpflege erledigt; Mobilisation später“: Teilabschluss, richtige offene Aufgabe.
-- „Arzt nicht informieren, keine weitere Kontrolle“: keine positive Kommunikation/Folgeaufgabe.
-- „Gestern 200 ml, heute ungefähr 150 ml“: Zeit und Unsicherheit getrennt; kein doppelt finaler aktueller Messwert.
-- „Nicht 200, sondern 150 ml; Nora statt Arzt“: richtige neue Vorschlagsrevision und Empfängerprüfung.
-- Originaltext zu Medikamenten, ausdrücklich berichtete bereits ausgeführte Tätigkeit: als erlaubter Bericht behandelbar; kein fiktiver Auftrag/keine Dosisänderung.
-- Gemischte Notiz mit ausstehendem extremem Wert: sichtbar berichteter Wert, nicht in validierte Arbeitsevidenz eingeschleust; neuer unbestätigter Wert nicht vom alten normalen versteckt.
-- Klick auf „Ausgeführt“/„Gespeichert“ nach Refresh: klare lokale und externe Einzelzustände, keine Verdopplung.
+Restore actual operational PostgreSQL, Medplum data, file storage and necessary configuration/keys into a clean isolated environment. Verify clinical references, accepted commands, handover snapshots, pending jobs and receipts. Old delivered jobs must not be resent blindly after backup recovery. Reconcile with the external fake provider. A JSON checksum is not this test.
 
-### Übergabe, Plan und Sprache
+Test rollback/forward recovery with previous-release fixtures and declare measured RPO/RTO assumptions. Do not promise destructive down-migrations are safe. Add versioned retention classes, deletion/withdrawal, legal hold, expiry sweepers and privacy-aware exports. Deleting private chat must not delete already approved clinical records.
 
-- Sechs Patienten, aber auch null/zwei/zwölf korrekt; keine erfundenen Übergaben.
-- Exakte klinische Übergabeversion, nachträgliches Addendum und Kenntnisnahme auf empfangender Seite.
-- „Kein neuer Eintrag“ nicht als „keine Symptome“ ausgeben.
-- Vorlesen korrekt, Pause/Rückfrage/Fortsetzung; Playback kann keine Freigabe auslösen.
-- Plan mit unmöglicher Doppelbesetzung/Termin: Konflikt statt erfundener Kapazität; Patientenvorlieben bleiben erhalten.
-- Klingelunterbrechung und Rückkehr ohne verlorene Evidenz/überlappende falsche Zeitbuchung.
-- Schichtabschluss mit rechtmässiger begründeter Übertragung, ohne falsches Komplettieren und ohne erneuten Export bestehender Dokumentation.
+Verify two API replicas and two workers after checkpoint retirement, DB restart, limited credentials, pool isolation, event replay, expired leases and blocked internet. Recheck authorization on delivery and retrieval. For revoked authority after local acceptance, preserve accepted work and apply an explicit hold/review policy rather than blindly sending or deleting it. PWA offline caches are minimal, scoped and revocable as technically supported; do not promise complete remote wipe/device attestation from a browser alone. BYOD remains institution-approved.
 
-### #, @ und Bibliothek
+### 23.1 Swiss deployment, privacy and intended-use evidence
 
-- Thema vorgeschlagen/übernommen/entfernt; dynamischer Filter zeigt wirklich verknüpfte Beiträge.
-- Verneinte/historische Sturz-/Schmerz-/Suizidbezüge erzeugen keine neue aktive Risikozuschreibung.
-- Existierender bestätigter Hinweis ist nur im passenden fachlich berechtigten Review änderbar.
-- Mehrdeutiger @Name, off-duty-Empfänger und Duty Queue; kein stiller erster Treffer.
-- Privater Entwurf bleibt privat; bewusste Publikation zeigt Audience; Zuschauer ohne Recht sieht weder Inhalt noch Existenz/Zähler.
-- Berichtskommentar wird Addendum/Referenz, nicht stille Änderung des Originals.
-- Bild/Thumbnail/Download nach Rollenentzug nicht neu abrufbar; Bibliothek entspricht nicht nur einem Promptshortcut.
+Implement privacy-by-design and a deployment evidence pack, not a claim that this prompt certifies the product. Keep intended use in documentation, UI language, marketing examples and implemented behavior aligned. Read Swissmedic's current software qualification guidance. HITL, local hosting, “coworker” branding or read-only medication UI alone do not establish medical-device exemption. Record a formal intended-use/qualification review requirement for deployment.
 
-### Verarbeitung und Betrieb
+Assess federal/cantonal health and data-protection rules, professional secrecy, institutional/controller/processor duties, lawful purposes, access/retention, incident response and cross-border transfers with the responsible institution. Prepare a data inventory/flow, processing record and DPIA working material for appropriate review. Distinguish Swiss operation from actual EU market/use applicability; assess GDPR/EU AI Act only where applicable and recheck current official rules. Do not treat every EU provision as automatically applying to a Swiss-only installation, or treat Swiss hosting as automatic compliance.
 
-- Zweifache Freigabe mit gleichem Command/Payload, verlorene Antwort, API-Crash: gleicher Beleg und keine doppelte wirksame Aktion.
-- Token geprüft, Prozess stirbt vor/nach Commit: vollständig wiederaufnehmbar; keine halb akzeptierte Arbeit.
-- Zwei relationale Worker, abgelaufene Lease, verzögerte externe Bestätigung, Konflikt, Poison Record.
-- Leeres Medplum → Provider-Import → App → Write → Read-back → externe Änderung → Inbound.
-- Echte Medplum-Fail-Transaction, nicht nur gemockte Antworten.
-- Historische Datenmigration aus voriger Release-Fixture, Encounter-Unsicherheit und Legacy-Notizmigration mit Provenance.
-- Zwei Appinstanzen/Standorte/Abteilungen, OIDC statt Demoheader, echte RLS mit App-DB-Rolle.
-- SSE-Replay nach Restart und nach Audienceentzug; wiederholtes Event erzeugt keinen zweiten Hinweis/Auftrag.
-- Echte DB-/Dokument-Restoration und Resume offener Jobs ohne doppeltes Remote-Schreiben.
-- Geblockter Internetzugriff: lokale Kernfunktionen weiter nutzbar; externe Funktionen korrekt nicht verfügbar.
+Prohibit diagnostic/prognostic/treatment/clinical-triage functionality from appearing indirectly in “optimization,” tags or profile summaries. Existing human/provider diagnoses and orders may be displayed faithfully within scope. Do not implement universal physiological thresholds as if a coding agent can certify them; institution-approved data-quality/verification behavior must keep reported extreme readings visible and must not delay established urgent-care communication.
 
-### KI, Evidenz und Gestaltung
+Track staff work for defined care/coordination/evidence purposes. No covert surveillance, voice-emotion analysis, individual speed leaderboard, private-chat mining, automated discipline or autonomous hiring/dismissal. HR cases and employee health/absence reasons stay specially restricted. Employee consent alone is not a blanket justification for disproportionate processing. Useful supervision can query legitimate shared responsibilities without becoming access to a colleague's private assistant.
 
-- Tatsächliches strikt emittiertes Schema, Refusal/incomplete/429/Timeout, langer Text ohne stille Kürzung.
-- Mindestens zwei Modelladapter gegen gleiche Held-out-Szenarien; Fixturebeleg und echter Modellbeleg getrennt.
-- Echte Mikrofonaufnahme, editierter Text und echtes TTS; keine gefälschte Audiobestätigung.
-- Eine Tätigkeit mit zwei Tags/mehreren Dokumentreferenzen bleibt ein Leistungsevent.
-- Gruppenleistung/zwei Mitarbeitende, Unterbrechung, Nachtrag, Storno und unvollständiger Beleg ohne Erlösaufblähung.
-- Baselinevergleich und menschlich freigegebene Workflowänderung mit Rollback; keine automatische Berechtigungserweiterung.
-- UI unter 360/390 px, Tablet hoch/quer, 1024/1440 px, 200 % Zoom, Light/Dark/System, reduzierter Bewegung/Transparenz und virtueller Tastatur.
-- Zeitachsen mit stark unregelmässigen Abständen, keine visuell erfundene zeitliche Gleichmässigkeit.
+Before real data: named responsible owners must approve identity/device policy, source/provider contracts, clinical workflow fit, privacy/security posture, backup/restore and release. A synthetic code review, external sandbox connection or checksum cannot substitute for that approval. Test-IdP integration and generic security engineering are internal tasks, even though institutional credentials and sign-off are external.
 
-## 26. Visuelle Abnahme als Teil der Implementierung
+## 24. Completion gates and required order
 
-Nutze Playwright oder das bereits verfügbare Browserwerkzeug, echte Screenshots, Tastaturbedienung, DOM-/Accessibility-Tests und beobachtete Netzwerk-/DB-Zustände. Prüfe mindestens: Login, Drawer, Übergabeübersicht/-detail, Vorlesen, Plan, aktiver/pausierter Patient, Mehrfachreview, Korrektur, Teamantwort/@, #Filter, Werte, Bibliothek/Bild, Adminpublikation, Syncfehler und Schichtabschluss.
+Update the existing G0–G7 matrix; do not rename partial work into a new roadmap to evade completion. Evidence means implementation path + acceptance test + actual runtime result at a SHA.
 
-Prüfraster: keine horizontalen Überläufe; klarer Primärknopf; korrektes Icon; keine falsche Patientenkontextanzeige; lesbare klinische Inhalte ohne Glass-Störung; Kontrast/Fokus; keine doppelten Cards; keine leeren Versprechen; gleiche Komponenten in beiden Themes. Desktop-Politur ersetzt keine tatsächliche Mobilprüfung.
+| Gate                            | Required closure in this run                                                                                                                                                                                          |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| G0 — baseline                   | Reproduce current results, consolidate this contract, verify sources and identify actual remaining code gaps.                                                                                                         |
+| G1 — reliable core              | Verify-before-migrate; atomic local command acceptance; resource-native clinical reconstruction; relational inbox/outbox; stateful provider round trip and crash recovery.                                            |
+| G2 — complete workday           | Role-appropriate real plan, exact handover/addenda/readout, interruptions, partial work, two consecutive shifts and truthful service evidence.                                                                        |
+| G3 — communication/organization | Shared ACL threads; staff profiles and explicit assistant-vs-DM; work/plan queries; real @/#/notifications; secure library/media and revocation.                                                                      |
+| G4 — connected intelligence     | Actual approved Markdown/skills in the outbound request; bounded model-selected tool/result loop; context and durable revisions; model swap; real ASR/TTS/model scenarios or a precise unpassed external access test. |
+| G5 — institution/operations     | Multi-department runtime packs; data-driven approved role profiles; test-IdP OIDC; non-bypass RLS; admin publishing; second site; two replicas; retention/restore/egress.                                             |
+| G6 — evidence/value             | One work-event trail, completeness/export review, bounded analytics, baseline and governed improvement publish/pilot/rollback.                                                                                        |
+| G7 — whole-product/UI           | All requested routes genuinely function; accessible modern themes/icons/glass; visual inspection; measured performance; clean checkout and final CI.                                                                  |
 
-Modell-/ASR-Latenz darf nicht andere Mitarbeitende blockieren. Messe mittlere/hohe Latenz, schnelle erste Rückmeldung, Kosten pro korrekt abgeschlossener Aktivität, Queuealter und mobile Renderingkosten. Zielwerte mit Testhardware und erwarteter Parallelität festlegen, nicht ohne Messung mit „instant“ werben. Ersetze auffällige Effekte durch eine sparsamere Ausführung, wenn Bedienung oder Akku darunter leiden.
+Do G1 before building more final-write features on unreliable paths. In parallel, build the approved Markdown loader, test identity and one bounded read-only agent/tool proof early—do not postpone the actual agent until after another giant dashboard implementation. Then complete one nursing + staff-collaboration vertical slice, and reuse its services for every remaining role. Finish all role/admin/library/value requirements within this delivery contract; staging order is not permission to silently cut them from scope. UI inspection accompanies every slice; G7 is final regression, not the first visual check.
 
-## 27. Letzte Abnahme und wahrheitsgemässer Abschluss
+Before enlarging a module, record which measured gap the change closes, whether an existing SDK/service already solves it, what old code it removes and its acceptance ID. No point-based feature scoring or line-count target. Reduce duplicate policies/registries and repeated authoring values. Preserve a thin deterministic core rather than distributing hundreds of ad hoc checks across the UI/model/worker.
 
-Führe aus einem sauberen Checkout die dokumentierte Installation aus; keine versteckte Abhängigkeit von der Entwicklerdatenbank. Reale Testdienste starten, Migrationen einmal und erneut ausführen, synthetische Daten importieren, gesamten Referenzdienst durchspielen, Neustart/Restore/Rollback testen. CI auf Branch/PR auslösen und Ergebnis am tatsächlich getesteten Implementierungs-SHA festhalten. Ein nachträglicher reiner Dokumentationscommit wird ausdrücklich als solcher benannt.
+Any internal gap keeps its gate partial. Missing vendor documentation cannot excuse unfinished generic workers; missing institution IdP settings cannot excuse unfinished generic OIDC; missing model credentials cannot excuse missing adapter/schema/test code.
 
-Für jedes Ergebnis: Test-ID, Befehl, Commit, Runtime/Versionen, Fixture oder echter Dienst, Datum, Ergebnis, übersprungene Voraussetzungen. „80 gezielte Tests“ sind nicht zusätzlich 80 neue Tests, wenn sie Teil der 298er Suite sind. Keine Selbstaussage „kein P1“ als Produktgesamtfreigabe behandeln, wenn die offene Matrix widerspricht.
+## 25. Regression tests that prove this specific product
 
-Vier getrennte Ausgänge:
+Keep valuable existing tests. Do not sum overlapping suites to inflate counts. Add behavioral tests against the same implementation used in production and use real PostgreSQL/Medplum where persistence is the property under test.
 
-1. **Synthetischer Produktabschluss:** alle internen Module und End-to-End-Demo mit echten eigenen Datenspeichern und klar simulierten Providern bestehen.
-2. **Verbundene KI-/Sprachdemo:** tatsächlicher konfigurierter Modell-, ASR- und TTS-Pfad erfolgreich; ohne Zugang bleibt diese Abnahme offen.
-3. **Institutioneller Read-only-Pilot:** generische Identität/Isolation intern fertig; reale Provider-Lesefreigabe, Daten-/Geräte-/Betriebsfreigaben nachgewiesen.
-4. **Kontrollierter Write-Pilot:** reale Operationen/Mapping, menschlicher Review, Zustellung/Read-back, Konflikt-/Ausfallprozess und institutionelle Abnahme nachgewiesen.
+### Runtime instructions and configuration
 
-Fertigmeldung enthält implementierte und entfernte/vereinfachte Teile, unverändert offene Matrix, Modell-/Audiobelege, Provider-Roundtrip, Migration/Restore, visuelle Belege, Messmethodik und Kommandos zum Wiederholen. Private Verträge, Produktionsbewilligungen und fachliche Sprachvalidierung nicht durch Codekommentare oder Tests mit erfundenen Daten ersetzen.
+- MD-01: approved institution/role/workflow Markdown reaches the model request with correct hash/version; unrelated role instructions do not.
+- MD-02: prose-only change affects guidance, not permissions or mandatory step completion.
+- MD-03: structural workflow change has visible metadata diff, tests and human publication; prior session remains pinned.
+- MD-04: new named approved role/profile, second institution and multiple departments require configuration only; unknown/forbidden capabilities fail.
+- MD-05: traversal, symlink, unapproved file, revoked pack, malicious “ignore policy” text and remote include cannot expose data/tools.
+- MD-06: real staff/assignments are loaded from operational fixtures/directory, not hard-coded TypeScript or patient files in Git.
+- MD-07: institution, department and station guidance resolve correctly for cross-coverage and multiple roles; published pack contents cannot mix revisions during activation.
+- MD-08: a new role name bound to existing approved capabilities and a new provider instance of an implemented adapter require no business-source edit. Unknown operations require implementation, not Markdown invention.
+- MD-09: each documented reads/uses/proposes/reviews/records arrow resolves to an actual tool/reference/owner; no live patient Markdown compilation is present.
 
-### Letzte praktische Frage
+### True runtime agent and tool contracts
 
-Kann eine Mitarbeitende die Übergabe verstehen, ihre Arbeit planen, unterbrochen werden, natürlich berichten, genau einmal sinnvoll freigeben, Antworten im Team erhalten und eine korrekte Übergabe vorbereiten, ohne dieselben Daten mehrfach zu tippen oder die zuständige Software suchen zu müssen?
+- AG-01: approved skill is loaded on demand and its actual body/hash reaches the model; unrelated roles/SOPs do not.
+- AG-02: the model requests a read tool, observes its real response and conditionally selects a different next read or safe terminal outcome; no fixed intent/card path is the tested agent.
+- AG-03: read-only question produces zero final mutations; preparing a draft produces no provider/final clinical write; an invented commit/publish/SQL tool is rejected server-side.
+- AG-04: model-facing actor/tenant/purpose cannot override server context; tool reference substitution across patient/encounter/staff/audience fails before disclosure.
+- AG-05: provider/SOP/profile/attachment prompt injection cannot obtain additional tools or exfiltrate data. Approved guidance cannot override executable policy.
+- AG-06: tool budget, repeated-call detection, timeout, model refusal, cancellation and no-progress recovery terminate safely; one slow employee does not block another's work.
+- AG-07: two model backends use identical tools/proposals/services; genuine runs are reported separately from fixture-model CI.
+- AG-08: no model round trip is needed for direct roster, context selection, timestamps or ordinary deterministic approval controls; no artificial typing/streaming delays.
+- AG-09: backend-generated IDs, versions, hashes and recipients survive proposal revision; the model is not required to fabricate them.
+- AG-10: after a pending revision is restored, the employee can correct one field and approve once without repeating the entire statement.
 
-Kann die Leitung anschliessend nachvollziehen, welche reale Arbeit dokumentiert und zugestellt wurde und ob der Prozess besser geworden ist — ohne Mitarbeitende auszuspionieren oder Einnahmen aus erfundenen Leistungen abzuleiten?
+### Conversation, staff profiles and privacy
 
-Ist eine Antwort nein, schliesse die betreffende Arbeitskette; füge nicht nur einen neuen Button hinzu.
+- CT-01: general → Anna → Luca → Nora → general restores correct private drafts and work continuity.
+- CT-02: same patient with new encounter never receives the old encounter's draft automatically.
+- CT-03: slow model/audio result and two browser tabs remain bound to their origin; stale tokens fail safely.
+- CT-04: team lead asks about permitted Nora work and gets only that; request for Nora's private assistant history is denied before retrieval/model exposure.
+- CT-05: Heimleitung without patient access cannot obtain diagnoses through staff-task/profile/search paths.
+- CT-06: Assistenz zu Nora never sends a message; Direktnachricht requires deliberate send and correct audience, with real author identity.
+- CT-07: staff off-duty and stale heartbeat do not become absence/health/performance claims; hidden absence reason stays hidden.
+- CT-08: HR personnel case, patient thread, department chat, private assistant and unrelated DM cannot be cross-read via mentions/search/counts/media/events.
+- CT-09: role/membership revocation invalidates retrieval, pending write authority and notification delivery without erasing accepted records.
 
-## 28. Quellenregister und Anwendung der Quellen
+### Meaning, handover and workflow
 
-Die Quellen stützen die jeweils genannten Grundlagen, nicht eine automatische rechtliche Freigabe, Patientensicherheitszertifizierung oder Wirksamkeitsbehauptung. Prüfe am Umsetzungstag Aktualität/Version, protokolliere Zugriff und verwende tatsächliche Anbieter-Spezifikationen. Keine Änderungen aufgrund eines Such-Snippets allein.
+- WF-01: “Nur Morgenpflege erledigt; Mobilisation später” preserves the open activity.
+- WF-02: “Arzt nicht informieren, keine weitere Kontrolle” creates neither message nor task.
+- WF-03: “Gestern 200 ml, heute ungefähr 150 ml” preserves time/approximation; later correction revises rather than duplicates.
+- WF-04: “Nora statt Arzt; nur Nachricht, nichts abschliessen” edits the same reviewed proposal.
+- WF-05: medication/treatment instructions cannot enter through generic note/task APIs; authorized past-event reporting is not silently deleted.
+- WF-06: extreme pending value remains visible and is not confirmed evidence or a reason to block emergency communication.
+- WF-07: exact handover and post-cutoff addendum; TTS content matches; reading does not auto-acknowledge.
+- WF-08: zero/two/twelve assignments, overnight/DST shifts, no receiving owner and two-person tasks have truthful outcomes.
+- WF-09: interruption/resume, partial care, duty-role transfer and second complete shift do not duplicate responsibility or service events.
+- WF-10: topic negation/history does not create an active clinical Flag; @queue stays a queue until claimed.
 
-### Repository-/Analysegrundlage
+### Execution and recovery
 
-- R01: `docs/IMPLEMENTATION_STATUS.md` am SHA `573ff547e9f362acc79f4653240eae091921325d` — eigene Statusangaben und offene P1; nicht unabhängig ausgeführte Tests.
-- R02: `docs/architecture-decisions/ADR-0012-scoped-patient-workspaces.md` — eine Sitzung, mehrere explizite Gesprächsscopes.
-- R03: `src/pwa/App.tsx`, `src/pwa/assistant/clinical-library.tsx`, `src/ai/model-gateway.ts`, `src/infrastructure/operational-store.ts`, `src/core/fhir-resource-set.ts`, `src/server/app.ts`, aktive Migrationen und Tests — konkrete Implementierung vor Änderungen neu lesen.
-- R04: vorherige beigefügte Anweisung `Pflegehelfer_Codex_Patient_Workspaces.md`, 11.09.2026 — durch diesen konsolidierten Abschlussauftrag fortgeführt; bereits umgesetzte Anforderungen nicht erneut bauen.
+- TX-01: double approval and lost response return one accepted receipt for the same payload; changed payload fails.
+- TX-02: kill process before/after local commit and before/after remote send; no lost accepted work or blind duplicate side effect.
+- TX-03: historical migration checksum mismatch plus pending migration fails BEFORE any new schema/data mutation.
+- TX-04: previous-release migration/encounter/note fixtures produce traceable output or explicit quarantine.
+- TX-05: empty Medplum → provider import → staff update → read-back → independent provider change → app.
+- TX-06: two workers, lease expiry, duplicate/correction/poison input, replay and conflict.
+- TX-07: two replicas/tenants using limited DB credentials; no global mutable site or patient leak.
+- TX-08: isolated full restore then delivery reconciliation; no already-delivered action resent blindly.
+- TX-09: patient/team/library bytes, thumbnails, export metadata and signed URLs enforce current audience and expiry.
 
-### Offizielle Grundlagen, am 12.09.2026 konsultiert
+### Real AI, audio, value and UI
 
-- S01 ChatGPT-UI-Weiterentwicklung und verifizierbare Releasehinweise: https://help.openai.com/en/articles/6825453-chatgpt-release-notes
-- S02 W3C WCAG: https://www.w3.org/TR/WCAG22/ und https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html
-- S03 Schweizerisches Rotes Kreuz, Schutz der Embleme: https://www.redcross.ch/de/ueber-uns/internationale-rotkreuz-und-rothalbmond-bewegung/die-embleme-der-rotkreuz-und-rothalbmond-bewegung
-- S04 BAG, Gesundheitsberufe/Verantwortung/Kompetenzgrenzen: https://www.bag.admin.ch/de/haeufige-fragen-faq-zum-gesundheitsberufegesetz-gesbg
-- S05 AHRQ TeamSTEPPS, SBAR und verlinkte Handoff-/Closed-Loop-Werkzeuge: https://www.ahrq.gov/teamstepps-program/curriculum/communication/tools/sbar.html — Kommunikationsgrundlage, kein Schweizer Rollenrecht.
-- S06 HL7 FHIR R4 Flag: https://hl7.org/fhir/R4/flag.html — Hinweise sind nicht gleich Nachrichten oder Diagnosen.
-- S07 OpenAI Structured Outputs: https://developers.openai.com/api/docs/guides/structured-outputs
-- S08 OpenAI Transkription: https://developers.openai.com/api/docs/guides/speech-to-text — konkretes Modell, Codec und Accountzugriff vor Echtaufruf prüfen.
-- S09 Medplum Project Settings: https://www.medplum.com/docs/self-hosting/project-settings
-- S10 Medplum Access Policies: https://www.medplum.com/docs/access/access-policies
-- S11 BAG Pflegeleistungen: https://www.bag.admin.ch/de/krankenversicherung-pflegeleistungen — Voraussetzungen und settingspezifische Unterschiede, keine universelle automatische Tarifermittlung.
-- S12 EDÖB Mitarbeiterüberwachung: https://www.edoeb.admin.ch/de/technische-mittel-zur-uberwachung-am-arbeitsplatz
-- S13 EDÖB Patientendatenweitergabe: https://www.edoeb.admin.ch/de/bekanntgabe-von-patientendaten
-- S14 Codex AGENTS.md: https://developers.openai.com/codex/guides/agents-md — kurze Repository-Einstiegspunkte und eindeutig referenzierte Detailaufträge.
+- AI-01: supported strict schema, refusal/incomplete/429/timeout, long text and cancel; no false model success on fallback.
+- AI-02: same held-out synthetic scenarios with two model adapters; actual service evidence separate from fixtures.
+- AI-03: actual recorded audio → reviewed transcript → model proposal → approved action, plus exact TTS readout.
+- AI-04: token/key/PHI-free logs and bounded cost; no unrestricted network/tool use from profile/MD injection.
+- VA-01: one activity, multiple tags/docs/two staff and interruptions cannot inflate billable evidence.
+- VA-02: admin improvement proposal → diff/tests → human activation → comparison → rollback; no autonomous permission change or staff scoring.
+- UI-01: all general/patient/staff/direct/admin modes at required viewports/themes, keyboard/zoom/transparency settings; correct sender/subject/audience visible.
+- UI-02: timestamped irregular vital values, missing/negative/allergy states and source staleness display truthfully.
+- UI-03: no duplicate navigation/cards, hidden composer, unreachable review, false presence, decorative-only charts or dead feature buttons.
 
-Weitere verbindlich vor betroffener Implementierung zu verifizieren: aktuelle OpenUI-APIs, FHIR-/CH-Profile, OpenAI-/lokale Modell- und TTS-Datenschutz/Lizenzen, installierte WiCare-/careCoach-/SAP-Versionen, aktuelle Swissmedic-Abgrenzung, institutionell geltende Arbeits-/Pflege-/Abrechnungsregeln. Ein Versionsname oder Produktfeature in früheren Analysen gilt nicht als dauerhaft verifiziert.
+## 26. Evidence, progress discipline and finish line
+
+At every gate record: current SHA, files touched, acceptance IDs, exact commands, real-store/runtime versions, model/audio configuration without secrets, expected skips, results, logs/traces/screenshots and remaining dependencies. Assertions from earlier audits are not inherited passing evidence.
+
+Run meaningful CI on the working branch/PR. Test secrets should be supplied only through approved mechanisms. A missing required service must fail that test job or be explicitly declared unpassed, never silently green. If GitHub Actions is disabled externally, deliver executable configuration and record the actual limitation rather than inventing a run.
+
+Final clean-checkout acceptance must install with the pinned lockfile, provision clean test databases/Medplum/fake provider, migrate, import fixtures and exercise the complete app. Do not call an old already-running developer database a clean installation. Verify source SHA of the UI and API and distinguish a later docs-only commit.
+
+Report these outputs separately:
+
+1. **Synthetic product completion:** all internal modules and stated role/site scenarios work with real own stores and explicitly simulated providers.
+2. **Connected AI/voice demo:** actual authorized model, microphone ASR and TTS scenarios passed; absent credentials/runtime keep this unpassed.
+3. **Institutional read-only pilot:** generic identity/isolation/runtime internally complete AND real provider/data/device/privacy approvals supplied.
+4. **Controlled write pilot:** verified real operation contracts, mapping/read-back/conflict/recovery and institutional approval.
+
+No single “100% ready” label, no percentage without defined denominator and no claim of legal/clinical approval from synthetic tests. A safety review by another coding agent is not a clinician or regulator signing off.
+
+Provide a concise proof index keyed by acceptance ID, not only unit-test totals. Include the actual SHA/runtime versions, test fixture versus real dependency classification, command, output status and evidence path. Use no real patient or confidential employee data in development evidence; demonstration data is explicitly synthetic. A source-level assertion requires a test or is labelled unverified.
+
+Final report must include the actual runtime Markdown paths, how to edit/preview/publish them, one demonstrated prose-only change, one structural workflow change, one model-chosen tool-result feedback trace (without hidden reasoning), a second-site setup without code changes, staff-profile privacy test, complete interrupted shift, real-store/provider evidence, AI/audio results, UI screenshot index, removed duplicated code, measured latency/cost, restore evidence and remaining external artifacts.
+
+Do not finish merely with more documentation. The core final question is:
+
+> Can an employee and their team carry out a realistic day through natural conversation, scoped profiles, useful taps and a small number of meaningful approvals—while the institution can configure its procedures without source-code forks and every accepted record remains recoverable, attributed, permission-correct and visibly delivered?
+
+If not, close the specific missing workflow. Do not create another architecture direction.
+
+## 27. Source register and how to use it
+
+**Rechecked 13 September 2026.** The supplied 908-line Runtime Markdown/Workspaces contract is the requirement basis. The following repository reads are implementation evidence; public sources support only their stated engineering/regulatory principles. The book photographs and workflow diagram are inspiration for human-centered evaluation and explicit inputs/outputs, not a prescription for no-code clinical software. Verify all version-sensitive APIs during implementation. Do not use a model to fabricate a missing vendor contract or legal decision.
+
+### Repository evidence
+
+Repository base for paths below: `https://github.com/mariospeterman/Pflegehelfer/blob/b6d76d9ec8b649e5d9884faf94a098dd9b99e247/`
+
+| ID  | Rechecked source                                                                                                    | Supported finding                                                                                                                       |
+| --- | ------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| R01 | Branch endpoint `https://api.github.com/repos/mariospeterman/Pflegehelfer/branches/codex/genui-production-showcase` | Head remains `b6d76d9ec8b649e5d9884faf94a098dd9b99e247`.                                                                                |
+| R02 | `docs/execution/COMPLETION_MATRIX.md`                                                                               | G0 PASS; G1–G7 PARTIAL; all four readiness outputs not ready.                                                                           |
+| R03 | `src/core/site-config.ts`                                                                                           | JSON startup loader, fixed roles/capabilities, single department and configured provider enum. No runtime Markdown loader in this path. |
+| R04 | `src/ai/model-gateway.ts`                                                                                           | Classification/extraction requests and deterministic-verifier fallback, not the required runtime tool-result loop.                      |
+| R05 | `src/infrastructure/migrations.ts`                                                                                  | Historical checksum verification follows pending SQL; reproduce and fix before mutation.                                                |
+| R06 | Actions API filtered by the exact head SHA                                                                          | No returned GitHub Actions runs at recheck. This is not a rerun of local tests.                                                         |
+| R07 | Attached `Pflegehelfer_Codex_Runtime_MD_and_Workspaces.md`                                                          | Previous full role/privacy/workflow/UI/persistence/operations contract retained and revised here.                                       |
+
+The task author did not execute this repository, inspect the live tunnel visually or independently reproduce Codex's test results in this recheck. Do not infer passing evidence beyond the source observations.
+
+### Official technical references consulted
+
+- **S01** Agent Skills specification: https://agentskills.io/specification — Markdown packaging, metadata and progressive loading; experimental tool hints do not replace authorization.
+- **S02** Anthropic, Building effective agents: https://www.anthropic.com/engineering/building-effective-agents — simple patterns, agents versus workflows; historical foundational article, not an up-to-date SDK contract.
+- **S03** Anthropic, Scaling Managed Agents: https://www.anthropic.com/engineering/managed-agents — separation of model orchestration, tools and durable sessions. Reuse the principle; do not require its managed cloud product for an air-gapped app.
+- **S04** Anthropic, Harness design for long-running application development: https://www.anthropic.com/engineering/harness-design-long-running-apps — observable progress and verification for long development tasks, not a guarantee of infinite autonomous execution.
+- **S05** Anthropic, Writing effective tools for agents: https://www.anthropic.com/engineering/writing-tools-for-agents — tool ergonomics and outcome-driven evaluations.
+- **S06** OpenAI, Safety in building agents: https://developers.openai.com/api/docs/guides/agent-builder-safety — structured boundaries and layered mitigations; current SDK guidance takes precedence over legacy product wiring.
+- **S07** Medplum AccessPolicy: https://www.medplum.com/docs/access/access-policies — maintained resource/field/compartment controls; verify installed-version behavior.
+- **S08** Medplum project settings: https://www.medplum.com/docs/self-hosting/project-settings — test actual transaction-bundle behavior on the deployed project.
+- **S09** OpenUI headless: https://www.openui.com/docs/api-reference/react-headless — existing thread/stream primitives; no mandatory parallel chat framework.
+- **S10** ChatGPT release/UI references: https://help.openai.com/en/articles/6825453-chatgpt-release-notes — dated design reference only; not a requirement to clone every consumer feature.
+- **S11** WCAG contrast: https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html
+- **S12** WCAG target size: https://www.w3.org/WAI/WCAG22/Understanding/target-size-minimum.html
+
+### Swiss and vendor references consulted
+
+- **S13** EDÖB, KI und Datenschutz: https://www.edoeb.admin.ch/de/ki-und-datenschutz — DSG applies to AI; transparency/privacy and high-risk impact assessment.
+- **S14** EDÖB, Arbeitgeber: https://www.edoeb.admin.ch/de/datenbearbeitung-durch-den-arbeitgeber — purpose/necessity and protection of employee data.
+- **S15** BAG GesBG FAQ: https://www.bag.admin.ch/de/haeufige-fragen-faq-zum-gesundheitsberufegesetz-gesbg — no universal activity entitlement table from job titles.
+- **S16** Swissmedic medical-device FAQ: https://www.swissmedic.ch/swissmedic/en/home/medical-devices/regulation-of-medical-devices/faq.html — intended medical purpose and links to software qualification guidance. Consult the current software information sheet for formal review.
+- **S17** WigaSoft WiCare product/interface information: https://www.wigasoft.ch/dokumentationsloesungen/wicare-doc-l/index_rai/ — product capabilities and Gate/SOAP/export entry points, not a private API contract.
+- **S18** careCoach official product: https://www.topcare.ch/carecoach — existing documentation/mobile/voice/integration capabilities; product descriptions are not write-API specifications.
+
+### Further primary sources to verify for affected implementation
+
+- Codex repo instructions: https://developers.openai.com/codex/guides/agents-md
+- OpenAI function calling and structured outputs: https://developers.openai.com/api/docs/guides/function-calling and https://developers.openai.com/api/docs/guides/structured-outputs
+- OpenAI data controls: https://developers.openai.com/api/docs/guides/your-data
+- OpenAI audio: https://developers.openai.com/api/docs/guides/speech-to-text and https://developers.openai.com/api/docs/guides/text-to-speech
+- Swiss nursing reimbursement: https://www.bag.admin.ch/de/krankenversicherung-pflegeleistungen
+- Patient-data disclosure: https://www.edoeb.admin.ch/de/bekanntgabe-von-patientendaten
+- Employee monitoring: https://www.edoeb.admin.ch/de/technische-mittel-zur-uberwachung-am-arbeitsplatz
+- Swiss FHIR guides, HL7 R4, PostgreSQL row-security/transactions, OIDC and current SDK documentation; pin exact chosen versions.
+- Applicable SRK, OdASanté/SBFI, professional association, cantonal and institution-approved role/procedure sources; actual vendor contracts and sandbox behavior.
+- Swiss Red Cross emblem guidance and appropriate independent trademark/brand review before public production branding.
+
+Record actual access date, version, implication and unresolved question for each material source in `docs/research/VERIFIED_SOURCES.md`. If a source is missing or changes, identify that explicitly; never substitute a tutorial or model assertion for a private technical contract, professional approval or law.
+
+## Final instruction
+
+Finish the working product in this one bounded programme of complete slices. Keep the code, runtime Markdown, workflow metadata, tests, UI and operator evidence aligned. Do not end with another unexecuted roadmap or promise of background work.
+
+> **Configurable procedures. Adaptable intelligence. Enforced boundaries. Reliable accepted work.**

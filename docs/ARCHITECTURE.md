@@ -1,7 +1,7 @@
 # Pflegehelfer production architecture
 
 Status: canonical target architecture
-Last verified: 2026-09-12
+Last verified: 2026-09-13
 
 This is the single architectural source of truth. Product behaviour is in `PRODUCT_EXPERIENCE.md`; configurable journeys are in `WORKFLOWS.md`. ADRs explain decisions but do not override this document.
 
@@ -65,6 +65,8 @@ On sign-in the server resumes the open session or starts the institution’s act
 
 Workflow definitions are schema-validated data, not code. They contain allowlisted step kinds, completion predicates, role eligibility, prompts, escalation rules and component handles. They cannot contain JavaScript, SQL, URLs, arbitrary expressions/OpenUI, policy grants, approval weakening or provider credentials. Workflow Studio supports draft, validation, preview, immutable publish, deliberate activation, rollback-by-new-version and audit.
 
+Human guidance is loaded from an immutable reviewed directory pack rooted under `config/`: one base instruction plus the exact institution, department, station, actor role and optional workflow skill. Every file is independently SHA-256 pinned in the published manifest and the whole snapshot has a stable digest. The loader rejects path traversal, symlinks, URLs, executable markup, remote includes, policy-override text, invalid UTF-8 and oversized packs. Markdown can guide language and tool selection but cannot grant an action; typed site configuration remains bound to central role ceilings. Actor assignments explicitly name their role profile and station, so policy never depends on directory or manifest order.
+
 Reference journeys:
 
 1. Nursing: sign-in → delta handover → prioritize → select patient → perform/document tasks and alarms → communicate/escalate → review/sign → handover → reconciliation.
@@ -97,13 +99,12 @@ There are two catalogs:
 Processing order:
 
 1. Authenticate; resolve organization, role, session, thread, patient context and purpose.
-2. Read the minimum authorized FHIR/workflow projection and audit disclosure.
-3. Build a generic typed `AssistantProposal` containing understood facts, work performed, observations, task changes, communications, workflow actions, ambiguities and evidence. A model may propose meaning, but deterministic code independently validates every executable sub-schema.
-4. Render the validated candidates through the allowlisted deterministic composer. A configured model may later compose bounded presentation using opaque candidate handles, but that path is not claimed complete until it passes the same catalog/grounding tests. Local models are the production default; hosted endpoints are synthetic-demo only.
-5. Stream non-executable OpenUI fragments.
-6. Validate the complete program: catalog, bounds, candidate ownership, context revision, evidence/source versions, workflow and policy.
-7. Persist the validated internal proposal and issue action authority server-side.
-8. Send the final authoritative frame that can open deterministic review.
+2. Resolve the immutable instruction pack and the actor's explicit role-profile/station/workflow binding.
+3. For natural read/navigation requests, let one bounded model choose from request-specific typed read tools, observe each authorized result and either choose another tool or stop. Budgets cap turns, calls, time, repeats and result bytes. SQL, shell, arbitrary HTTP, approval, publish and final-write tools do not exist in the registry.
+4. Hydrate clinical facts and the leading GenUI response deterministically from the selected server projection. Free model prose is never treated as a clinical fact; a successful harmless tool call cannot launder an invented answer. Tool results are marked untrusted data and remain thread/patient/encounter scoped.
+5. For documentation or work changes, build a generic typed `AssistantProposal` containing understood facts, work performed, observations, task changes, communications, workflow actions, ambiguities and evidence. A model may propose meaning, but deterministic code independently validates every executable sub-schema.
+6. Stream non-executable OpenUI fragments, validate catalog/bounds/context/evidence/workflow/policy, persist the validated proposal and only then issue server-side review authority.
+7. Send the final authoritative frame that can open deterministic review. AI-disabled or failed-agent mode uses the same safe deterministic commands and explicitly reports degradation.
 
 Malformed, incomplete, unsupported or disconnected streams create no intent or clinical mutation. The deterministic composer is a first-class fallback, not a pretend LLM. AI-disabled mode preserves critical workflows.
 

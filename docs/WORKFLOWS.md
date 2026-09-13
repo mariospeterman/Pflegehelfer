@@ -4,7 +4,7 @@
 
 Allowlisted step kinds are `orientation`, `context-selection`, `work-queue`, `documentation`, `review`, `handover`, `reconciliation`, and `completion`. Predicates are bounded comparisons over server state. Definitions cannot grant permission, skip policy review, contain executable code/URLs/arbitrary OpenUI, auto-select patients or enable providers.
 
-The executable demo configuration is the strictly validated `config/sites/tertianum-kronenhof.json`; this Markdown file explains it for humans and is not parsed as executable policy. Configuration may select permissions and workflows but can never grant an action outside the allowlisted policy vocabulary.
+The executable demo rules are the strictly validated `config/sites/tertianum-kronenhof.json`. The active directory manifest under `config/sites/packs/tertianum-kronenhof/` pins that rule file plus reviewed institution, department, station, role, provider and workflow Markdown. The Markdown reaches the bounded model as human guidance but is never executable policy: it cannot grant actions, change role ceilings, approve work or enable a provider.
 
 ## Nursing day (`nursing-day`, version 2)
 
@@ -25,7 +25,7 @@ The early-shift demo assigns six fictional patients to the care assistant and re
 
 ## Site and role configuration
 
-The selected immutable site pack owns institution/site/department identity, timezone, session TTL, shift windows and next responsible actor, provider-route intent, role-to-workflow/action profiles, independent-review qualifications, staff-to-shift/patient assignment and demo responsibilities. `PFH_SITE_PACK_PATH` selects the pack at process start. Zod validation rejects missing workflow references, unknown actions, permission expansion beyond the centrally reviewed role ceiling, duplicate staff or patient assignments and references to unknown shifts/patients. Tests accept 2- and 12-patient assignments. The second fictional institution proves different shifts, provider routes, workflow version/language and a three-patient care-assistant assignment without TypeScript changes. A governed published-configuration store and in-product Studio remain incomplete.
+The selected immutable site pack owns institution/site/department identity, timezone, session TTL, shift windows and next responsible actor, provider-route intent, role-to-workflow/action profiles, independent-review qualifications, staff-to-shift/patient assignment and demo responsibilities. `PFH_SITE_PACK_PATH` selects a directory pack at process start; a legacy JSON file is recognized only as `legacy-imported` and supplies no runtime guidance. Each staff assignment explicitly binds a role-profile and station. Zod plus manifest validation rejects missing workflow references, unknown actions, permission expansion beyond the centrally reviewed role ceiling, mismatched actor roles/stations, duplicate staff or patient assignments and references to unknown shifts/patients. Tests accept 2- and 12-patient assignments. The second fictional institution proves different shifts, provider routes, workflow guidance and a three-patient care-assistant assignment without TypeScript changes. A governed database publication/signature lifecycle and in-product Studio remain incomplete.
 
 ## Physician and other roles
 

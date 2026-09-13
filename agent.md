@@ -22,6 +22,7 @@ Do not introduce `Focus`, separate workflow applications, dashboard projections,
 - Models interpret/compose; deterministic server code authorizes, validates, versions and executes.
 - Writes requiring review remain draft until explicit approval and visibly pending until external acknowledgement.
 - Site packs may narrow centrally reviewed role ceilings and assign reviewer qualifications; they never grant new authority.
+- Published directory packs SHA-pin the exact base/site/department/station/role/workflow/provider Markdown supplied to the bounded model. Actor role-profile and station are explicit assignments, never array-order guesses. The model may select only request-scoped typed tools and observe bounded results; clinical facts and executable GenUI remain server-grounded.
 - FHIR identifiers, tags, cleanup and legacy migrations are bound to institution/site. Unscoped legacy state is default-denied; a one-way import additionally needs an exact digest-bound resource inventory and an elapsed old-receipt retention gate.
 
 The baseline excludes microservices, Flowable, NATS/Kafka, vector databases and Kubernetes without measured need/new ADR.
