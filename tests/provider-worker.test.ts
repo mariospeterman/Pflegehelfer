@@ -10,6 +10,7 @@ import {
   type ProviderErrorClassification,
   type ProviderOutboxJob,
 } from "../src/core/provider-integration/index.js";
+import { PflegehelferService } from "../src/core/service.js";
 
 function command(key: string): CanonicalClinicalCommand {
   const id = randomUUID();
@@ -116,6 +117,44 @@ describe("bounded provider delivery worker", () => {
       expect(canonicalClinicalCommandSchema.safeParse(invalid).success).toBe(
         false,
       );
+  });
+
+  it("validates service-generated commands without duplicate resource identity", () => {
+    const service = new PflegehelferService();
+    const draft = service.createObservationDraft("u-nurse", {
+      patientId: "p-anna",
+      encounterId: "enc-anna-2026",
+      code: "temperature",
+      value: 37.8,
+      effectiveAt: "2026-09-13T08:00:00.000Z",
+    });
+    service.approve("u-nurse", "observation", draft.id, {
+      expectedVersion: draft.version,
+      patientMrn: "SH-260901-001",
+      patientBirthDate: "1941-03-18",
+      reviewedDiff: true,
+    });
+
+    const pending = service.pendingProviderCommands();
+    expect(pending).toHaveLength(1);
+    expect(() =>
+      canonicalClinicalCommandSchema.parse(pending[0]!.command),
+    ).not.toThrow();
+    expect(pending[0]!.command).toMatchObject({
+      patientReference: "Patient/p-anna",
+      encounterReference: "Encounter/enc-anna-2026",
+      resource: {
+        id: draft.id,
+        body: {
+          patientId: "p-anna",
+          encounterId: "enc-anna-2026",
+        },
+      },
+    });
+    expect(pending[0]!.command.resource.body).not.toHaveProperty("id");
+    expect(pending[0]!.command.resource.body).not.toHaveProperty(
+      "resourceType",
+    );
   });
 
   it("delivers a leased command through the configured simulator", async () => {

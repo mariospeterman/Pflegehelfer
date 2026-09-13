@@ -1669,6 +1669,25 @@ export class PflegehelferService {
     return this.state.outbox.map((item) => this.outboxSummary(item));
   }
 
+  pendingProviderCommands(): Array<{
+    provider: ProviderId;
+    profile: ProviderProfile;
+    command: CanonicalClinicalCommand;
+    retrySafety: "idempotent-provider" | "reconcile-before-retry";
+  }> {
+    return this.state.outbox
+      .filter((item) => ["pending", "processing"].includes(item.state))
+      .map((item) => ({
+        provider: item.provider,
+        profile: this.providerProfile,
+        command: this.providerCommand(item),
+        retrySafety:
+          this.providerProfile === "synthetic-simulator"
+            ? ("idempotent-provider" as const)
+            : ("reconcile-before-retry" as const),
+      }));
+  }
+
   hasPendingProviderWork(): boolean {
     return this.state.outbox.some((item) =>
       ["pending", "processing"].includes(item.state),
@@ -1903,6 +1922,9 @@ export class PflegehelferService {
         "Provider-Befehl benötigt einen gebundenen Fall.",
         409,
       );
+    const resourceBody = clone(resource) as unknown as Record<string, unknown>;
+    delete resourceBody.id;
+    delete resourceBody.resourceType;
     return {
       commandId: item.id,
       operation:
@@ -1925,7 +1947,7 @@ export class PflegehelferService {
                 ? "Task"
                 : "Communication",
         id: item.aggregateId,
-        body: clone(resource) as unknown as Readonly<Record<string, unknown>>,
+        body: resourceBody,
       },
       expectedProviderVersion: item.expectedProviderVersion,
       mappingVersion: resource.source.mappingVersion,
