@@ -222,6 +222,16 @@ function WorkdayCard({
     "idle" | "playing" | "paused"
   >("idle");
   const [readoutRate, setReadoutRate] = useState(1);
+  const [expandedHandoverPatientId, setExpandedHandoverPatientId] = useState<
+    string | null
+  >(
+    workday.handover.patientIds.find(
+      (patientId) =>
+        !workday.handover.acknowledgedPatientIds.includes(patientId),
+    ) ??
+      workday.handover.patientIds[0] ??
+      null,
+  );
   const patientFor = (patientId: string) =>
     patients.find((candidate) => candidate.id === patientId) ?? null;
   const perform = (command: WorkdayCommand, fallback: string) => {
@@ -387,55 +397,79 @@ function WorkdayCard({
                   );
                   const acknowledged =
                     workday.handover.acknowledgedPatientIds.includes(patientId);
+                  const expanded = expandedHandoverPatientId === patientId;
                   if (!listedPatient) return null;
                   return (
                     <section className="workday-row" key={patientId}>
-                      <button
-                        className="workday-patient"
-                        disabled={busy}
-                        onClick={() => selectPatient(patientId)}
-                      >
-                        <strong>
-                          {listedPatient.room} · {listedPatient.displayName}
-                        </strong>
-                        <dl className="handover-sections">
-                          <div>
-                            <dt>Seit letzter Übergabe</dt>
-                            <dd>
-                              {frozen?.recentChanges.join(" · ") ||
-                                "Keine neuen Einträge"}
-                            </dd>
+                      <div className="workday-patient-block">
+                        <button
+                          className="workday-patient"
+                          disabled={busy}
+                          aria-expanded={expanded}
+                          aria-controls={`handover-detail-${patientId}`}
+                          onClick={() => {
+                            setExpandedHandoverPatientId(patientId);
+                            selectPatient(patientId);
+                          }}
+                        >
+                          <strong>
+                            {listedPatient.room} · {listedPatient.displayName}
+                          </strong>
+                          <span>
+                            {plannedCare?.title ?? "Pflegeplanung prüfen"} ·{" "}
+                            {acknowledged ? "geprüft" : "noch zu prüfen"}
+                          </span>
+                        </button>
+                        {expanded && (
+                          <div
+                            className="handover-expanded"
+                            id={`handover-detail-${patientId}`}
+                          >
+                            <dl className="handover-sections">
+                              <div>
+                                <dt>Seit letzter Übergabe</dt>
+                                <dd>
+                                  {frozen?.recentChanges.join(" · ") ||
+                                    "Keine neuen Einträge"}
+                                </dd>
+                              </div>
+                              <div>
+                                <dt>Aktuell wichtig</dt>
+                                <dd>
+                                  {frozen?.currentImportant.join(" · ") ||
+                                    "Keine besonderen Hinweise"}
+                                </dd>
+                              </div>
+                              <div>
+                                <dt>Heute geplant</dt>
+                                <dd>
+                                  {plannedCare?.title ?? "Pflegeplanung prüfen"}{" "}
+                                  ·{" "}
+                                  {plannedCare?.reason ??
+                                    "Keine offene Begründung"}
+                                </dd>
+                              </div>
+                              <div>
+                                <dt>Offene Fragen</dt>
+                                <dd>
+                                  {frozen?.openQuestions.join(" · ") || "Keine"}
+                                </dd>
+                              </div>
+                            </dl>
+                            <details className="handover-technical">
+                              <summary>Technische Details</summary>
+                              <small>
+                                Fall {frozen?.encounterId ?? "nicht gebunden"} ·
+                                Eingefroren{" "}
+                                {new Date(
+                                  workday.handover.cutoffAt,
+                                ).toLocaleString("de-CH")}
+                                , Version {workday.handover.version}
+                              </small>
+                            </details>
                           </div>
-                          <div>
-                            <dt>Aktuell wichtig</dt>
-                            <dd>
-                              {frozen?.currentImportant.join(" · ") ||
-                                "Keine besonderen Hinweise"}
-                            </dd>
-                          </div>
-                          <div>
-                            <dt>Heute geplant</dt>
-                            <dd>
-                              {plannedCare?.title ?? "Pflegeplanung prüfen"} ·{" "}
-                              {plannedCare?.reason ?? "Keine offene Begründung"}
-                            </dd>
-                          </div>
-                          <div>
-                            <dt>Offene Fragen</dt>
-                            <dd>
-                              {frozen?.openQuestions.join(" · ") || "Keine"}
-                            </dd>
-                          </div>
-                        </dl>
-                        <small>
-                          Fall {frozen?.encounterId ?? "nicht gebunden"} ·
-                          Eingefroren{" "}
-                          {new Date(workday.handover.cutoffAt).toLocaleString(
-                            "de-CH",
-                          )}
-                          , Version {workday.handover.version}
-                        </small>
-                      </button>
+                        )}
+                      </div>
                       <button
                         className={
                           acknowledged ? "status-button done" : "status-button"
@@ -797,6 +831,7 @@ export function AssistantSurface({
   const [episodeDrafts, setEpisodeDrafts] = useState<Record<string, string>>(
     {},
   );
+  const [keyboardInset, setKeyboardInset] = useState(0);
   const recognition = useRef<SpeechRecognitionLike | null>(null);
   const mediaRecorder = useRef<MediaRecorder | null>(null);
   const mediaStream = useRef<MediaStream | null>(null);
@@ -822,6 +857,22 @@ export function AssistantSurface({
   );
 
   useEffect(() => setEpisodeDrafts({}), [userId]);
+
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+    const update = () =>
+      setKeyboardInset(
+        Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop),
+      );
+    update();
+    viewport.addEventListener("resize", update);
+    viewport.addEventListener("scroll", update);
+    return () => {
+      viewport.removeEventListener("resize", update);
+      viewport.removeEventListener("scroll", update);
+    };
+  }, []);
 
   const activeEpisodeId = workday?.activeEpisode?.id ?? null;
   const episodeEvidence = activeEpisodeId
@@ -1818,7 +1869,7 @@ export function AssistantSurface({
         )}
       </div>
 
-      <div className="composer-dock">
+      <div className="composer-dock" style={{ bottom: keyboardInset }}>
         <div className="quick-prompts" aria-label="Schnellzugriffe">
           {quickPrompts.map((label) => (
             <button

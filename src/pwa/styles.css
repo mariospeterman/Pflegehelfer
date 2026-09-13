@@ -895,6 +895,26 @@ input:focus-visible {
   padding: 4px 0;
   cursor: pointer;
 }
+.workday-patient-block {
+  min-width: 0;
+}
+.workday-patient[aria-expanded="true"] strong {
+  color: var(--blue);
+}
+.handover-expanded {
+  padding: 0 4px 4px;
+}
+.handover-technical {
+  color: var(--muted);
+  font-size: 10px;
+}
+.handover-technical summary {
+  cursor: pointer;
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  font-weight: 700;
+}
 .workday-patient span,
 .workday-patient small,
 .episode-controls > span {
@@ -1622,6 +1642,13 @@ button:disabled {
   }
   .composer-meta {
     padding-inline: 4px;
+  }
+  .assistant-composer {
+    min-height: 70px;
+  }
+  .composer-input textarea {
+    min-height: 52px;
+    padding-block: 8px;
   }
   .quick-prompts {
     margin-right: -12px;

@@ -1613,18 +1613,34 @@ export function buildApp(
             item.encounterId === patient.encounterId &&
             item.state !== "closed",
         )
-        .map(
-          (item) =>
-            `Rückfrage an ${item.recipientId ?? item.recipientRole}: ${item.request} (${
-              {
-                sent: "gesendet",
-                acknowledged: "bestätigt",
-                answered: "beantwortet",
-                closed: "geschlossen",
-                escalated: "eskaliert",
-              }[item.state]
-            })`,
-        );
+        .map((item) => {
+          const recipient = item.recipientId
+            ? service.user(item.recipientId).displayName
+            : {
+                "care-assistant": "Pflegeassistenz-Dienst",
+                "registered-nurse": "Pflegefachdienst",
+                physician: "Ärztlicher Dienst",
+                pharmacy: "Apotheke",
+                physiotherapy: "Physiotherapie",
+                "occupational-therapy": "Ergotherapie",
+                transport: "Transportdienst",
+                service: "Service",
+                administration: "Administration",
+                management: "Management",
+                hr: "Personal",
+                it: "IT",
+                "quality-safety": "Qualität & Sicherheit",
+              }[item.recipientRole];
+          return `Rückfrage an ${recipient}: ${item.request} (${
+            {
+              sent: "gesendet",
+              acknowledged: "bestätigt",
+              answered: "beantwortet",
+              closed: "geschlossen",
+              escalated: "eskaliert",
+            }[item.state]
+          })`;
+        });
       return {
         patientId,
         encounterId: patient.encounterId,
