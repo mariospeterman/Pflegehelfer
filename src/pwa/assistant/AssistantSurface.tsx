@@ -151,6 +151,20 @@ interface ContextMessage {
 
 type ConversationMessage = ChatMessage | ContextMessage;
 
+function archiveSupersededDrafts(
+  messages: ConversationMessage[],
+): ConversationMessage[] {
+  return messages.map((message) =>
+    message.kind !== "context" &&
+    !message.execution &&
+    message.response.components.some(
+      (component) => component.type === "DraftAction",
+    )
+      ? { ...message, archived: true }
+      : message,
+  );
+}
+
 const completedActionOpenUi = [
   "root = ClinicalStack([item0])",
   'item0 = AssistantMessage("Die bestätigte Änderung wurde sicher übernommen.")',
@@ -917,12 +931,26 @@ export function AssistantSurface({
         };
       })
       .then(({ turns }) => {
-        const restored: ConversationMessage[] = turns.map((turn) => ({
-          kind: "turn",
-          id: turn.id,
-          prompt: turn.prompt,
-          response: turn.response,
-        }));
+        const restored: ConversationMessage[] = archiveSupersededDrafts(
+          turns.map((turn) => ({
+            kind: "turn",
+            id: turn.id,
+            prompt: turn.prompt,
+            response: turn.response,
+          })),
+        );
+        const latestDraftIndex = restored.findLastIndex(
+          (message) =>
+            message.kind !== "context" &&
+            message.response.components.some(
+              (component) => component.type === "DraftAction",
+            ),
+        );
+        if (latestDraftIndex >= 0) {
+          const latestDraft = restored[latestDraftIndex];
+          if (latestDraft && latestDraft.kind !== "context")
+            latestDraft.archived = false;
+        }
         setMessages(
           conversationPatientId && conversationEncounterId
             ? [
@@ -1119,7 +1147,7 @@ export function AssistantSurface({
           if (frame.type === "start") {
             activeId = frame.response.id;
             rememberMessages((current) => [
-              ...current,
+              ...archiveSupersededDrafts(current),
               {
                 kind: "turn",
                 id: frame.response.id,
@@ -1602,7 +1630,15 @@ export function AssistantSurface({
                       automatisch ausgeführt
                     </div>
                   )}
-                  {renderable ? (
+                  {message.archived ? (
+                    <div
+                      className="assistant-card archived-draft"
+                      role="status"
+                    >
+                      Korrektur übernommen. Diese frühere Auswahl ist nicht
+                      mehr gültig.
+                    </div>
+                  ) : renderable ? (
                     <Renderer
                       response={message.response.openUi}
                       library={clinicalAssistantLibrary}
