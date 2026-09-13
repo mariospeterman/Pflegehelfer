@@ -14,7 +14,7 @@ Completed coherent increments:
 3. The configured model can select bounded read tools, observe scoped results and continue; the server alone hydrates clinical facts/GenUI and all writes remain in the existing reviewed proposal pipeline.
 4. A separate relational provider-worker kernel implements validated write-only commands, deduplication, leases, bounded recovery, receipt polling and manual quarantine.
 
-Next vertical slice remains G1, not a new fork: move accepted local commands and the provider enqueue into one PostgreSQL transaction, start the leased worker from the application, project its states to the existing GenUI, prove two-worker/restart behavior against PostgreSQL and then remove the checkpoint outbox. After that, proceed to resource-native Medplum reconstruction and G3 shared-thread ACLs. Do not connect both queue implementations in parallel or call the isolated kernel production-complete.
+Next vertical slice remains G1, not a new fork: persist an actor/purpose/policy/authority-revision envelope with each accepted command, move accepted local commands and provider enqueue into one PostgreSQL transaction, reauthorize the envelope in the leased worker, project its states to the existing GenUI, prove two-worker/restart behavior against PostgreSQL and then remove the checkpoint outbox. After that, proceed to resource-native Medplum reconstruction and G3 shared-thread ACLs. Do not connect both queue implementations in parallel or call the isolated kernel production-complete.
 
 ## 2026-09-12 scoped patient-workspace refinement
 

@@ -144,14 +144,14 @@ Trace these paths end to end:
 6. Handover → plan → interruption → completion/defer → actual receiving shift.
 7. Improvement proposal → reviewed configuration change → activation → measured result.
 
-Verify these inherited source-level findings:
+Verify these inherited source-level findings. They describe the rechecked baseline at `b6d76d9`, not the current branch; resolved items remain here as acceptance history and current evidence belongs in `IMPLEMENTATION_STATUS.md` and `COMPLETION_MATRIX.md`:
 
-- `src/core/site-config.ts` currently reads one JSON file at module initialization; roles and provider destinations are enumerated, the department is singular, and `workflows.ts` returns configured descriptions rather than a complete configurable workflow runner. Do not replace this with an arbitrary-code workflow engine; extend reviewed step types and predicates.
-- `tools/pfhctl.ts` currently validates two hard-coded site files instead of an arbitrary pack path.
+- Baseline finding, partially resolved by the directory-v2 runtime loader and shared guidance catalog: `src/core/site-config.ts` read one JSON file at module initialization; roles and provider destinations were enumerated, the department was singular, and `workflows.ts` returned configured descriptions rather than a complete configurable workflow runner. Do not replace this with an arbitrary-code workflow engine; extend reviewed step types and predicates.
+- Baseline finding, resolved for arbitrary pack validation: `tools/pfhctl.ts` validated two hard-coded site files instead of an arbitrary pack path.
 - Most non-nursing roles share `support-day`; FaGe and HF/FH are not properly represented as separate configurable profiles.
-- Model prompts remain in TypeScript; developer `AGENTS.md` is not automatically runtime guidance. The gateway's current `classify`/`planCareUpdate` calls do not implement a model-selected sequence of authorized tools with tool-result feedback. Loading Markdown into those calls alone is not completion of the runtime-agent requirement.
+- Baseline finding, resolved for the bounded read-tool loop while model-driven draft-tool work remains: model prompts remained in TypeScript; developer `AGENTS.md` was not runtime guidance, and the gateway's `classify`/`planCareUpdate` calls did not implement a model-selected sequence of authorized tools with tool-result feedback. Loading Markdown alone is not completion of the runtime-agent requirement.
 - The proposal verifier still insists on some fixed German messages and handwritten semantic patterns. Do not add more brittle branches as the default response.
-- The migration runner verifies recorded checksums after applying pending SQL. Verify history before ANY new schema/data change, with an explicit safe legacy-attestation path.
+- Baseline finding, resolved by verify-before-migrate under the advisory lock: the migration runner verified recorded checksums after applying pending SQL. Continue to verify history before ANY new schema/data change, with an explicit safe legacy-attestation path.
 - Clinical reconstruction still depends on the entire application checkpoint. Provider work is not yet fully relational/leased.
 - Shared patient/team/direct ACL threads, real library/media, persistent proposal resumption, production OIDC/RLS and genuine restore are still listed as incomplete.
 
