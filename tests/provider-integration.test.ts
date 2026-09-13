@@ -20,10 +20,16 @@ function command(idempotencyKey: string): CanonicalClinicalCommand {
     commandId: "command-1",
     operation: "Observation.write",
     patientReference: "Patient/p-anna",
+    encounterReference: "Encounter/e-anna",
     resource: {
       resourceType: "Observation",
       id: "observation-1",
-      body: { status: "final", valueQuantity: { value: 37.8, code: "Cel" } },
+      body: {
+        patientId: "p-anna",
+        encounterId: "e-anna",
+        status: "final",
+        valueQuantity: { value: 37.8, code: "Cel" },
+      },
     },
     expectedProviderVersion: "sim-v1",
     mappingVersion: "ch-core-6.0.0-v1",

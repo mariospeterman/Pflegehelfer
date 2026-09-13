@@ -729,6 +729,7 @@ export class ModelGateway {
   async classify(
     prompt: string,
     context?: AuthorizedModelContext,
+    externalSignal?: AbortSignal,
   ): Promise<IntentClassification> {
     const fallback = deterministicIntent(prompt);
     if (this.mode === "disabled" || this.mode === "deterministic")
@@ -766,6 +767,12 @@ export class ModelGateway {
       };
 
     const controller = new AbortController();
+    const abortFromCaller = () => controller.abort(externalSignal?.reason);
+    if (externalSignal?.aborted) abortFromCaller();
+    else
+      externalSignal?.addEventListener("abort", abortFromCaller, {
+        once: true,
+      });
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
       const contract = this.requestContract(
@@ -831,12 +838,14 @@ export class ModelGateway {
       };
     } finally {
       clearTimeout(timer);
+      externalSignal?.removeEventListener("abort", abortFromCaller);
     }
   }
 
   async planCareUpdate(
     prompt: string,
     context?: AuthorizedModelContext,
+    externalSignal?: AbortSignal,
   ): Promise<ClinicalPlanResult> {
     const inputTimestamp = new Date().toISOString();
     const fallback = deterministicAssistantProposal(prompt, { inputTimestamp });
@@ -854,6 +863,12 @@ export class ModelGateway {
       };
 
     const controller = new AbortController();
+    const abortFromCaller = () => controller.abort(externalSignal?.reason);
+    if (externalSignal?.aborted) abortFromCaller();
+    else
+      externalSignal?.addEventListener("abort", abortFromCaller, {
+        once: true,
+      });
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
       const contract = this.requestContract(
@@ -917,6 +932,7 @@ export class ModelGateway {
       };
     } finally {
       clearTimeout(timer);
+      externalSignal?.removeEventListener("abort", abortFromCaller);
     }
   }
 }

@@ -17,10 +17,16 @@ function command(key: string): CanonicalClinicalCommand {
     commandId: id,
     operation: "Observation.write",
     patientReference: "Patient/p-anna",
+    encounterReference: "Encounter/e-anna",
     resource: {
       resourceType: "Observation",
       id,
-      body: { status: "final", valueQuantity: { value: 37.8, code: "Cel" } },
+      body: {
+        patientId: "p-anna",
+        encounterId: "e-anna",
+        status: "final",
+        valueQuantity: { value: 37.8, code: "Cel" },
+      },
     },
     expectedProviderVersion: "sim-v1",
     mappingVersion: "synthetic-v1",
@@ -98,6 +104,14 @@ describe("bounded provider delivery worker", () => {
         resource: { ...valid.resource, resourceType: "Communication" },
       },
       { ...valid, patientReference: "Encounter/e-anna" },
+      { ...valid, encounterReference: "Patient/p-anna" },
+      {
+        ...valid,
+        resource: {
+          ...valid.resource,
+          body: { ...valid.resource.body, patientId: "p-luca" },
+        },
+      },
     ])
       expect(canonicalClinicalCommandSchema.safeParse(invalid).success).toBe(
         false,

@@ -1897,6 +1897,12 @@ export class PflegehelferService {
 
   private providerCommand(item: OutboxItem): CanonicalClinicalCommand {
     const resource = item.canonicalCommand.resource;
+    if (!resource.encounterId)
+      throw new DomainError(
+        "INVALID_STATE",
+        "Provider-Befehl benötigt einen gebundenen Fall.",
+        409,
+      );
     return {
       commandId: item.id,
       operation:
@@ -1908,6 +1914,7 @@ export class PflegehelferService {
               ? "Task.write"
               : "Communication.write",
       patientReference: `Patient/${item.patientId}`,
+      encounterReference: `Encounter/${resource.encounterId}`,
       resource: {
         resourceType:
           item.aggregateType === "observation"

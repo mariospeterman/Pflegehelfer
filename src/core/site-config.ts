@@ -280,8 +280,14 @@ export const siteConfigurationSchema = z
         .object({
           actorId: z.string().regex(/^[a-z0-9-]+$/),
           role: roleSchema,
-          roleProfileId: z.string().regex(/^[a-z0-9-]+$/),
-          stationId: z.string().regex(/^[a-z0-9-]+$/),
+          roleProfileId: z
+            .string()
+            .regex(/^[a-z0-9-]+$/)
+            .optional(),
+          stationId: z
+            .string()
+            .regex(/^[a-z0-9-]+$/)
+            .optional(),
           shiftId: z.string().regex(/^[a-z0-9-]+$/),
           patientIds: z.array(z.string().regex(/^[a-z0-9-]+$/)).max(40),
         })

@@ -2449,27 +2449,10 @@ export class PostgresOperationalStore
       occurred_at: Date | string;
     }>(
       `SELECT id::text,event_type,payload,occurred_at
-       FROM domain_events d
-       WHERE d.organization_id=$1 AND d.id>$2
-         AND (
-           d.audience @> $3::jsonb
-           OR EXISTS (
-             SELECT 1 FROM assistant_sessions s
-             WHERE s.organization_id=$1 AND s.actor_id=$5
-               AND s.status='active'
-               AND d.audience @> jsonb_build_object(
-                 'roles',jsonb_build_array(s.effective_role)
-               )
-           )
-         )
-       ORDER BY d.id ASC LIMIT $4`,
-      [
-        organizationId,
-        afterId,
-        JSON.stringify({ actorIds: [actorId] }),
-        limit,
-        actorId,
-      ],
+       FROM domain_events
+       WHERE organization_id=$1 AND id>$2 AND audience @> $3::jsonb
+       ORDER BY id ASC LIMIT $4`,
+      [organizationId, afterId, JSON.stringify({ actorIds: [actorId] }), limit],
     );
     return result.rows.map((row) => ({
       id: Number(row.id),

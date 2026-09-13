@@ -517,8 +517,8 @@ export function validateRuntimeSitePackBindings(
     staffAssignments: readonly {
       actorId: string;
       role: string;
-      roleProfileId: string;
-      stationId: string;
+      roleProfileId?: string | undefined;
+      stationId?: string | undefined;
     }[];
   },
   implementedRoles: ReadonlySet<string>,
@@ -559,12 +559,16 @@ export function validateRuntimeSitePackBindings(
     }
   }
   for (const assignment of configuration.staffAssignments) {
-    const role = snapshot.roles[assignment.roleProfileId];
+    const role = assignment.roleProfileId
+      ? snapshot.roles[assignment.roleProfileId]
+      : undefined;
     if (!role || role.capabilityRole !== assignment.role)
       throw new Error(
         `SITE_PACK_ACTOR_ROLE_PROFILE_MISMATCH: ${assignment.actorId}`,
       );
-    const station = snapshot.stations[assignment.stationId];
+    const station = assignment.stationId
+      ? snapshot.stations[assignment.stationId]
+      : undefined;
     if (!station || station.departmentId !== configuration.department.id)
       throw new Error(
         `SITE_PACK_ACTOR_STATION_MISMATCH: ${assignment.actorId}`,

@@ -116,6 +116,50 @@ describe("authorized model context boundary", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it("cancels an in-flight configured model request when the caller disconnects", async () => {
+    let sawModelAbort = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: string, init?: RequestInit) => {
+        const modelSignal = init?.signal;
+        return new Promise<Response>((_resolve, reject) => {
+          modelSignal?.addEventListener(
+            "abort",
+            () => {
+              sawModelAbort = true;
+              reject(new DOMException("Aborted", "AbortError"));
+            },
+            { once: true },
+          );
+        });
+      }),
+    );
+    const gateway = new ModelGateway({
+      PFH_AI_MODE: "hosted-test",
+      PFH_DEMO_MODE: "true",
+      PFH_LLM_DATA_CLASSIFICATION: "synthetic-only",
+      PFH_ALLOW_EXTERNAL_AI: "true",
+      PFH_LLM_API_KEY: "x",
+      PFH_LLM_BASE_URL: "https://synthetic-model.example.invalid/v1",
+      PFH_LLM_MODEL: "fixture",
+    });
+    const caller = new AbortController();
+    const pending = gateway.classify(
+      "Doch erst nach dem Frühstück.",
+      syntheticContext,
+      caller.signal,
+    );
+
+    caller.abort("client-disconnected");
+
+    await expect(pending).resolves.toMatchObject({
+      intent: "unknown",
+      degraded: true,
+      failure: { code: "timeout" },
+    });
+    expect(sawModelAbort).toBe(true);
+  });
+
   it.each([
     {
       label: "refusal",

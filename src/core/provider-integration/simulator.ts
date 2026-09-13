@@ -335,9 +335,9 @@ export class ProviderContractSimulator implements ProviderAdapter {
       recordedAt: timestamp,
       receivedAt: timestamp,
       payload: {
+        ...clone(command.resource.body),
         resourceType: command.resource.resourceType,
         id: command.resource.id,
-        ...clone(command.resource.body),
       },
     });
     stored.applied = true;

@@ -42,6 +42,7 @@ export interface AssistantRequest {
   purpose?: Purpose;
   inputModality?: "typed" | "voice";
   voiceTranscriptConfirmed?: boolean;
+  signal?: AbortSignal;
   workingContext?: {
     organizationId: string;
     sessionId: string;
@@ -393,7 +394,11 @@ export class AssistantService {
             dataClass: request.workingContext.dataClass,
           }
         : undefined;
-    const classified = await this.models.classify(prompt, modelContext);
+    const classified = await this.models.classify(
+      prompt,
+      modelContext,
+      request.signal,
+    );
     // Raw-language safety gates are authoritative even when a configured
     // model chose a broader keyword route.
     let safeIntent = classified.intent;
@@ -463,8 +468,6 @@ export class AssistantService {
               complete: patient !== null,
               data: patient
                 ? {
-                    id: patient.id,
-                    encounterId: patient.encounterId,
                     displayName: patient.displayName,
                     room: patient.room,
                     risks: patient.risks,
@@ -492,17 +495,21 @@ export class AssistantService {
                   task.state !== "completed",
               )
               .slice(0, 20)
-              .map(
-                ({ id, patientId, title, reason, state, priority, dueAt }) => ({
-                  id,
-                  patientId,
+              .map(({ patientId, title, reason, state, priority, dueAt }) => {
+                const subject = snapshot.patients.find(
+                  (candidate) => candidate.id === patientId,
+                );
+                return {
+                  patientLabel: subject
+                    ? `${subject.room} · ${subject.displayName}`
+                    : "Allgemeine Aufgabe",
                   title,
                   reason,
                   state,
                   priority,
                   dueAt,
-                }),
-              );
+                };
+              });
             return Promise.resolve({
               referenceId: `Task/search/${snapshot.serverTime}`,
               freshness: snapshot.serverTime,
@@ -529,6 +536,23 @@ export class AssistantService {
                       item.approvedAt !== null,
                   )
                   .slice(-12)
+                  .map(
+                    ({
+                      label,
+                      value,
+                      secondaryValue,
+                      unit,
+                      effectiveAt,
+                      approvedAt,
+                    }) => ({
+                      label,
+                      value,
+                      secondaryValue,
+                      unit,
+                      effectiveAt,
+                      status: approvedAt ? "independently-accepted" : "draft",
+                    }),
+                  )
               : [];
             return Promise.resolve({
               referenceId: `Observation/search/${snapshot.serverTime}`,
@@ -576,7 +600,24 @@ export class AssistantService {
                       item.encounterId === patient.encounterId)) &&
                   item.state !== "closed",
               )
-              .slice(0, 20);
+              .slice(0, 20)
+              .map(
+                ({
+                  request,
+                  reason,
+                  recipientRole,
+                  priority,
+                  dueAt,
+                  state,
+                }) => ({
+                  request,
+                  reason,
+                  recipientRole,
+                  priority,
+                  dueAt,
+                  state,
+                }),
+              );
             return Promise.resolve({
               referenceId: `Communication/search/${snapshot.serverTime}`,
               freshness: snapshot.serverTime,
@@ -610,7 +651,25 @@ export class AssistantService {
               complete: true,
               data: {
                 summary: snapshot.syncSummary,
-                deliveries: snapshot.outbox.slice(0, 20),
+                deliveries: snapshot.outbox
+                  .slice(0, 20)
+                  .map(
+                    ({
+                      aggregateType,
+                      provider,
+                      state,
+                      errorCode,
+                      errorClassification,
+                      createdAt,
+                    }) => ({
+                      aggregateType,
+                      provider,
+                      state,
+                      errorCode,
+                      errorClassification,
+                      createdAt,
+                    }),
+                  ),
               },
             });
           },
@@ -694,6 +753,7 @@ export class AssistantService {
           ...(!patient ? ["get_sync_status"] : []),
           "load_workflow_skill",
         ],
+        ...(request.signal ? { signal: request.signal } : {}),
       });
       const routeByTool: Partial<
         Record<string, IntentClassification["intent"]>
@@ -1530,7 +1590,11 @@ export class AssistantService {
           });
           break;
         }
-        const planned = await this.models.planCareUpdate(prompt, modelContext);
+        const planned = await this.models.planCareUpdate(
+          prompt,
+          modelContext,
+          request.signal,
+        );
         if (!planned.plan) {
           components.push({
             type: "UnknownState",

@@ -13,36 +13,46 @@ describe("runtime-guided assistant agent", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn((_url: string, init?: RequestInit) => {
-        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        if (typeof init?.body !== "string")
+          throw new Error("Expected a serialized model request");
+        const body = JSON.parse(init.body) as Record<string, unknown>;
         bodies.push(body);
         const format = (body.text as { format?: { name?: string } } | undefined)
           ?.format;
+        const agentDecisions = [
+          {
+            kind: "tool-call",
+            toolName: "load_workflow_skill",
+            input: { skillId: "nursing-early" },
+            text: null,
+            draftReferenceId: null,
+          },
+          {
+            kind: "tool-call",
+            toolName: "get_latest_vitals",
+            input: {},
+            text: null,
+            draftReferenceId: null,
+          },
+          {
+            kind: "tool-call",
+            toolName: "get_handover",
+            input: {},
+            text: null,
+            draftReferenceId: null,
+          },
+          {
+            kind: "answer",
+            toolName: null,
+            input: null,
+            text: "Deine Übergabe ist bereit; zwei Punkte sind noch offen.",
+            draftReferenceId: null,
+          },
+        ];
         const output =
           format?.name === "assistant_intent_v1"
             ? { intent: "unknown" }
-            : agentTurn++ === 0
-              ? {
-                  kind: "tool-call",
-                  toolName: "get_latest_vitals",
-                  input: {},
-                  text: null,
-                  draftReferenceId: null,
-                }
-              : agentTurn === 2
-                ? {
-                    kind: "tool-call",
-                    toolName: "get_handover",
-                    input: {},
-                    text: null,
-                    draftReferenceId: null,
-                  }
-                : {
-                    kind: "answer",
-                    toolName: null,
-                    input: null,
-                    text: "Deine Übergabe ist bereit; zwei Punkte sind noch offen.",
-                    draftReferenceId: null,
-                  };
+            : agentDecisions[agentTurn++];
         return Promise.resolve(
           new Response(
             JSON.stringify({ output_text: JSON.stringify(output) }),
@@ -104,13 +114,14 @@ describe("runtime-guided assistant agent", () => {
     expect(response.runtime.agent).toMatchObject({
       packId: runtimeSitePack.packId,
       packVersion: runtimeSitePack.version,
-      toolCalls: 2,
+      toolCalls: 3,
       status: "answer",
     });
-    expect(response.components[0]).toMatchObject({
-      type: "AssistantText",
-      message: expect.stringContaining("operationaler Übergabe"),
-    });
+    const lead = response.components[0];
+    expect(lead?.type).toBe("AssistantText");
+    if (lead?.type !== "AssistantText")
+      throw new Error("Missing grounded lead");
+    expect(lead.message).toContain("operationaler Übergabe");
     expect(JSON.stringify(response.components)).not.toContain(
       "zwei Punkte sind noch offen",
     );
@@ -134,9 +145,19 @@ describe("runtime-guided assistant agent", () => {
     );
     expect(agentSystemText).toContain("TRUSTED_WORKING_CONTEXT");
     expect(JSON.stringify(bodies[2])).toContain("UNTRUSTED_TOOL_DATA");
-    expect(JSON.stringify(bodies[2])).toContain("observations");
-    expect(JSON.stringify(bodies[2])).not.toContain("Patient/p-");
-    expect(JSON.stringify(bodies[3])).toContain(
+    expect(JSON.stringify(bodies[2])).toContain(
+      runtimeSitePack.instructions["nursing-early"]!.sha256,
+    );
+    expect(JSON.stringify(bodies[2])).toContain(
+      "Begin with the exact versioned handover roster",
+    );
+    expect(JSON.stringify(bodies[2])).not.toContain(
+      runtimeSitePack.instructions.arzt!.body,
+    );
+    expect(JSON.stringify(bodies[3])).toContain("observations");
+    expect(JSON.stringify(bodies[3])).not.toContain("Patient/p-");
+    expect(JSON.stringify(bodies[3])).not.toContain("externalId");
+    expect(JSON.stringify(bodies[4])).toContain(
       "4/6 Patientenkontexte geprüft",
     );
     expect(JSON.stringify(bodies)).not.toContain("synthetic-test-key");

@@ -293,6 +293,7 @@ export const canonicalClinicalCommandSchema = z
     commandId: z.string().trim().min(1).max(200),
     operation: providerCommandOperationSchema,
     patientReference: z.string().regex(/^Patient\/[A-Za-z0-9.-]{1,200}$/),
+    encounterReference: z.string().regex(/^Encounter\/[A-Za-z0-9.-]{1,200}$/),
     resource: canonicalResourceSchema,
     expectedProviderVersion: z.string().trim().min(1).max(200).nullable(),
     mappingVersion: z.string().trim().min(1).max(200),
@@ -314,6 +315,26 @@ export const canonicalClinicalCommandSchema = z
         code: "custom",
         path: ["resource", "resourceType"],
         message: `${command.operation} requires ${expectedResourceType}.`,
+      });
+    const patientId = command.patientReference.slice("Patient/".length);
+    const encounterId = command.encounterReference.slice("Encounter/".length);
+    if (
+      command.resource.body.resourceType !== undefined ||
+      command.resource.body.id !== undefined
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["resource", "body"],
+        message: "Canonical body cannot override resource identity.",
+      });
+    if (
+      command.resource.body.patientId !== patientId ||
+      command.resource.body.encounterId !== encounterId
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["resource", "body"],
+        message: "Canonical body must match patient and encounter references.",
       });
   });
 
