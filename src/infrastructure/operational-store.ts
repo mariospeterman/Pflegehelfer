@@ -129,7 +129,11 @@ function handoverSourceHash(input: {
     .digest("hex");
 }
 
-function workdayConfiguration(actorId: string, role: Role) {
+function workdayConfiguration(
+  actorId: string,
+  role: Role,
+  sessionStartedAt?: string,
+) {
   const assignment = siteConfiguration.staffAssignments.find(
     (candidate) => candidate.actorId === actorId && candidate.role === role,
   );
@@ -145,7 +149,9 @@ function workdayConfiguration(actorId: string, role: Role) {
     shiftId,
     shift,
     patientIds: assignment.patientIds,
-    shiftKey: `${siteConfiguration.siteId}-${facilityDateKey()}-${shiftId}`,
+    shiftKey: `${siteConfiguration.siteId}-${facilityDateKey(
+      sessionStartedAt ? new Date(sessionStartedAt) : new Date(),
+    )}-${shiftId}`,
   };
 }
 
@@ -715,7 +721,11 @@ export class InMemoryOperationalStore implements OperationalStore {
   ): Promise<WorkdayView> {
     await this.getOrStartSession(actorId, role);
     const session = this.sessions.get(actorId)!;
-    const configuredWorkday = workdayConfiguration(actorId, role);
+    const configuredWorkday = workdayConfiguration(
+      actorId,
+      role,
+      session.startedAt,
+    );
     if (session.status === "completed") throw new Error("SHIFT_ALREADY_CLOSED");
     if (command.type === "acknowledge-handover") {
       const handover = [...this.sessions.values()].find(
@@ -732,6 +742,7 @@ export class InMemoryOperationalStore implements OperationalStore {
         !workdayConfiguration(
           handover.actorId,
           handover.effectiveRole,
+          handover.startedAt,
         ).patientIds.includes(command.patientId)
       )
         throw new Error("HANDOVER_VERSION_STALE");
@@ -764,6 +775,7 @@ export class InMemoryOperationalStore implements OperationalStore {
         const assignedPatientIds = workdayConfiguration(
           handover.actorId,
           handover.effectiveRole,
+          handover.startedAt,
         ).patientIds;
         if (
           !assignedPatientIds.every((patientId) =>
@@ -1916,7 +1928,11 @@ export class PostgresOperationalStore
   }
   async getWorkday(actorId: string, role: Role): Promise<WorkdayView> {
     const session = await this.getOrStartSession(actorId, role);
-    const configuredWorkday = workdayConfiguration(actorId, role);
+    const configuredWorkday = workdayConfiguration(
+      actorId,
+      role,
+      session.startedAt,
+    );
     await this.pool.query(
       `INSERT INTO handover_snapshots
          (organization_id,id,department_id,shift_key,version,patient_ids,cutoff_at,source_hash,status,owner_actor_id,created_by,content,content_hash)
@@ -2000,7 +2016,11 @@ export class PostgresOperationalStore
     items: HandoverClinicalSnapshotItem[],
   ): Promise<WorkdayView> {
     const session = await this.getOrStartSession(actorId, role);
-    const configuredWorkday = workdayConfiguration(actorId, role);
+    const configuredWorkday = workdayConfiguration(
+      actorId,
+      role,
+      session.startedAt,
+    );
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
@@ -2197,7 +2217,11 @@ export class PostgresOperationalStore
       throw new Error("WORKDAY_ROLE_DENIED");
     const session = await this.getOrStartSession(actorId, role);
     if (session.status === "completed") throw new Error("SHIFT_ALREADY_CLOSED");
-    const configuredWorkday = workdayConfiguration(actorId, role);
+    const configuredWorkday = workdayConfiguration(
+      actorId,
+      role,
+      session.startedAt,
+    );
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
@@ -4166,7 +4190,11 @@ function buildWorkdayView(
       status: displayedHandoverStatus,
       nextResponsibleActorId:
         siteConfiguration.shifts[
-          workdayConfiguration(session.actorId, session.effectiveRole).shiftId
+          workdayConfiguration(
+            session.actorId,
+            session.effectiveRole,
+            session.startedAt,
+          ).shiftId
         ]!.nextResponsibleActorId,
     },
     plan: handover.content.map((snapshot) => {
@@ -4208,6 +4236,7 @@ function memoryWorkdayView(
   const configuredWorkday = workdayConfiguration(
     handoverSession.actorId,
     handoverSession.effectiveRole,
+    handoverSession.startedAt,
   );
   const clinicalByPatient = new Map(
     (clinicalItems ?? []).map((item) => [item.patientId, item]),
