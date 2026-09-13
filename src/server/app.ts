@@ -1531,8 +1531,31 @@ export function buildApp(
 
   const boundClinicalWorkday = async (actorId: string) => {
     const actor = service.user(actorId);
+    const presentRecipientLabels = (value: string) =>
+      value.replace(
+        /Rückfrage an (u-[^:]+):/g,
+        (_match, recipientId: string) => {
+          try {
+            return `Rückfrage an ${service.user(recipientId).displayName}:`;
+          } catch {
+            return "Rückfrage an zuständige Person:";
+          }
+        },
+      );
+    const presentWorkday = (
+      value: Awaited<ReturnType<OperationalStore["getWorkday"]>>,
+    ) => ({
+      ...value,
+      handover: {
+        ...value.handover,
+        items: value.handover.items.map((item) => ({
+          ...item,
+          openQuestions: item.openQuestions.map(presentRecipientLabels),
+        })),
+      },
+    });
     let workday = await operationalStore.getWorkday(actorId, actor.role);
-    if (workday.handover.clinicalBound) return workday;
+    if (workday.handover.clinicalBound) return presentWorkday(workday);
     const snapshot = service.snapshot(actorId, actor.defaultPurpose);
     const patientById = new Map(
       snapshot.patients.map((patient) => [patient.id, patient]),
@@ -1663,7 +1686,7 @@ export function buildApp(
       workday.handover.version,
       items,
     );
-    return workday;
+    return presentWorkday(workday);
   };
 
   app.get("/api/v1/workday", async (request) => {

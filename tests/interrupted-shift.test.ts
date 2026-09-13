@@ -90,6 +90,10 @@ describe("interrupted nursing shift", () => {
     expect(
       workday.handover.items.find((item) => item.patientId === "p-anna"),
     ).toMatchObject({ encounterId: "enc-anna-2026" });
+    expect(JSON.stringify(workday.handover.items)).not.toContain("u-physician");
+    expect(JSON.stringify(workday.handover.items)).toContain(
+      "Dr. David Keller",
+    );
   }, 30_000);
 
   it("denies a nursing workday without an exact actor and role assignment", async () => {
