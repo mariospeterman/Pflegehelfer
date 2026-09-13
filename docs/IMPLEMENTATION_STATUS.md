@@ -36,6 +36,14 @@ It is **not production-ready for real patient data or clinical use**. Remaining 
 - Provider evidence: focused adapter/worker tests passed 14/14 including forbidden read/medication/mismatched commands, delivery-time authorization denial, retry and uncertain lease recovery. Three real-PostgreSQL worker tests are written but skipped because Docker and `127.0.0.1:5434` were unavailable; the kernel is not yet wired to the live checkpoint outbox and has no durable acceptance-authority envelope.
 - Security regression evidence: the selected eight-suite run passed 118/118 after independent review findings were fixed. Global TypeScript checks passed. Full repository/build/browser/clean-checkout evidence is recorded only after the final audit below; older evidence remains historical.
 
+## Final clean-checkout audit (2026-09-13, implementation SHA `2d04ea0`)
+
+- A detached clean worktree installed the frozen lockfile under explicitly selected Node 24.18.0 and pnpm 11.19.0. Formatting, zero-warning lint, both TypeScript builds, 355/355 enabled tests and the production PWA/API build passed; 16 tests were explicitly skipped because their PostgreSQL, Medplum or real model/audio runtimes were unavailable.
+- Security, operations and air-gap checks passed. The isolated synthetic backup/restore checksum was `7c48022dc064`.
+- The complete Playwright matrix passed 49 enabled journeys across 360 px, 390 px, tablet, 1024 px and 1440 px; 16 state-changing duplicates were intentionally skipped outside their designated viewport.
+- The first clean attempt exposed an undeclared Medplum SDK dependency on the Node `WebSocket` global. `src/infrastructure/node-websocket.ts` now installs the pinned `ws` implementation before Medplum loads, and a regression test disables Node's native global to prove the server still imports.
+- No real PostgreSQL/Medplum containers, accepted model, microphone ASR or TTS runtime was available for this final pass. The historical real-store evidence below was not relabelled as current, and none of those unavailable checks count as passing.
+
 The legacy `QuestionnaireResponse` to `DocumentReference` note projection also still needs a captured previous-release fixture, stronger source-identity verification and migration-time provenance before it can be treated as a production migration. The compatibility path is deliberately narrow and is not completion evidence for that P1.
 
 ## Historical patient-workspace evidence (2026-09-12, implementation SHA `9a0dfde`)
