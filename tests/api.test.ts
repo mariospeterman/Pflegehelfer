@@ -716,21 +716,28 @@ describe("purpose-specific BFF", () => {
       payload: {},
     });
     expect(restored.statusCode).toBe(200);
-    expect(restored.json()).toMatchObject({
-      pending: {
-        response: {
-          components: expect.arrayContaining([
-            expect.objectContaining({
-              type: "DraftAction",
-              kind: "care-update",
-              reviewItems: expect.arrayContaining([
-                expect.objectContaining({ kind: "note" }),
-                expect.objectContaining({ kind: "communication" }),
-              ]),
-            }),
-          ]),
-        },
-      },
+    const restoredDraft = restored
+      .json<{
+        pending: null | {
+          response: {
+            components: Array<{
+              type: string;
+              kind?: string;
+              reviewItems?: Array<{ kind: string }>;
+            }>;
+          };
+        };
+      }>()
+      .pending?.response.components.find(
+        (component) => component.type === "DraftAction",
+      );
+    expect(restoredDraft).toMatchObject({
+      type: "DraftAction",
+      kind: "care-update",
     });
+    expect(restoredDraft?.reviewItems?.map((item) => item.kind)).toEqual([
+      "note",
+      "communication",
+    ]);
   });
 });

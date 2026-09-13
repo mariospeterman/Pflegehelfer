@@ -113,8 +113,8 @@ describe.runIf(Boolean(databaseUrl))(
           provider_version: "sim-v1",
           adapter_version: "1.0.0",
           mapping_version: "synthetic-v1",
-          readback_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
         });
+        expect(receipts.rows[0]?.readback_hash).toMatch(/^[a-f0-9]{64}$/);
       } finally {
         await inspection.query(
           `DELETE FROM provider_receipts WHERE outbox_id=ANY($1::uuid[])`,

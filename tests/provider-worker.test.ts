@@ -203,8 +203,10 @@ describe("bounded provider delivery worker", () => {
       providerVersion: "sim-v1",
       adapterVersion: "1.0.0",
       mappingVersion: "synthetic-v1",
-      contentHash: expect.stringMatching(/^[a-f0-9]{64}$/),
     });
+    expect(store.completed[0]?.readBackEvidence?.contentHash).toMatch(
+      /^[a-f0-9]{64}$/,
+    );
     expect(store.failures).toEqual([]);
   });
 

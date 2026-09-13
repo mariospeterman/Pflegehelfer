@@ -20,14 +20,15 @@ describe("natural coworker degraded operation regression", () => {
       degraded: true,
       failure: "not-configured",
     });
-    expect(response.components).toContainEqual(
-      expect.objectContaining({
-        type: "DraftAction",
-        kind: "nursing-note",
-        preview: expect.stringContaining(
-          "Ich habe ihm beim Anziehen geholfen.",
-        ),
-      }),
+    const draft = response.components.find(
+      (component) => component.type === "DraftAction",
+    );
+    expect(draft).toMatchObject({
+      type: "DraftAction",
+      kind: "nursing-note",
+    });
+    expect(draft?.type === "DraftAction" ? draft.preview : "").toContain(
+      "Ich habe ihm beim Anziehen geholfen.",
     );
     expect(JSON.stringify(response.components)).not.toContain(
       "MedicationReadOnly",

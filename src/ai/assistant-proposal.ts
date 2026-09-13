@@ -2543,10 +2543,12 @@ export function verifyModelProposalAgainstDeterministicCompiler(
     T extends { sourceRecordIds?: string[] | undefined },
   >(
     item: T,
-  ): T =>
-    (item.sourceRecordIds?.length
-      ? item
-      : { ...item, sourceRecordIds: [verifiedSource.id] }) as T;
+  ) =>
+    Object.assign({}, item, {
+      sourceRecordIds: item.sourceRecordIds?.length
+        ? item.sourceRecordIds
+        : [verifiedSource.id],
+    });
   if (
     compiled?.actions.length === 0 &&
     compiled.understoodFacts.some((fact) => fact.polarity === "negated") &&
