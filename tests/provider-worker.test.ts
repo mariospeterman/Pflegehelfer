@@ -60,7 +60,15 @@ function job(
 const authorizeDelivery = () => ({ allowed: true as const });
 
 class RecordingDeliveryStore implements ProviderDeliveryStore {
-  readonly completed: ProviderAcknowledgement[] = [];
+  readonly completed: Array<{
+    acknowledgement: ProviderAcknowledgement;
+    readBackEvidence?: {
+      providerVersion: string;
+      contentHash: string;
+      adapterVersion: string;
+      mappingVersion: string;
+    };
+  }> = [];
   readonly failures: Array<{
     errorCode: string;
     errorClassification: ProviderErrorClassification;
@@ -81,8 +89,14 @@ class RecordingDeliveryStore implements ProviderDeliveryStore {
 
   finishProviderDelivery(input: {
     acknowledgement: ProviderAcknowledgement;
+    readBackEvidence?: {
+      providerVersion: string;
+      contentHash: string;
+      adapterVersion: string;
+      mappingVersion: string;
+    };
   }): Promise<void> {
-    this.completed.push(input.acknowledgement);
+    this.completed.push(input);
     return Promise.resolve();
   }
 
@@ -184,7 +198,13 @@ describe("bounded provider delivery worker", () => {
       manual: 0,
     });
     expect(store.completed).toHaveLength(1);
-    expect(store.completed[0]?.status).toBe("acknowledged");
+    expect(store.completed[0]?.acknowledgement.status).toBe("acknowledged");
+    expect(store.completed[0]?.readBackEvidence).toMatchObject({
+      providerVersion: "sim-v1",
+      adapterVersion: "1.0.0",
+      mappingVersion: "synthetic-v1",
+      contentHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
     expect(store.failures).toEqual([]);
   });
 

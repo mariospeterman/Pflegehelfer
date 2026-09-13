@@ -98,11 +98,23 @@ describe.runIf(Boolean(databaseUrl))(
         ).resolves.toMatchObject({
           rows: [{ state: "delivered", attempts: 1 }],
         });
-        const receipts = await inspection.query(
-          `SELECT id FROM provider_receipts WHERE outbox_id=$1`,
+        const receipts = await inspection.query<{
+          provider_version: string | null;
+          adapter_version: string | null;
+          mapping_version: string | null;
+          readback_hash: string | null;
+        }>(
+          `SELECT provider_version,adapter_version,mapping_version,readback_hash
+           FROM provider_receipts WHERE outbox_id=$1`,
           [first.id],
         );
         expect(receipts.rowCount).toBe(1);
+        expect(receipts.rows[0]).toMatchObject({
+          provider_version: "sim-v1",
+          adapter_version: "1.0.0",
+          mapping_version: "synthetic-v1",
+          readback_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
+        });
       } finally {
         await inspection.query(
           `DELETE FROM provider_receipts WHERE outbox_id=ANY($1::uuid[])`,
