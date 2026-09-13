@@ -80,7 +80,13 @@ export interface ProviderWorkerOptions {
   retryMaximumMs?: number;
   maximumAttempts?: number;
   now?: () => Date;
+  authorizeDelivery: (
+    job: Readonly<ProviderOutboxJob>,
+  ) => Promise<ProviderDeliveryAuthorization> | ProviderDeliveryAuthorization;
 }
+
+export type ProviderDeliveryAuthorization =
+  { allowed: true } | { allowed: false; reason: string };
 
 const workerOptionsSchema = z
   .object({
@@ -121,6 +127,7 @@ function technicalFailure(error: unknown): boolean {
 export class ProviderDeliveryWorker {
   private readonly options: z.infer<typeof workerOptionsSchema> & {
     now: () => Date;
+    authorizeDelivery: ProviderWorkerOptions["authorizeDelivery"];
   };
 
   constructor(
@@ -139,6 +146,7 @@ export class ProviderDeliveryWorker {
         maximumAttempts: options.maximumAttempts ?? 8,
       }),
       now: options.now ?? (() => new Date()),
+      authorizeDelivery: options.authorizeDelivery,
     };
   }
 
@@ -157,6 +165,16 @@ export class ProviderDeliveryWorker {
       manual: 0,
     };
     for (const job of jobs) {
+      const authorization = await this.options.authorizeDelivery(job);
+      if (!authorization.allowed) {
+        await this.manual(
+          job,
+          `DELIVERY_AUTHORIZATION_DENIED:${authorization.reason}`,
+          "authorization",
+        );
+        result.manual += 1;
+        continue;
+      }
       if (job.profile !== this.options.profile) {
         await this.manual(job, "PROVIDER_PROFILE_MISMATCH", "authorization");
         result.manual += 1;

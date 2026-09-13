@@ -57,6 +57,8 @@ function job(
   };
 }
 
+const authorizeDelivery = () => ({ allowed: true as const });
+
 class RecordingDeliveryStore implements ProviderDeliveryStore {
   readonly completed: ProviderAcknowledgement[] = [];
   readonly failures: Array<{
@@ -162,7 +164,11 @@ describe("bounded provider delivery worker", () => {
     const worker = new ProviderDeliveryWorker(
       store,
       createSyntheticProviderRegistry(),
-      { workerId: "worker-a", profile: "synthetic-simulator" },
+      {
+        workerId: "worker-a",
+        profile: "synthetic-simulator",
+        authorizeDelivery,
+      },
     );
 
     await expect(worker.runOnce()).resolves.toEqual({
@@ -183,7 +189,11 @@ describe("bounded provider delivery worker", () => {
     const worker = new ProviderDeliveryWorker(
       store,
       createSyntheticProviderRegistry(),
-      { workerId: "worker-recovery", profile: "synthetic-simulator" },
+      {
+        workerId: "worker-recovery",
+        profile: "synthetic-simulator",
+        authorizeDelivery,
+      },
     );
 
     await expect(worker.runOnce()).resolves.toMatchObject({
@@ -212,6 +222,7 @@ describe("bounded provider delivery worker", () => {
       profile: "synthetic-simulator" as const,
       retryBaseMs: 1_000,
       now: () => new Date("2026-09-13T08:00:00.000Z"),
+      authorizeDelivery,
     };
 
     await expect(
@@ -231,5 +242,36 @@ describe("bounded provider delivery worker", () => {
       }).runOnce(),
     ).resolves.toMatchObject({ retrying: 0, manual: 1 });
     expect(unsafeStore.failures[0]?.retryAt).toBeNull();
+  });
+
+  it("fails closed before adapter execution when delivery authority is revoked", async () => {
+    const store = new RecordingDeliveryStore([job("idempotent-provider")]);
+    const worker = new ProviderDeliveryWorker(
+      store,
+      createSyntheticProviderRegistry(),
+      {
+        workerId: "worker-revoked",
+        profile: "synthetic-simulator",
+        authorizeDelivery: () => ({
+          allowed: false,
+          reason: "authority-revision-revoked",
+        }),
+      },
+    );
+
+    await expect(worker.runOnce()).resolves.toEqual({
+      claimed: 1,
+      delivered: 0,
+      retrying: 0,
+      manual: 1,
+    });
+    expect(store.completed).toEqual([]);
+    expect(store.failures).toEqual([
+      expect.objectContaining({
+        errorCode: "DELIVERY_AUTHORIZATION_DENIED:authority-revision-revoked",
+        errorClassification: "authorization",
+        retryAt: null,
+      }),
+    ]);
   });
 });

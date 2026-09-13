@@ -10,6 +10,7 @@ import { PostgresOperationalStore } from "../src/infrastructure/operational-stor
 
 const databaseUrl = process.env.PFH_OPERATIONAL_DATABASE_URL;
 const { Pool } = pg;
+const authorizeDelivery = () => ({ allowed: true as const });
 
 function command(key: string, id = randomUUID()): CanonicalClinicalCommand {
   return {
@@ -77,6 +78,7 @@ describe.runIf(Boolean(databaseUrl))(
             new ProviderDeliveryWorker(store, registry, {
               workerId,
               profile: "synthetic-simulator",
+              authorizeDelivery,
             }),
         );
         const results = await Promise.all(
@@ -146,6 +148,7 @@ describe.runIf(Boolean(databaseUrl))(
           workerId: "recovery-worker",
           profile: "synthetic-simulator",
           now: () => new Date(base.getTime() + 2_000),
+          authorizeDelivery,
         });
         await expect(recovery.runOnce()).resolves.toMatchObject({
           claimed: 2,
@@ -213,6 +216,7 @@ describe.runIf(Boolean(databaseUrl))(
           profile: "synthetic-simulator",
           retryBaseMs: 1_000,
           now: () => start,
+          authorizeDelivery,
         });
         await expect(first.runOnce()).resolves.toMatchObject({
           claimed: 1,
@@ -223,6 +227,7 @@ describe.runIf(Boolean(databaseUrl))(
           workerId: "receipt-poller",
           profile: "synthetic-simulator",
           now: () => new Date(start.getTime() + 2_000),
+          authorizeDelivery,
         });
         await expect(second.runOnce()).resolves.toMatchObject({
           claimed: 1,
