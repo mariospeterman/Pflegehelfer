@@ -720,7 +720,7 @@ export function requiresDedicatedClinicalWorkflow(source: string): boolean {
         clause,
       ) && !/\b(?:soll|muss|darf|sollen|müssen|dürfen|bitte)\b/i.test(clause);
     const safetySensitiveSubject =
-      /\b(?:medikament\w*|tablette\w*|kapsel\w*|tropfen\w*|tropf|insulin|marcumar|morphin|heparin|antibiotik\w*|spritze\w*|injektion\w*|infusion\w*|\w*katheter\w*|sonde(?:n)?|drainage\w*|\w*kanül\w*|leitung\w*|sauerstoff|o2|beatmung|wund(?:e|en|versorgung)?|verband\w*|therapie\w*|behandlung\w*|diagnos\w*)\b/i.test(
+      /\b(?:medikament\w*|tablette\w*|kapsel\w*|tropfen\w*|tropf|insulin|marcumar|morphin|heparin|antibiotik\w*|spritze\w*|injektion\w*|infusion\w*|\w*katheter\w*|sonde(?:n)?|drainage\w*|\w*kanül\w*|leitung\w*|sauerstoff|o2|beatmung|wund(?:e|en|versorgung)?|verband\w*|kompressionsstrümpf\w*|therapie\w*|behandlung\w*|diagnos\w*)\b/i.test(
         clause,
       );
     const normalizedClause = clause.replace(
@@ -796,7 +796,7 @@ export function requiresDedicatedClinicalWorkflow(source: string): boolean {
  */
 export function requiresDedicatedTaskWorkflow(source: string): boolean {
   const sensitiveSubject =
-    /\b(?:medikament\w*|präparat\w*|tablette\w*|kapsel\w*|tropfen\w*|insulin|marcumar|morphin|heparin|antibiotik\w*|spritze\w*|injektion\w*|infusion\w*|\w*katheter\w*|sonde(?:n)?|drainage\w*|\w*kanül\w*|sauerstoff|o2|beatmung|wund(?:e|en|versorgung)?|verband\w*|therapie\w*|behandlung\w*|diagnos\w*|reanimier\w*|defibrillier\w*|sedier\w*|intubier\w*|fixier\w*)\b|\b\d+(?:[,.]\d+)?\s*(?:mg|ie|i\.e\.)\b/iu.test(
+    /\b(?:medikament\w*|präparat\w*|tablette\w*|kapsel\w*|tropfen\w*|insulin|marcumar|morphin|heparin|antibiotik\w*|spritze\w*|injektion\w*|infusion\w*|\w*katheter\w*|sonde(?:n)?|drainage\w*|\w*kanül\w*|sauerstoff|o2|beatmung|wund(?:e|en|versorgung)?|verband\w*|kompressionsstrümpf\w*|therapie\w*|behandlung\w*|diagnos\w*|reanimier\w*|defibrillier\w*|sedier\w*|intubier\w*|fixier\w*)\b|\b\d+(?:[,.]\d+)?\s*(?:mg|ie|i\.e\.)\b/iu.test(
       source,
     );
   const dedicatedVerb =
@@ -1727,8 +1727,9 @@ export function deterministicAssistantProposal(
     const physicianClause = clauseAt(source, physician.index);
     const sourceSpan = span(source, physicianClause.start, physicianClause.end);
     const communicationDue = dueMinutes(physicianClause.text);
+    const communicationStatus = reportingStatus(physicianClause.text);
     const communicationRequested =
-      reportingStatus(physicianClause.text) === "current" &&
+      communicationStatus === "current" &&
       !/\b(?:wurde|war|erfolgte|erledigt|bereits)\b/i.test(
         physicianClause.text,
       );
@@ -1736,8 +1737,8 @@ export function deterministicAssistantProposal(
       kind: "action",
       label: physician[0],
       polarity: "affirmed",
-      certainty: "certain",
-      reportingStatus: "current",
+      certainty: communicationStatus === "uncertain" ? "uncertain" : "certain",
+      reportingStatus: communicationStatus,
       sourceSpan,
     });
     communications.push({
@@ -1880,6 +1881,13 @@ export function deterministicAssistantProposal(
     facts.every(
       (fact) => fact.polarity === "negated" && fact.kind === "action",
     );
+  const pureNonExecutableCommunication =
+    actions.length === 0 &&
+    communications.length > 0 &&
+    communications.every((communication) => !communication.requested) &&
+    workPerformed.length === 0 &&
+    observations.length === 0 &&
+    taskChanges.length === 0;
   const pureMeasurementCorrection =
     corrections.length > 0 &&
     actions.length > 0 &&
@@ -1910,6 +1918,7 @@ export function deterministicAssistantProposal(
     !pureTimeCorrection &&
     !pureWorkflowChange &&
     !pureNegatedNoAction &&
+    !pureNonExecutableCommunication &&
     !pureMeasurementCorrection &&
     !pureUnresolvedMeasurements &&
     !pureNegatedMeasurements &&

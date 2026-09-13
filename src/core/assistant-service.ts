@@ -1855,6 +1855,9 @@ export class AssistantService {
           ["care-assistant", "registered-nurse"].includes(actor.role) &&
           !requiresDedicatedClinicalWorkflow(prompt) &&
           !explicitlyRefusesDocumentation(prompt) &&
+          !/\b(?:vielleicht|möglicherweise|eventuell|unklar|wohl|vermutlich|wahrscheinlich|mutmasslich|mutmaßlich|schätzungsweise|angeblich)\b|\b(?:sollte|könnte|dürfte)\s+man\b/i.test(
+            prompt,
+          ) &&
           !/^\s*(?:was|wer|wen|wem|wie|wo|wann|warum|wieso|welche|welcher|welches|ist|sind|hat|haben|kann|können|soll|sollen|darf|dürfen)\b/i.test(
             prompt,
           ) &&
