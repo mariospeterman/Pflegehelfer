@@ -769,6 +769,31 @@ export function App() {
     return () => window.clearTimeout(timer);
   }, [apiReady, notice, snapshot]);
   useEffect(() => {
+    if (!online || workday?.providerState !== "pending") return;
+    let stopped = false;
+    let timer: number | null = null;
+    const pollDelivery = async () => {
+      let stillPending = true;
+      try {
+        const next = await api<WorkdayView>("/api/v1/workday", userId);
+        if (stopped) return;
+        setWorkday(next);
+        setApiReady(true);
+        stillPending = next.providerState === "pending";
+        if (!stillPending) void load();
+      } catch {
+        if (!stopped) setApiReady(false);
+      }
+      if (!stopped && stillPending)
+        timer = window.setTimeout(() => void pollDelivery(), 1500);
+    };
+    timer = window.setTimeout(() => void pollDelivery(), 1500);
+    return () => {
+      stopped = true;
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [load, online, userId, workday?.providerState]);
+  useEffect(() => {
     if (theme === "system") {
       document.documentElement.removeAttribute("data-theme");
       localStorage.removeItem("pfh-theme");

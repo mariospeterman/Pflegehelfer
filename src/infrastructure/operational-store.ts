@@ -409,6 +409,9 @@ export interface OperationalStore {
   providerDeliveryState(
     patientIds: readonly string[],
   ): Promise<"pending" | "simulated-acknowledged" | "external-gated">;
+  providerDeliverySummary(
+    patientIds: readonly string[],
+  ): Promise<{ unresolved: number; conflicts: number }>;
   deliveryDiagnostics(): Promise<DeliveryDiagnostics>;
   releaseIntentAuthority(tokenHash: string): Promise<void>;
   revokeActorAuthorities(actorId: string): Promise<void>;
@@ -1219,6 +1222,12 @@ export class InMemoryOperationalStore implements OperationalStore {
   }
   providerDeliveryState(): Promise<"external-gated"> {
     return Promise.resolve("external-gated");
+  }
+  providerDeliverySummary(): Promise<{
+    unresolved: number;
+    conflicts: number;
+  }> {
+    return Promise.resolve({ unresolved: 0, conflicts: 0 });
   }
   deliveryDiagnostics(): Promise<DeliveryDiagnostics> {
     return Promise.resolve({
@@ -3482,6 +3491,28 @@ export class PostgresOperationalStore
     return result.rows.every((row) => row.state === "delivered")
       ? "simulated-acknowledged"
       : "external-gated";
+  }
+  async providerDeliverySummary(
+    patientIds: readonly string[],
+  ): Promise<{ unresolved: number; conflicts: number }> {
+    if (patientIds.length === 0) return { unresolved: 0, conflicts: 0 };
+    const references = patientIds.map((id) => `Patient/${id}`);
+    const result = await this.pool.query<{
+      unresolved: number;
+      conflicts: number;
+    }>(
+      `SELECT
+         count(*) FILTER (WHERE state <> 'delivered')::int unresolved,
+         count(*) FILTER (WHERE state = 'manual')::int conflicts
+       FROM provider_outbox
+       WHERE organization_id=$1
+         AND payload->'command'->>'patientReference'=ANY($2::text[])`,
+      [organizationId, references],
+    );
+    return {
+      unresolved: Number(result.rows[0]?.unresolved ?? 0),
+      conflicts: Number(result.rows[0]?.conflicts ?? 0),
+    };
   }
   async deliveryDiagnostics(): Promise<DeliveryDiagnostics> {
     const result = await this.pool.query<{

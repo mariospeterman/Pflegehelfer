@@ -1184,6 +1184,12 @@ export function buildApp(
       service.snapshot(actorId, query.purpose),
     );
     const workspaceStatus = await workspace.status();
+    const syncSummary =
+      runtime.profile === "integrated-demo"
+        ? await operationalStore.providerDeliverySummary(
+            snapshot.patients.map((patient) => patient.id),
+          )
+        : snapshot.syncSummary;
     const canUseDetailedWorkspace = [
       "registered-nurse",
       "physician",
@@ -1192,6 +1198,10 @@ export function buildApp(
     ].includes(snapshot.currentUser.role);
     return {
       ...snapshot,
+      // The integrated profile's relational outbox is authoritative. The
+      // checkpoint outbox remains an internal command-construction detail and
+      // must never leak stale delivery state back into the live read model.
+      syncSummary,
       workspace: workspaceStatus,
       workspaceLinks:
         canUseDetailedWorkspace &&
