@@ -51,5 +51,6 @@ test("only the latest corrected selection can be approved", async ({
   await page.reload();
   await expect(
     page.getByRole("button", { name: "Auswahl bestätigen" }),
-  ).toHaveCount(0);
+  ).toHaveCount(1);
+  await expect(page.getByText("nach Aktualisierung erneut autorisiert")).toBeVisible();
 });

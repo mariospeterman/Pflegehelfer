@@ -708,5 +708,29 @@ describe("purpose-specific BFF", () => {
     expect(JSON.stringify(review)).toContain("Gewicht später");
     expect(JSON.stringify(review)).not.toContain("Arzt");
     expect(JSON.stringify(review)).not.toContain('"kind":"task"');
+
+    const restored = await app.inject({
+      method: "POST",
+      url: "/api/v1/assistant/pending-review",
+      headers: commandHeaders("u-assistant"),
+      payload: {},
+    });
+    expect(restored.statusCode).toBe(200);
+    expect(restored.json()).toMatchObject({
+      pending: {
+        response: {
+          components: expect.arrayContaining([
+            expect.objectContaining({
+              type: "DraftAction",
+              kind: "care-update",
+              reviewItems: expect.arrayContaining([
+                expect.objectContaining({ kind: "note" }),
+                expect.objectContaining({ kind: "communication" }),
+              ]),
+            }),
+          ]),
+        },
+      },
+    });
   });
 });
