@@ -306,6 +306,12 @@ export interface DurableUiEvent {
   occurredAt: string;
 }
 
+export interface PendingIntentReview {
+  record: DurableIntentRecord;
+  reviewItems: Array<{ id: string; label: string; kind: string }>;
+  responseId: string;
+}
+
 export interface OperationalStore {
   readonly mode: "in-memory" | "postgresql";
   initialize(): Promise<void>;
@@ -331,6 +337,12 @@ export interface OperationalStore {
     encounterId: string,
     threadId: string,
   ): Promise<string | null>;
+  loadPendingIntentReview(
+    actorId: string,
+    patientId: string,
+    encounterId: string,
+    threadId: string,
+  ): Promise<PendingIntentReview | null>;
   listConversations(
     actorId: string,
     role: Role,
@@ -459,6 +471,8 @@ export class InMemoryOperationalStore implements OperationalStore {
       sessionId: string;
       threadId: string;
       contextRevision: number;
+      responseId: string;
+      reviewItems: Array<{ id: string; label: string; kind: string }>;
       consumed: boolean;
     }
   >();
@@ -622,6 +636,30 @@ export class InMemoryOperationalStore implements OperationalStore {
         this.sessions.get(actorId)?.threadId === threadId,
     );
     return Promise.resolve(candidates.at(-1)?.record.payload.plan ?? null);
+  }
+  loadPendingIntentReview(
+    actorId: string,
+    patientId: string,
+    encounterId: string,
+    threadId: string,
+  ): Promise<PendingIntentReview | null> {
+    const pending = [...this.authorities.values()].findLast(
+      ({ record, consumed, threadId: authorityThreadId }) =>
+        !consumed &&
+        record.actorId === actorId &&
+        record.patientId === patientId &&
+        record.encounterId === encounterId &&
+        authorityThreadId === threadId,
+    );
+    return Promise.resolve(
+      pending
+        ? structuredClone({
+            record: pending.record,
+            reviewItems: pending.reviewItems,
+            responseId: pending.responseId,
+          })
+        : null,
+    );
   }
   async appendConversationTurn(
     actorId: string,
@@ -1072,6 +1110,12 @@ export class InMemoryOperationalStore implements OperationalStore {
         sessionId: input.sessionId,
         threadId: input.threadId,
         contextRevision: input.contextRevision,
+        responseId: input.responseId,
+        reviewItems: input.reviewItems as Array<{
+          id: string;
+          label: string;
+          kind: string;
+        }>,
         consumed: false,
       });
     return Promise.resolve();
@@ -1103,7 +1147,13 @@ export class InMemoryOperationalStore implements OperationalStore {
   consumeIntentAuthority(tokenHash: string): Promise<boolean> {
     const authority = this.authorities.get(tokenHash);
     if (!authority || authority.consumed) return Promise.resolve(false);
-    authority.consumed = true;
+    for (const candidate of this.authorities.values())
+      if (
+        candidate.record.actorId === authority.record.actorId &&
+        candidate.threadId === authority.threadId &&
+        candidate.responseId === authority.responseId
+      )
+        candidate.consumed = true;
     return Promise.resolve(true);
   }
   acceptIntentCommand(
@@ -1131,7 +1181,13 @@ export class InMemoryOperationalStore implements OperationalStore {
       authority.contextRevision !== input.contextRevision
     )
       return Promise.reject(new Error("INTENT_AUTHORITY_INVALID"));
-    authority.consumed = true;
+    for (const candidate of this.authorities.values())
+      if (
+        candidate.record.actorId === authority.record.actorId &&
+        candidate.threadId === authority.threadId &&
+        candidate.responseId === authority.responseId
+      )
+        candidate.consumed = true;
     const receipt: AcceptedCommandReceipt = {
       id: randomUUID(),
       statusCode: input.statusCode,
@@ -1776,6 +1832,53 @@ export class PostgresOperationalStore
       [organizationId, actorId, threadId, patientId, encounterId],
     );
     return result.rows[0]?.plan ?? null;
+  }
+  async loadPendingIntentReview(
+    actorId: string,
+    patientId: string,
+    encounterId: string,
+    threadId: string,
+  ): Promise<PendingIntentReview | null> {
+    const result = await this.pool.query<{
+      payload: {
+        actorId: string;
+        patientId: string;
+        encounterId: string;
+        command: DurableIntentRecord["command"];
+        payload: Record<string, string>;
+        resourceVersion: number;
+        purpose: Purpose;
+      };
+      review_items: Array<{ id: string; label: string; kind: string }>;
+      source_response_id: string;
+      effective_role: Role;
+    }>(
+      `SELECT p.payload,p.review_items,p.source_response_id,s.effective_role
+       FROM assistant_proposal_revisions p
+       JOIN working_sessions s
+         ON s.organization_id=p.organization_id AND s.id=p.session_id
+       WHERE p.organization_id=$1 AND p.actor_id=$2 AND p.thread_id=$3
+         AND p.patient_id=$4 AND p.encounter_id=$5 AND p.status='pending'
+       ORDER BY p.revision DESC,p.created_at DESC LIMIT 1`,
+      [organizationId, actorId, threadId, patientId, encounterId],
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    return {
+      record: {
+        actorId: row.payload.actorId,
+        actorRole: row.effective_role,
+        patientId: row.payload.patientId,
+        encounterId: row.payload.encounterId,
+        purpose: row.payload.purpose,
+        resourceVersion: row.payload.resourceVersion,
+        command: row.payload.command,
+        payload: row.payload.payload,
+        expiresAt: Date.now() + 120_000,
+      },
+      reviewItems: row.review_items,
+      responseId: row.source_response_id,
+    };
   }
   async listConversations(
     actorId: string,
@@ -2837,9 +2940,10 @@ export class PostgresOperationalStore
       const prior = await client.query<{
         id: string;
         revision: number;
+        proposal_hash: string;
         status: "pending" | "superseded" | "consumed" | "expired";
       }>(
-        `SELECT id,revision,status FROM assistant_proposal_revisions
+        `SELECT id,revision,proposal_hash,status FROM assistant_proposal_revisions
          WHERE organization_id=$1 AND actor_id=$2 AND thread_id=$3
            AND patient_id=$4 AND encounter_id=$5
          ORDER BY revision DESC,created_at DESC LIMIT 1 FOR UPDATE`,
@@ -2851,34 +2955,40 @@ export class PostgresOperationalStore
           input.record.encounterId,
         ],
       );
-      const proposalId = randomUUID();
-      if (prior.rows[0]?.status === "pending")
+      const samePendingProposal =
+        prior.rows[0]?.status === "pending" &&
+        prior.rows[0].proposal_hash === proposalHash;
+      const proposalId = samePendingProposal
+        ? prior.rows[0]!.id
+        : randomUUID();
+      if (prior.rows[0]?.status === "pending" && !samePendingProposal)
         await client.query(
           `UPDATE assistant_proposal_revisions SET status='superseded'
            WHERE organization_id=$1 AND id=$2 AND status='pending'`,
           [organizationId, prior.rows[0].id],
         );
-      await client.query(
-        `INSERT INTO assistant_proposal_revisions
+      if (!samePendingProposal)
+        await client.query(
+          `INSERT INTO assistant_proposal_revisions
            (organization_id,id,actor_id,session_id,thread_id,context_revision,patient_id,encounter_id,source_response_id,revision,proposal_hash,payload,review_items,status,supersedes_id)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'pending',$14)`,
-        [
-          organizationId,
-          proposalId,
-          input.record.actorId,
-          input.sessionId,
-          input.threadId,
-          input.contextRevision,
-          input.record.patientId,
-          input.record.encounterId,
-          input.responseId,
-          (prior.rows[0]?.revision ?? 0) + 1,
-          proposalHash,
-          proposalPayload,
-          JSON.stringify(input.reviewItems),
-          prior.rows[0]?.id ?? null,
-        ],
-      );
+          [
+            organizationId,
+            proposalId,
+            input.record.actorId,
+            input.sessionId,
+            input.threadId,
+            input.contextRevision,
+            input.record.patientId,
+            input.record.encounterId,
+            input.responseId,
+            (prior.rows[0]?.revision ?? 0) + 1,
+            proposalHash,
+            proposalPayload,
+            JSON.stringify(input.reviewItems),
+            prior.rows[0]?.id ?? null,
+          ],
+        );
       await client.query(
         `INSERT INTO safety_authority
            (organization_id,token_hash,authority_type,actor_id,session_id,thread_id,context_revision,patient_id,binding,proposal_revision_id,proposal_hash,expires_at)

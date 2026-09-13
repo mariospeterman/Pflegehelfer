@@ -930,9 +930,42 @@ export function AssistantSurface({
           }>;
         };
       })
-      .then(({ turns }) => {
+      .then(async ({ turns }) => {
+        if (!conversationPatientId || !conversationEncounterId)
+          return { turns, pending: null };
+        const pendingResponse = await fetch(
+          "/api/v1/assistant/pending-review",
+          {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-demo-user": userId,
+              "x-command-id": crypto.randomUUID(),
+            },
+            body: "{}",
+            signal: controller.signal,
+          },
+        );
+        if (!pendingResponse.ok)
+          throw new Error("pending-review-unavailable");
+        const pending = (await pendingResponse.json()) as {
+          pending: {
+            responseId: string;
+            response: AssistantResponse;
+          } | null;
+        };
+        return { turns, pending: pending.pending };
+      })
+      .then(({ turns, pending }) => {
+        const hydratedTurns = pending
+          ? turns.map((turn) =>
+              turn.id === pending.responseId
+                ? { ...turn, response: pending.response }
+                : turn,
+            )
+          : turns;
         const restored: ConversationMessage[] = archiveSupersededDrafts(
-          turns.map((turn) => ({
+          hydratedTurns.map((turn) => ({
             kind: "turn",
             id: turn.id,
             prompt: turn.prompt,

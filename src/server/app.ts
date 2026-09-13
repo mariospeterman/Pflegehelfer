@@ -19,6 +19,7 @@ import { ApprovedKnowledgeService } from "../ai/approved-knowledge.js";
 import {
   completionEvidenceIsGrounded,
   completionEvidenceIsIncomplete,
+  assistantProposalSchema,
   requiresDedicatedClinicalWorkflow,
 } from "../ai/assistant-proposal.js";
 import { isDomainError, PflegehelferService } from "../core/service.js";
@@ -28,6 +29,7 @@ import { decide, type Action } from "../core/policy.js";
 import { runtimeSitePack } from "../core/runtime-instructions.js";
 import { InMemoryReferenceStatePort } from "../core/clinical-data-port.js";
 import { DomainError, type Purpose } from "../core/types.js";
+import type { AssistantComponent } from "../core/assistant.js";
 import {
   createProductionProviderRegistry,
   createSyntheticProviderRegistry,
@@ -1351,6 +1353,125 @@ export function buildApp(
       .header("cache-control", "no-store")
       .header("x-content-type-options", "nosniff")
       .send(Buffer.from(result.audio));
+  });
+
+  app.post("/api/v1/assistant/pending-review", async (request) => {
+    await persistenceQueue;
+    const actorId = userId(request);
+    const actor = service.user(actorId);
+    const session = await operationalStore.getOrStartSession(
+      actorId,
+      actor.role,
+    );
+    if (!session.patientId || !session.encounterId) return { pending: null };
+    const patient = service
+      .snapshot(actorId, actor.defaultPurpose)
+      .patients.find(
+        (candidate) =>
+          candidate.id === session.patientId &&
+          candidate.encounterId === session.encounterId,
+      );
+    if (!patient) return { pending: null };
+    const pending = await operationalStore.loadPendingIntentReview(
+      actorId,
+      patient.id,
+      patient.encounterId,
+      session.threadId,
+    );
+    if (!pending) return { pending: null };
+    const intentToken = assistant.reissueDurableIntent(actorId, pending.record);
+    const freshRecord = assistant.durableIntentRecord(intentToken)!;
+    const reviewItems = z
+      .array(
+        z
+          .object({
+            id: z.string().regex(/^action-(?:[1-9]|1[0-2])$/),
+            label: z.string().trim().min(1).max(1400),
+            kind: z.enum([
+              "note",
+              "observation",
+              "communication",
+              "task",
+              "workflow",
+            ]),
+          })
+          .strict(),
+      )
+      .max(12)
+      .parse(pending.reviewItems);
+    let component: AssistantComponent;
+    if (freshRecord.command === "care-update:draft") {
+      const plan = assistantProposalSchema.parse(
+        JSON.parse(freshRecord.payload.plan ?? "null"),
+      );
+      component = {
+        type: "DraftAction",
+        kind: "care-update",
+        title: `Offene Prüfung · ${patient.displayName}`,
+        preview: reviewItems.map((item) => item.label).join("\n").slice(0, 1200),
+        actionLabel: "Auswahl bestätigen",
+        intentToken,
+        sourceLabel: `${plan.sourceRecords?.length ?? 0} gebundene Eingabe${(plan.sourceRecords?.length ?? 0) === 1 ? "" : "n"} · nach Aktualisierung erneut autorisiert`,
+        reviewItems,
+      };
+    } else {
+      const kind =
+        freshRecord.command === "note:draft"
+          ? "nursing-note"
+          : freshRecord.command === "communication:draft"
+            ? "physician-question"
+            : "task";
+      component = {
+        type: "DraftAction",
+        kind,
+        title: `Offene Prüfung · ${patient.displayName}`,
+        preview: (
+          freshRecord.payload.structuredText ??
+          freshRecord.payload.request ??
+          freshRecord.payload.title ??
+          "Offener Entwurf"
+        ).slice(0, 1200),
+        actionLabel: "Erneut prüfen und übernehmen",
+        intentToken,
+        sourceLabel: "Gespeicherter Entwurf · nach Aktualisierung erneut autorisiert",
+        ...(reviewItems.length > 0 ? { reviewItems } : {}),
+      };
+    }
+    await operationalStore.storeIntentAuthority({
+      tokenHash: authorityHash(intentToken),
+      record: freshRecord,
+      sessionId: session.id,
+      threadId: session.threadId,
+      contextRevision: session.contextRevision,
+      responseId: pending.responseId,
+      reviewItems,
+    });
+    const sourceTurn = (
+      await operationalStore.loadConversation(actorId, actor.role, patient.id)
+    ).find((turn) => turn.id === pending.responseId);
+    const archived = sourceTurn?.response as AssistantResponse | undefined;
+    if (!archived) return { pending: null };
+    const components = [
+      ...archived.components.filter(
+        (item) =>
+          item.type !== "DraftAction" &&
+          !(
+            item.type === "SafetyAlert" &&
+            item.message.startsWith("Diese frühere offene Änderung")
+          ),
+      ),
+      component,
+    ];
+    return {
+      pending: {
+        responseId: pending.responseId,
+        response: {
+          ...archived,
+          components,
+          openUi: toOpenUi(components),
+        },
+      },
+    };
   });
 
   app.get("/api/v1/assistant/conversation", async (request) => {

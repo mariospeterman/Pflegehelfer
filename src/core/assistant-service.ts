@@ -384,6 +384,25 @@ export class AssistantService {
     this.intents.restore(token, record);
   }
 
+  reissueDurableIntent(userId: string, record: DurableIntentRecord): string {
+    const actor = this.clinical.user(userId);
+    if (record.actorId !== actor.id || record.actorRole !== actor.role)
+      throw new DomainError(
+        "AUTH_DENIED",
+        "Der offene Entwurf gehört nicht zu dieser Mitarbeitenden-Sitzung.",
+        403,
+      );
+    return this.intents.issue(actor, {
+      command: record.command,
+      patientId: record.patientId,
+      encounterId: record.encounterId,
+      purpose: record.purpose,
+      resourceVersion: record.resourceVersion,
+      payload: record.payload,
+      ttlMs: 120_000,
+    });
+  }
+
   async query(
     userId: string,
     request: AssistantRequest,
