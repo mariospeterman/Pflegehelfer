@@ -5,6 +5,7 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 import { gunzipSync, gzipSync } from "node:zlib";
+import "./node-websocket.js";
 import { MedplumClient } from "@medplum/core";
 import type {
   Binary,
