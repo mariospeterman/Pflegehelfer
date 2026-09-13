@@ -946,8 +946,7 @@ export function AssistantSurface({
             signal: controller.signal,
           },
         );
-        if (!pendingResponse.ok)
-          throw new Error("pending-review-unavailable");
+        if (!pendingResponse.ok) throw new Error("pending-review-unavailable");
         const pending = (await pendingResponse.json()) as {
           pending: {
             responseId: string;
@@ -1668,8 +1667,8 @@ export function AssistantSurface({
                       className="assistant-card archived-draft"
                       role="status"
                     >
-                      Korrektur übernommen. Diese frühere Auswahl ist nicht
-                      mehr gültig.
+                      Korrektur übernommen. Diese frühere Auswahl ist nicht mehr
+                      gültig.
                     </div>
                   ) : renderable ? (
                     <Renderer

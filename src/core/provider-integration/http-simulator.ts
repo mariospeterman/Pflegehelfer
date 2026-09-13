@@ -17,7 +17,10 @@ import {
 } from "./contract.js";
 
 const externalReferenceSchema = z
-  .object({ resourceType: z.string().min(1).max(100), externalId: z.string().min(1).max(200) })
+  .object({
+    resourceType: z.string().min(1).max(100),
+    externalId: z.string().min(1).max(200),
+  })
   .strict();
 const providerRecordSchema = z
   .object({

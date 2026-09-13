@@ -30,9 +30,9 @@ describe("scalar vital OpenUI serialization", () => {
     ]);
 
     expect(openUi).not.toContain('"secondaryValue":null');
-    const parsed = createParser(
-      clinicalAssistantLibrary.toJSONSchema(),
-    ).parse(openUi);
+    const parsed = createParser(clinicalAssistantLibrary.toJSONSchema()).parse(
+      openUi,
+    );
     expect(parsed.meta.errors).toEqual([]);
     expect(parsed.meta.unresolved).toEqual([]);
     expect(parsed.root?.typeName).toBe("ClinicalStack");

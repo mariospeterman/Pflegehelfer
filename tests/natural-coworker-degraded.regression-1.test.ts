@@ -49,9 +49,7 @@ describe("natural coworker degraded operation regression", () => {
     });
 
     expect(
-      response.components.some(
-        (component) => component.type === "DraftAction",
-      ),
+      response.components.some((component) => component.type === "DraftAction"),
     ).toBe(false);
   });
 });

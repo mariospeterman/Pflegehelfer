@@ -57,9 +57,7 @@ describe("conversational AssistantProposal compiler regressions", () => {
 
   it("does not misclassify ordinary dressing assistance as treatment", () => {
     expect(
-      requiresDedicatedClinicalWorkflow(
-        "Ich habe ihm beim Anziehen geholfen.",
-      ),
+      requiresDedicatedClinicalWorkflow("Ich habe ihm beim Anziehen geholfen."),
     ).toBe(false);
   });
   it("replaces stale work when a correction says only morning care was done", () => {

@@ -141,9 +141,8 @@ export function toOpenUi(components: AssistantComponent[]): string {
       case "TaskList":
         return `${name} = TaskListCard(${q(component.title)}, ${component.count}, ${q(component.summary)}, ${q(component.sourceLabel)})`;
       case "VitalTrend": {
-        const points = component.points.map(
-          ({ secondaryValue, ...point }) =>
-            secondaryValue === null ? point : { ...point, secondaryValue },
+        const points = component.points.map(({ secondaryValue, ...point }) =>
+          secondaryValue === null ? point : { ...point, secondaryValue },
         );
         return `${name} = VitalTrendCard(${q(component.label)}, ${q(component.value)}, ${JSON.stringify(points)}, ${q(component.sourceLabel)})`;
       }
