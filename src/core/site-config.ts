@@ -1,7 +1,10 @@
 import { z } from "zod";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import type { Role } from "./types.js";
+import {
+  activeRuntimeSitePackPath,
+  runtimeSitePack,
+  validateRuntimeSitePackBindings,
+} from "./runtime-instructions.js";
 
 export const actionSchema = z.enum([
   "patient:read",
@@ -393,14 +396,37 @@ export function parseSiteConfiguration(input: unknown): SiteConfiguration {
   return siteConfigurationSchema.parse(input);
 }
 
-const defaultSitePackPath = fileURLToPath(
-  new URL("../../config/sites/tertianum-kronenhof.json", import.meta.url),
-);
-export const activeSitePackPath =
-  process.env.PFH_SITE_PACK_PATH ?? defaultSitePackPath;
+export const activeSitePackPath = activeRuntimeSitePackPath;
+export { runtimeSitePack };
 export const siteConfiguration = parseSiteConfiguration(
-  JSON.parse(readFileSync(activeSitePackPath, "utf8")) as unknown,
+  runtimeSitePack.siteConfigurationInput,
 );
+validateRuntimeSitePackBindings(
+  runtimeSitePack,
+  siteConfiguration,
+  new Set(Object.keys(ROLE_ACTION_CEILINGS)),
+);
+
+export function configuredRoleProfile(profileId: string): {
+  id: string;
+  label: string;
+  role: Role;
+  workflowIds: readonly string[];
+  actions: readonly Action[];
+} {
+  const configured = runtimeSitePack.roles[profileId];
+  if (!configured) throw new Error("SITE_PACK_ROLE_PROFILE_NOT_FOUND");
+  const role = configured.capabilityRole as Role;
+  const policy = siteConfiguration.roleProfiles[role];
+  if (!policy) throw new Error("SITE_PACK_ROLE_POLICY_NOT_FOUND");
+  return {
+    id: configured.id,
+    label: configured.label,
+    role,
+    workflowIds: configured.workflowIds,
+    actions: policy.actions,
+  };
+}
 export const nursingPatientIds = siteConfiguration.nursingAssignments.map(
   (assignment) => assignment.patientId,
 );

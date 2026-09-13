@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 2,
+  "packId": "alpenblick-demo",
+  "institutionId": "org-alpenblick-demo",
+  "siteId": "alpenblick-wohnbereich-a",
+  "publication": {
+    "version": 1,
+    "status": "published",
+    "approvedBy": "Pflegehelfer synthetic-demo governance",
+    "publishedAt": "2026-09-13T12:00:00+02:00"
+  },
+  "baseGuidance": {
+    "path": "assistant/BASE.md",
+    "sha256": "10fcbf8d00155830d83ad21e2fd4e73a70dceed8bcd1787f97127830ed530f5b"
+  },
+  "siteConfiguration": {
+    "path": "sites/alpenblick-demo.json",
+    "sha256": "0908e320c96fc8730d152e7199a95a01713d68ce90477ab57d6be574d330ad80"
+  },
+  "siteGuidance": {
+    "id": "site",
+    "path": "SITE.md",
+    "sha256": "f65f511839bd9d46d98602df816d66636b008c989dc23cb6f9fcb7b403e5885a"
+  },
+  "departments": [
+    {
+      "id": "wohnbereich-a",
+      "label": "Wohnbereich A",
+      "path": "departments/long-term-care.md",
+      "sha256": "ba3548938764b285447b66d929c97f1fc52ef5db8424d728c5104a7b2005d15f"
+    }
+  ],
+  "stations": [
+    {
+      "id": "wohnbereich-a-station",
+      "departmentId": "wohnbereich-a",
+      "label": "Wohnbereich A",
+      "path": "stations/wohnbereich-a.md",
+      "sha256": "fc2393d687cf675cd8a6e528ce4b076815953ca04d42520b8d7285fb7312d272"
+    }
+  ],
+  "roles": [
+    {
+      "id": "pflegeassistenz-srk",
+      "label": "Pflegeassistenz SRK",
+      "capabilityRole": "care-assistant",
+      "workflowIds": ["nursing-day"],
+      "path": "roles/pflegeassistenz-srk.md",
+      "sha256": "df2bfa61bf49a444960d3722ea15c10e2028d8eea69143253505e34555bb0af8"
+    },
+    {
+      "id": "fage-efz",
+      "label": "Fachperson Gesundheit EFZ",
+      "capabilityRole": "registered-nurse",
+      "workflowIds": ["nursing-day"],
+      "path": "roles/fage-efz.md",
+      "sha256": "752174aa8da9334ed2306270e0009771c645796d93fe835e27ba07124122b0cd"
+    }
+  ],
+  "workflows": [
+    {
+      "id": "nursing-early",
+      "name": "Wohnbereich Frühdienst",
+      "description": "Rapport, Bezugspersonen und expliziter Schichttransfer.",
+      "workflowId": "nursing-day",
+      "eligibleRoleProfiles": ["pflegeassistenz-srk", "fage-efz"],
+      "path": "workflows/nursing-early/SKILL.md",
+      "sha256": "e18c2e6daee26f468763224655a6f9de816e54cb09c2311dd133aed64c909d63"
+    },
+    {
+      "id": "nursing-late",
+      "name": "Wohnbereich Spätdienst",
+      "description": "Offene Teamfragen, Restverantwortung und Rapportwechsel.",
+      "workflowId": "nursing-day",
+      "eligibleRoleProfiles": ["pflegeassistenz-srk", "fage-efz"],
+      "path": "workflows/nursing-late/SKILL.md",
+      "sha256": "974c2c0dbbd8f31ff085e12ebd9a521a30470f2d849f4f9cb79dcdec51ac7179"
+    }
+  ],
+  "providers": [
+    {
+      "id": "wicare-primary",
+      "instanceId": "wicare-alpenblick",
+      "adapterType": "wicare",
+      "path": "providers/wicare/PROVIDER.md",
+      "sha256": "7a9ddded1d2eb900cbc02a507758baef66cdc5729c4dc5be5e7cb0fc9ea9572c"
+    },
+    {
+      "id": "sap-vitals-primary",
+      "instanceId": "sap-vitals-alpenblick",
+      "adapterType": "sap-vitals",
+      "path": "providers/sap/PROVIDER.md",
+      "sha256": "fd65ec4117afd073f85e5b0ab60400b337e40b053bfaf27ba4c37bd56bbcc164"
+    }
+  ]
+}

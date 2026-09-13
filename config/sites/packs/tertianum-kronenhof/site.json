@@ -1,0 +1,135 @@
+{
+  "schemaVersion": 2,
+  "packId": "tertianum-kronenhof",
+  "institutionId": "org-demo",
+  "siteId": "rehab-2",
+  "publication": {
+    "version": 1,
+    "status": "published",
+    "approvedBy": "Pflegehelfer synthetic-demo governance",
+    "publishedAt": "2026-09-13T12:00:00+02:00"
+  },
+  "baseGuidance": {
+    "path": "assistant/BASE.md",
+    "sha256": "10fcbf8d00155830d83ad21e2fd4e73a70dceed8bcd1787f97127830ed530f5b"
+  },
+  "siteConfiguration": {
+    "path": "sites/tertianum-kronenhof.json",
+    "sha256": "c7f98cf2af315072240af6b3afff3b5388bcefd93999dcda17327b503b4d068d"
+  },
+  "siteGuidance": {
+    "id": "site",
+    "path": "SITE.md",
+    "sha256": "dc8e24f9fe825aee488b8cb6ea704e1653fc9755f897eb3162851eac45fc5123"
+  },
+  "departments": [
+    {
+      "id": "rehab-2",
+      "label": "Rehabilitation 2",
+      "path": "departments/rehabilitation.md",
+      "sha256": "d11e26ededff43f8d0d1ee65bf137f178b2ecd4de272326b6f75693317b8620b"
+    }
+  ],
+  "stations": [
+    {
+      "id": "rehabilitation-2",
+      "departmentId": "rehab-2",
+      "label": "Station Rehabilitation 2",
+      "path": "stations/rehabilitation-2.md",
+      "sha256": "c877ef6d742f1171cba672a4aeb3b084a6ee2421096862116d68b81c71e910ce"
+    }
+  ],
+  "roles": [
+    {
+      "id": "pflegeassistenz-srk",
+      "label": "Pflegeassistenz SRK",
+      "capabilityRole": "care-assistant",
+      "workflowIds": ["nursing-day"],
+      "path": "roles/pflegeassistenz-srk.md",
+      "sha256": "c3f15b57265cd803d68bc126e66a9d02d15d65665a869fdf69ed52c2ccf3ad43"
+    },
+    {
+      "id": "fage-efz",
+      "label": "Fachperson Gesundheit EFZ",
+      "capabilityRole": "registered-nurse",
+      "workflowIds": ["nursing-day"],
+      "path": "roles/fage-efz.md",
+      "sha256": "d8364902b79ab9284134fc6f1f45cabf8e6857fbb0acb42d99ead4daf0074254"
+    },
+    {
+      "id": "pflege-hf",
+      "label": "Dipl. Pflegefachperson HF",
+      "capabilityRole": "registered-nurse",
+      "workflowIds": ["nursing-day"],
+      "path": "roles/pflege-hf.md",
+      "sha256": "8e9e0a892c3396803c7cb0e137554939402a5ecf5da4fcc98b243ad6bc994eff"
+    },
+    {
+      "id": "arzt",
+      "label": "Ärztlicher Dienst",
+      "capabilityRole": "physician",
+      "workflowIds": ["physician-rounds"],
+      "path": "roles/arzt.md",
+      "sha256": "6f05df24b03202b3af040a5ec87c4cd988d6b06bcb1d763b03cd4017fa681deb"
+    }
+  ],
+  "workflows": [
+    {
+      "id": "nursing-early",
+      "name": "Frühdienst Pflege",
+      "description": "Versionierte Übergabe, Patientenarbeit und Transfer im Frühdienst.",
+      "workflowId": "nursing-day",
+      "eligibleRoleProfiles": ["pflegeassistenz-srk", "fage-efz", "pflege-hf"],
+      "path": "workflows/nursing-early/SKILL.md",
+      "sha256": "3abd44c59b1d1856ea352f425b296b5c2155c431b595016c4370cd76cefc03bd"
+    },
+    {
+      "id": "nursing-late",
+      "name": "Spätdienst Pflege",
+      "description": "Offene Teamfragen zuerst, danach Übergabe und Restverantwortung.",
+      "workflowId": "nursing-day",
+      "eligibleRoleProfiles": ["pflegeassistenz-srk", "fage-efz", "pflege-hf"],
+      "path": "workflows/nursing-late/SKILL.md",
+      "sha256": "33dd2a2516642c22287586fe5d91500153fa96b77e1eff8ff01a348d2f69caa0"
+    },
+    {
+      "id": "physician-rounds",
+      "name": "Ärztliche Runde",
+      "description": "Adressierte Fragen, aktuelle Evidenz und geschlossener Rücklauf.",
+      "workflowId": "physician-rounds",
+      "eligibleRoleProfiles": ["arzt"],
+      "path": "workflows/physician-rounds/SKILL.md",
+      "sha256": "c13edb5796642a2df705808ff306862e647e2986eca477a13b588f83bf8a6c27"
+    }
+  ],
+  "providers": [
+    {
+      "id": "wicare-primary",
+      "instanceId": "wicare-kronenhof",
+      "adapterType": "wicare",
+      "path": "providers/wicare/PROVIDER.md",
+      "sha256": "c61479063642e7ce34ec4077eb26738347e8c218ebb4f8d26ac9de96ecdc59c2"
+    },
+    {
+      "id": "carecoach-primary",
+      "instanceId": "carecoach-kronenhof",
+      "adapterType": "carecoach",
+      "path": "providers/carecoach/PROVIDER.md",
+      "sha256": "dfc183a2e57143cf0c1bcc325b02cb3d096fa2ecb7d5b9f48e1548046506b985"
+    },
+    {
+      "id": "sap-administration",
+      "instanceId": "sap-kronenhof",
+      "adapterType": "sap-vitals",
+      "path": "providers/sap/PROVIDER.md",
+      "sha256": "10accbf2c530c80db0bae26725798d3a238feb18b23b2d5e19ccb8f1b5aea37b"
+    },
+    {
+      "id": "vitals-gateway",
+      "instanceId": "devices-kronenhof",
+      "adapterType": "device-gateway",
+      "path": "providers/devices/PROVIDER.md",
+      "sha256": "d836938453bfe753ba521f5f7fccc19f1d1d6e6f23984245051269f1e1deb9c3"
+    }
+  ]
+}

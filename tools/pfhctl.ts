@@ -4,14 +4,22 @@ import { readFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import pg from "pg";
 import { AsrGateway } from "../src/ai/asr-gateway.js";
-import { parseSiteConfiguration } from "../src/core/site-config.js";
+import {
+  parseSiteConfiguration,
+  ROLE_ACTION_CEILINGS,
+} from "../src/core/site-config.js";
+import {
+  defaultDirectorySitePackPath,
+  loadRuntimeSitePack,
+  validateRuntimeSitePackBindings,
+} from "../src/core/runtime-instructions.js";
 import {
   loadMigrationFiles,
   verifyMigrationHistory,
   type MigrationHistoryRow,
 } from "../src/infrastructure/migrations.js";
 
-const [group = "help", action = ""] = process.argv.slice(2);
+const [group = "help", action = "", ...arguments_] = process.argv.slice(2);
 const baseUrl = process.env.PFH_BASE_URL ?? "http://127.0.0.1:4173";
 
 async function request(path: string, init?: RequestInit): Promise<unknown> {
@@ -152,18 +160,37 @@ else if (group === "asr" && action === "test") {
     ),
   );
 } else if (group === "site" && action === "validate") {
-  const files = [
-    "config/sites/tertianum-kronenhof.json",
-    "config/sites/alpenblick-demo.json",
-  ];
-  const validated = await Promise.all(
-    files.map(async (file) => ({
-      file,
-      site: parseSiteConfiguration(
-        JSON.parse(await readFile(file, "utf8")) as unknown,
-      ).displayName,
-    })),
-  );
+  const paths =
+    arguments_.length > 0
+      ? arguments_
+      : [defaultDirectorySitePackPath, "config/sites/packs/alpenblick-demo"];
+  const validated = paths.map((path) => {
+    const pack = loadRuntimeSitePack(path);
+    const configuration = parseSiteConfiguration(pack.siteConfigurationInput);
+    validateRuntimeSitePackBindings(
+      pack,
+      configuration,
+      new Set(Object.keys(ROLE_ACTION_CEILINGS)),
+    );
+    return {
+      path: pack.sourcePath,
+      sourceFormat: pack.sourceFormat,
+      packId: pack.packId,
+      version: pack.version,
+      status: pack.status,
+      digest: pack.packDigest,
+      site: configuration.displayName,
+      instructions: Object.values(pack.instructions).map(
+        ({ id, kind, sha256: hash }) => ({ id, kind, sha256: hash }),
+      ),
+      roleProfiles: Object.values(pack.roles).map(
+        ({ id, label, capabilityRole }) => ({ id, label, capabilityRole }),
+      ),
+      providerInstances: Object.values(pack.providers).map(
+        ({ instanceId, adapterType }) => ({ instanceId, adapterType }),
+      ),
+    };
+  });
   console.log(JSON.stringify({ validated }, null, 2));
 } else if (group === "backup" && action === "restore-test")
   console.log(
@@ -171,7 +198,7 @@ else if (group === "asr" && action === "test") {
   );
 else {
   console.log(
-    "Usage: pfhctl preflight | status | migrations status | provider list|test | demo reset | fhir import|verify|validate | model list|test | asr test | tts test | site validate | backup restore-test",
+    "Usage: pfhctl preflight | status | migrations status | provider list|test | demo reset | fhir import|verify|validate | model list|test | asr test | tts test | site validate [pack-path ...] | backup restore-test",
   );
   if (group !== "help") process.exitCode = 2;
 }

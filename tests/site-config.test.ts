@@ -1,10 +1,15 @@
-import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   activeSitePackPath,
+  configuredRoleProfile,
   parseSiteConfiguration,
+  runtimeSitePack,
   siteConfiguration,
 } from "../src/core/site-config.js";
+import {
+  loadRuntimeSitePack,
+  validateRuntimeSitePackBindings,
+} from "../src/core/runtime-instructions.js";
 
 function resizedAssignmentPack(count: number) {
   const pack = structuredClone(siteConfiguration);
@@ -48,21 +53,27 @@ describe("versioned site-pack configuration", () => {
     },
   );
 
-  it("loads the active pack from a validated runtime file", () => {
-    const parsed = parseSiteConfiguration(
-      JSON.parse(readFileSync(activeSitePackPath, "utf8")) as unknown,
-    );
-    expect(parsed.siteId).toBe(siteConfiguration.siteId);
+  it("loads the active immutable directory pack", () => {
+    expect(activeSitePackPath).toMatch(/sites\/packs\/tertianum-kronenhof$/);
+    expect(runtimeSitePack).toMatchObject({
+      sourceFormat: "directory-v2",
+      status: "published",
+      siteId: siteConfiguration.siteId,
+    });
+    expect(runtimeSitePack.packDigest).toMatch(/^[a-f0-9]{64}$/);
+    expect(Object.isFrozen(runtimeSitePack.instructions)).toBe(true);
   });
 
   it("ships a second institution pack that validates independently", () => {
-    const parsed = parseSiteConfiguration(
-      JSON.parse(
-        readFileSync(
-          new URL("../config/sites/alpenblick-demo.json", import.meta.url),
-          "utf8",
-        ),
-      ) as unknown,
+    const pack = loadRuntimeSitePack(
+      new URL("../config/sites/packs/alpenblick-demo", import.meta.url)
+        .pathname,
+    );
+    const parsed = parseSiteConfiguration(pack.siteConfigurationInput);
+    validateRuntimeSitePackBindings(
+      pack,
+      parsed,
+      new Set(Object.keys(parsed.roleProfiles)),
     );
     expect(parsed.institutionId).toBe("org-alpenblick-demo");
     expect(parsed.displayName).toContain("Alpenblick");
@@ -77,6 +88,15 @@ describe("versioned site-pack configuration", () => {
       )?.patientIds,
     ).toHaveLength(3);
     expect(parsed.workflows["nursing-day"]?.version).toBe(3);
+  });
+
+  it("binds configurable Swiss role labels to an existing narrow policy", () => {
+    const fage = configuredRoleProfile("fage-efz");
+    const hf = configuredRoleProfile("pflege-hf");
+    expect(fage.role).toBe("registered-nurse");
+    expect(hf.role).toBe("registered-nurse");
+    expect(hf.actions).toEqual(fage.actions);
+    expect(hf.label).toBe("Dipl. Pflegefachperson HF");
   });
 
   it("prevents a site pack from expanding the centrally reviewed role ceiling", () => {
