@@ -25,8 +25,8 @@ export interface AgentRunContext {
   workingContext: {
     currentStepId: string;
     activeEpisodeTitle: string | null;
-    activeEpisodePatientId: string | null;
-    resumableEpisodePatientId: string | null;
+    activeEpisodeIsCurrentPatient: boolean;
+    hasResumableEpisode: boolean;
     recentConversation: readonly {
       role: "user" | "assistant";
       text: string;

@@ -92,8 +92,8 @@ describe("runtime-guided assistant agent", () => {
         workflowId: "nursing-day",
         currentStepId: "handover",
         activeEpisodeTitle: null,
-        activeEpisodePatientId: null,
-        resumableEpisodePatientId: null,
+        activeEpisodePatientId: "p-luca",
+        resumableEpisodePatientId: "p-anna",
         recentPrompts: [],
         recentConversation: [
           { role: "user", text: "Ich habe vier Kontexte geprüft." },
@@ -146,6 +146,9 @@ describe("runtime-guided assistant agent", () => {
       "Ich habe vier Kontexte geprüft",
     );
     expect(agentSystemText).toContain("TRUSTED_WORKING_CONTEXT");
+    expect(agentSystemText).toContain('"hasResumableEpisode":true');
+    expect(agentSystemText).not.toContain("p-luca");
+    expect(agentSystemText).not.toContain("p-anna");
     expect(JSON.stringify(bodies[2])).toContain("UNTRUSTED_TOOL_DATA");
     expect(JSON.stringify(bodies[2])).toContain(
       runtimeSitePack.instructions["nursing-early"]!.sha256,

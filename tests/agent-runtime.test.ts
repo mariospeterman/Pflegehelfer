@@ -22,8 +22,8 @@ const context: AgentRunContext = {
   workingContext: {
     currentStepId: "documentation",
     activeEpisodeTitle: "Morgenpflege",
-    activeEpisodePatientId: "patient-anna",
-    resumableEpisodePatientId: null,
+    activeEpisodeIsCurrentPatient: true,
+    hasResumableEpisode: false,
     recentConversation: [
       { role: "user", text: "Mobilisation später." },
       { role: "assistant", text: "Verstanden, sie bleibt offen." },

@@ -229,6 +229,7 @@ export function buildApp(
     demoMode?: boolean;
     workspace?: ClinicalWorkspace;
     operationalStore?: OperationalStore;
+    modelGateway?: ModelGateway;
     loggerStream?: Writable;
     loggerLevel?: string;
   } = {},
@@ -248,7 +249,7 @@ export function buildApp(
   const workspace = options.workspace ?? new InMemoryClinicalWorkspace();
   const operationalStore =
     options.operationalStore ?? new InMemoryOperationalStore();
-  const models = new ModelGateway();
+  const models = options.modelGateway ?? new ModelGateway();
   const asr = new AsrGateway();
   const tts = new TtsGateway();
   const knowledge = new ApprovedKnowledgeService();
@@ -1700,9 +1701,39 @@ export function buildApp(
     const body = assistantQueryBody.parse(request.body);
     const actorId = userId(request);
     const inferenceController = new AbortController();
-    const abortInference = () => inferenceController.abort();
+    let completed = false;
+    let generatedResponse: AssistantResponse | null = null;
+    let revocation = Promise.resolve();
+    const revokeAuthorities = () => {
+      if (generatedResponse) assistant.revokeResponseIntents(generatedResponse);
+      revocation = revocation.then(() =>
+        operationalStore.revokeActorAuthorities(actorId),
+      );
+      return revocation;
+    };
+    const revokeAfterDisconnect = () => {
+      if (completed) return revocation;
+      inferenceController.abort("client-disconnected");
+      return revokeAuthorities();
+    };
+    const abortInference = () => void revokeAfterDisconnect();
+    const finishResponse = () => {
+      if (
+        request.raw.aborted ||
+        request.raw.destroyed ||
+        reply.raw.destroyed ||
+        reply.raw.socket?.destroyed === true
+      ) {
+        void revokeAfterDisconnect();
+        return;
+      }
+      completed = true;
+      request.raw.removeListener("aborted", abortInference);
+      reply.raw.removeListener("close", abortInference);
+    };
     request.raw.once("aborted", abortInference);
     reply.raw.once("close", abortInference);
+    reply.raw.once("finish", finishResponse);
     const actor = service.user(actorId);
     await contextTransitions.get(actorId);
     let session = await operationalStore.getOrStartSession(actorId, actor.role);
@@ -1743,9 +1774,9 @@ export function buildApp(
         ...(body.purpose ? { purpose: body.purpose } : {}),
       }),
     );
+    generatedResponse = response;
     if (inferenceController.signal.aborted) {
-      assistant.revokeResponseIntents(response);
-      await operationalStore.revokeActorAuthorities(actorId);
+      await revokeAfterDisconnect();
       throw new DomainError(
         "INVALID_STATE",
         "Assistenzanfrage wurde abgebrochen.",
@@ -1753,20 +1784,39 @@ export function buildApp(
       );
     }
     await persistResponseAuthorities(response, session);
-    await operationalStore.appendConversationTurn(actorId, actor.role, {
-      id: response.id,
-      prompt: body.prompt,
-      response: archiveAssistantResponse(response),
-      createdAt: new Date().toISOString(),
-      inputModality: body.inputModality,
-      originPatientId: body.patientId,
-      originEncounterId: session.encounterId,
-      originThreadId: session.threadId,
-      originContextRevision: session.contextRevision,
-    });
+    if (inferenceController.signal.aborted) {
+      await revokeAfterDisconnect();
+      throw new DomainError(
+        "INVALID_STATE",
+        "Assistenzanfrage wurde abgebrochen.",
+        499,
+      );
+    }
+    try {
+      await operationalStore.appendConversationTurn(actorId, actor.role, {
+        id: response.id,
+        prompt: body.prompt,
+        response: archiveAssistantResponse(response),
+        createdAt: new Date().toISOString(),
+        inputModality: body.inputModality,
+        originPatientId: body.patientId,
+        originEncounterId: session.encounterId,
+        originThreadId: session.threadId,
+        originContextRevision: session.contextRevision,
+      });
+    } catch (error) {
+      await revokeAuthorities();
+      throw error;
+    }
+    if (inferenceController.signal.aborted) {
+      await revokeAfterDisconnect();
+      throw new DomainError(
+        "INVALID_STATE",
+        "Assistenzanfrage wurde abgebrochen.",
+        499,
+      );
+    }
     void voiceReceiptId;
-    request.raw.removeListener("aborted", abortInference);
-    reply.raw.removeListener("close", abortInference);
     return response;
   });
 
@@ -1776,14 +1826,37 @@ export function buildApp(
     const inferenceController = new AbortController();
     let completed = false;
     let streamedResponse: AssistantResponse | null = null;
-    const abortInference = () => {
-      if (completed) return;
-      inferenceController.abort();
+    let revocation = Promise.resolve();
+    const revokeAuthorities = () => {
       if (streamedResponse) assistant.revokeResponseIntents(streamedResponse);
-      void operationalStore.revokeActorAuthorities(actorId);
+      revocation = revocation.then(() =>
+        operationalStore.revokeActorAuthorities(actorId),
+      );
+      return revocation;
+    };
+    const revokeAfterDisconnect = () => {
+      if (completed) return revocation;
+      inferenceController.abort("client-disconnected");
+      return revokeAuthorities();
+    };
+    const abortInference = () => void revokeAfterDisconnect();
+    const finishResponse = () => {
+      if (
+        request.raw.aborted ||
+        request.raw.destroyed ||
+        reply.raw.destroyed ||
+        reply.raw.socket?.destroyed === true
+      ) {
+        void revokeAfterDisconnect();
+        return;
+      }
+      completed = true;
+      request.raw.removeListener("aborted", abortInference);
+      reply.raw.removeListener("close", abortInference);
     };
     request.raw.once("aborted", abortInference);
     reply.raw.once("close", abortInference);
+    reply.raw.once("finish", finishResponse);
     const actor = service.user(actorId);
     await contextTransitions.get(actorId);
     let session = await operationalStore.getOrStartSession(actorId, actor.role);
@@ -1827,8 +1900,7 @@ export function buildApp(
     );
     streamedResponse = response;
     if (inferenceController.signal.aborted) {
-      assistant.revokeResponseIntents(response);
-      await operationalStore.revokeActorAuthorities(actorId);
+      await revokeAfterDisconnect();
       return reply.code(499).send({
         error: "INVALID_STATE",
         message: "Assistenzanfrage wurde abgebrochen.",
@@ -1836,6 +1908,14 @@ export function buildApp(
       });
     }
     await persistResponseAuthorities(response, session);
+    if (inferenceController.signal.aborted) {
+      await revokeAfterDisconnect();
+      return reply.code(499).send({
+        error: "INVALID_STATE",
+        message: "Assistenzanfrage wurde abgebrochen.",
+        requestId: request.id,
+      });
+    }
     reply.hijack();
     reply.raw.statusCode = 200;
     reply.raw.setHeader("content-type", "application/x-ndjson; charset=utf-8");
@@ -1869,7 +1949,7 @@ export function buildApp(
         originContextRevision: session.contextRevision,
       });
     } catch {
-      assistant.revokeResponseIntents(response);
+      await revokeAuthorities();
       write({
         type: "error",
         message:
@@ -1878,9 +1958,13 @@ export function buildApp(
       reply.raw.end();
       return;
     }
+    if (inferenceController.signal.aborted) {
+      await revokeAfterDisconnect();
+      reply.raw.end();
+      return;
+    }
     void voiceReceiptId;
     write({ type: "complete", response });
-    completed = true;
     reply.raw.end();
   });
   app.post("/api/v1/assistant/intents/:token/execute", async (request) => {

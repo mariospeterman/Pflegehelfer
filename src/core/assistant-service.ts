@@ -717,10 +717,11 @@ export class AssistantService {
           workingContext: {
             currentStepId: request.workingContext.currentStepId,
             activeEpisodeTitle: request.workingContext.activeEpisodeTitle,
-            activeEpisodePatientId:
-              request.workingContext.activeEpisodePatientId,
-            resumableEpisodePatientId:
-              request.workingContext.resumableEpisodePatientId,
+            activeEpisodeIsCurrentPatient:
+              patient != null &&
+              request.workingContext.activeEpisodePatientId === patient.id,
+            hasResumableEpisode:
+              request.workingContext.resumableEpisodePatientId !== null,
             recentConversation: request.workingContext.recentConversation ?? [],
           },
           instructions: {
@@ -731,10 +732,11 @@ export class AssistantService {
               `TRUSTED_WORKING_CONTEXT:\n${JSON.stringify({
                 currentStepId: request.workingContext.currentStepId,
                 activeEpisodeTitle: request.workingContext.activeEpisodeTitle,
-                activeEpisodePatientId:
-                  request.workingContext.activeEpisodePatientId,
-                resumableEpisodePatientId:
-                  request.workingContext.resumableEpisodePatientId,
+                activeEpisodeIsCurrentPatient:
+                  patient != null &&
+                  request.workingContext.activeEpisodePatientId === patient.id,
+                hasResumableEpisode:
+                  request.workingContext.resumableEpisodePatientId !== null,
               })}`,
             ],
             skills: agentGuidance.availableSkills.map((skill) => ({
