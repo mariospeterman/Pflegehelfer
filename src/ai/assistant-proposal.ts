@@ -9,6 +9,20 @@ const sourceSpanSchema = z
   })
   .strict();
 
+const sourceRecordIdSchema = z.string().regex(/^source-[a-f0-9]{16}$/);
+const proposalSourceRecordSchema = z
+  .object({
+    id: sourceRecordIdSchema,
+    contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+    capturedAt: z.string().datetime(),
+    modality: z.enum(["typed", "voice"]),
+    origin: z.enum(["current-input", "legacy-span"]),
+    text: z.string().min(1).max(1200),
+  })
+  .strict();
+
+const sourceRecordIds = z.array(sourceRecordIdSchema).min(1).max(8).optional();
+
 const reportingStatusSchema = z.enum([
   "current",
   "historical",
@@ -21,6 +35,7 @@ const common = {
   sourceSpan: sourceSpanSchema,
   requestedByUser: z.boolean(),
   dependencies: z.array(z.string()).max(12),
+  sourceRecordIds,
 };
 
 export const clinicalActionSchema = z.discriminatedUnion("type", [
@@ -130,6 +145,7 @@ const proposedFactSchema = z
     value: z.number().optional(),
     unit: z.string().max(20).optional(),
     sourceSpan: sourceSpanSchema,
+    sourceRecordIds,
   })
   .strict();
 
@@ -138,6 +154,7 @@ const correctionSchema = z
     replacedText: z.string().trim().min(1).max(120),
     replacementText: z.string().trim().min(1).max(120),
     sourceSpan: sourceSpanSchema,
+    sourceRecordIds,
   })
   .strict();
 
@@ -155,6 +172,7 @@ const workPerformedSchema = z
     reportingStatus: reportingStatusSchema,
     certainty: z.enum(["certain", "uncertain"]),
     sourceSpan: sourceSpanSchema,
+    sourceRecordIds,
   })
   .strict();
 
@@ -177,6 +195,7 @@ const understoodObservationSchema = z
     reportingStatus: reportingStatusSchema,
     certainty: z.enum(["certain", "uncertain"]),
     sourceSpan: sourceSpanSchema,
+    sourceRecordIds,
   })
   .strict();
 
@@ -188,6 +207,7 @@ const taskChangeSchema = z
     targetLabel: z.string().trim().min(1).max(160).nullable(),
     executable: z.boolean(),
     sourceSpan: sourceSpanSchema,
+    sourceRecordIds,
   })
   .strict();
 
@@ -198,6 +218,7 @@ const understoodCommunicationSchema = z
     requested: z.boolean(),
     message: z.string().trim().min(1).max(500),
     sourceSpan: sourceSpanSchema,
+    sourceRecordIds,
   })
   .strict();
 
@@ -215,6 +236,7 @@ const workflowActionSchema = z
       .regex(/^action-(?:[1-9]|1[0-2])$/)
       .nullable(),
     sourceSpan: sourceSpanSchema,
+    sourceRecordIds,
   })
   .strict();
 
@@ -224,6 +246,7 @@ const proposalEvidenceSchema = z
     kind: z.enum(["user-statement", "session-context"]),
     label: z.string().trim().min(1).max(200),
     sourceSpan: sourceSpanSchema.nullable(),
+    sourceRecordIds,
   })
   .strict();
 
@@ -233,6 +256,7 @@ export const assistantProposalSchema = z
     requestId: z.string().regex(/^request-[a-f0-9]{16}$/),
     inputModality: z.enum(["typed", "voice"]),
     inputTimestamp: z.string().datetime(),
+    sourceRecords: z.array(proposalSourceRecordSchema).max(20).optional(),
     summary: z.string().trim().min(3).max(500),
     understoodFacts: z.array(proposedFactSchema).max(20),
     workPerformed: z.array(workPerformedSchema).max(12),
@@ -285,6 +309,106 @@ export const assistantProposalSchema = z
 
 export type ExecutableAssistantAction = z.infer<typeof clinicalActionSchema>;
 export type AssistantProposal = z.infer<typeof assistantProposalSchema>;
+
+function proposalSourceRecord(
+  text: string,
+  capturedAt: string,
+  modality: "typed" | "voice",
+  origin: "current-input" | "legacy-span" = "current-input",
+) {
+  const contentHash = createHash("sha256").update(text).digest("hex");
+  return {
+    id: `source-${contentHash.slice(0, 16)}`,
+    contentHash,
+    capturedAt,
+    modality,
+    origin,
+    text,
+  } as const;
+}
+
+/** Verifies immutable input records separately from model interpretation. */
+export function verifyProposalSourceRecords(input: unknown): AssistantProposal {
+  const plan = assistantProposalSchema.parse(input);
+  const records = new Map(
+    (plan.sourceRecords ?? []).map((record) => [record.id, record]),
+  );
+  for (const record of records.values())
+    if (createHash("sha256").update(record.text).digest("hex") !== record.contentHash)
+      throw new Error("CLINICAL_PLAN_SOURCE_RECORD_HASH_MISMATCH");
+  const referenced = [
+    ...plan.understoodFacts,
+    ...plan.workPerformed,
+    ...plan.observations,
+    ...plan.taskChanges,
+    ...plan.communications,
+    ...plan.workflowActions,
+    ...plan.actions,
+    ...plan.corrections,
+    ...plan.evidence.filter(
+      (item): item is typeof item & { sourceSpan: NonNullable<typeof item.sourceSpan> } =>
+        item.sourceSpan !== null,
+    ),
+  ];
+  for (const item of referenced) {
+    if (!item.sourceRecordIds?.length)
+      throw new Error("CLINICAL_PLAN_SOURCE_RECORD_MISSING");
+    const matches = item.sourceRecordIds.some((id) => {
+      const record = records.get(id);
+      return (
+        record !== undefined &&
+        record.text.slice(item.sourceSpan.start, item.sourceSpan.end) ===
+          item.sourceSpan.quote
+      );
+    });
+    if (!matches) throw new Error("CLINICAL_PLAN_SOURCE_RECORD_SPAN_MISMATCH");
+  }
+  for (const action of plan.actions)
+    if (
+      action.type === "note-proposal" &&
+      action.structuredText !== action.sourceSpan.quote &&
+      ((action.sourceRecordIds?.length ?? 0) < 2 || plan.corrections.length === 0)
+    )
+      throw new Error("CLINICAL_PLAN_REWRITTEN_NOTE_WITHOUT_PROVENANCE");
+  return plan;
+}
+
+function withLegacySourceRecords(plan: AssistantProposal): AssistantProposal {
+  if ((plan.sourceRecords?.length ?? 0) > 0) return plan;
+  const copy = structuredClone(plan);
+  const records = new Map<string, ReturnType<typeof proposalSourceRecord>>();
+  const sourced = [
+    ...copy.understoodFacts,
+    ...copy.workPerformed,
+    ...copy.observations,
+    ...copy.taskChanges,
+    ...copy.communications,
+    ...copy.workflowActions,
+    ...copy.actions,
+    ...copy.corrections,
+    ...copy.evidence.filter(
+      (item): item is typeof item & { sourceSpan: NonNullable<typeof item.sourceSpan> } =>
+        item.sourceSpan !== null,
+    ),
+  ];
+  for (const item of sourced) {
+    const record = proposalSourceRecord(
+      item.sourceSpan.quote,
+      copy.inputTimestamp,
+      copy.inputModality,
+      "legacy-span",
+    );
+    records.set(record.id, record);
+    item.sourceSpan = {
+      start: 0,
+      end: record.text.length,
+      quote: record.text,
+    };
+    item.sourceRecordIds = [record.id];
+  }
+  copy.sourceRecords = [...records.values()].slice(0, 20);
+  return copy;
+}
 
 export function observationNeedsHighAssurance(input: {
   code: Extract<
@@ -623,7 +747,7 @@ export function requiresDedicatedClinicalWorkflow(source: string): boolean {
         normalizedClause,
       );
     const imperative =
-      /\b(?:geben|gib|verabreichen|verabreiche|injizieren|injiziere|verteilen|verteile|absetzen|entfernen|entferne|wechseln|wechsle|legen|lege|applizieren|appliziere|anordnen|ordne|verordnen|verordne|verschreiben|verschreibe|behandeln|behandle|therapieren|therapiere|stoppen|stoppe|ändern|ändere|anpassen|passe|reduzieren|reduziere|erhöhen|erhöhe|titrieren|titriere|senken|senke|ersetzen|ersetze|ziehen|zieh|verbinden|spülen|spüle|erneuern|absaugen|leeren|leere|versorgen|versorge|umlagern|lagere|durchführen|führe|messen|miss|anziehen|lassen|lass|inhalieren)\b/i.test(
+      /\b(?:geben|gib|verabreichen|verabreiche|injizieren|injiziere|verteilen|verteile|absetzen|entfernen|entferne|wechseln|wechsle|legen|lege|applizieren|appliziere|anordnen|ordne|verordnen|verordne|verschreiben|verschreibe|behandeln|behandle|therapieren|therapiere|stoppen|stoppe|ändern|ändere|anpassen|passe|reduzieren|reduziere|erhöhen|erhöhe|titrieren|titriere|senken|senke|ersetzen|ersetze|ziehen|zieh|verbinden|spülen|spüle|erneuern|absaugen|leeren|leere|versorgen|versorge|umlagern|lagere|durchführen|führe|messen|miss|lassen|lass|inhalieren)\b/i.test(
         clause,
       ) ||
       /\bsetz(?:e|en\s+sie)\b[^.;]{0,50}\bab\b/i.test(clause) ||
@@ -748,6 +872,12 @@ export function deterministicAssistantProposal(
 ): AssistantProposal | null {
   const source = prompt.slice(0, 1200).trim();
   if (source.length < 3) return null;
+  const inputTimestamp = options.inputTimestamp ?? new Date().toISOString();
+  const inputSource = proposalSourceRecord(
+    source,
+    inputTimestamp,
+    options.inputModality ?? "typed",
+  );
 
   // Imperative medication changes are outside this compiler. Historical or
   // completed medication statements remain documentable reports.
@@ -818,12 +948,14 @@ export function deterministicAssistantProposal(
       certainty: "certain",
       reportingStatus: "current",
       sourceSpan: explicitNoWrite,
+      sourceRecordIds: [inputSource.id],
     });
     return assistantProposalSchema.parse({
       schemaVersion: "3.0",
       requestId: `request-${createHash("sha256").update(source).digest("hex").slice(0, 16)}`,
       inputModality: options.inputModality ?? "typed",
-      inputTimestamp: options.inputTimestamp ?? new Date().toISOString(),
+      inputTimestamp,
+      sourceRecords: [inputSource],
       summary: "Verstanden; keine Änderung angefordert",
       understoodFacts: facts,
       workPerformed,
@@ -1267,7 +1399,7 @@ export function deterministicAssistantProposal(
       !action.occurrenceText?.toLocaleLowerCase("de-CH").includes("um");
     const futureTime = isFutureSameDayOccurrence(
       action.occurrenceText,
-      options.inputTimestamp ?? new Date().toISOString(),
+      inputTimestamp,
     );
     if (!incompleteHistoricalTime && !futureTime) continue;
     actions.splice(index, 1);
@@ -1408,7 +1540,7 @@ export function deterministicAssistantProposal(
       if (
         isFutureSameDayOccurrence(
           localOccurrence,
-          options.inputTimestamp ?? new Date().toISOString(),
+          inputTimestamp,
         )
       ) {
         observations.push({
@@ -1829,11 +1961,25 @@ export function deterministicAssistantProposal(
   )
     return null;
 
+  for (const item of [
+    ...facts,
+    ...workPerformed,
+    ...observations,
+    ...taskChanges,
+    ...communications,
+    ...workflowActions,
+    ...evidence,
+    ...actions,
+    ...corrections,
+  ])
+    item.sourceRecordIds = [inputSource.id];
+
   return assistantProposalSchema.parse({
     schemaVersion: "3.0",
     requestId: `request-${createHash("sha256").update(source).digest("hex").slice(0, 16)}`,
     inputModality: options.inputModality ?? "typed",
-    inputTimestamp: options.inputTimestamp ?? new Date().toISOString(),
+    inputTimestamp,
+    sourceRecords: [inputSource],
     summary:
       actions.length > 0
         ? `${actions.length} prüfbare Änderung${actions.length === 1 ? "" : "en"} verstanden`
@@ -1885,25 +2031,41 @@ export function reviseAssistantProposal(
   if (/\bnur\s+(?:die\s+)?(?:morgenpflege|mobilisation)\b/i.test(source)) {
     const replacement = deterministicAssistantProposal(source, options);
     if (!replacement) return null;
+    const replacementSourceId = replacement.sourceRecords?.[0]?.id;
     replacement.corrections = [
       ...previous.data.corrections,
       {
         replacedText: previous.data.summary,
         replacementText: source,
         sourceSpan: span(source, 0, source.length),
+        ...(replacementSourceId
+          ? { sourceRecordIds: [replacementSourceId] }
+          : {}),
       },
     ].slice(-6);
     replacement.summary = `${replacement.actions.length} prüfbare Änderung${replacement.actions.length === 1 ? "" : "en"} nach Korrektur`;
-    return assistantProposalSchema.parse(replacement);
+    return verifyProposalSourceRecords(replacement);
   }
 
-  const plan = structuredClone(previous.data);
+  const plan = withLegacySourceRecords(previous.data);
   const currentSpan = span(source, 0, source.length);
+  const currentSource = proposalSourceRecord(
+    source,
+    options.inputTimestamp ?? new Date().toISOString(),
+    options.inputModality ?? "typed",
+  );
+  plan.sourceRecords = [
+    ...(plan.sourceRecords ?? []).filter(
+      (record) => record.id !== currentSource.id,
+    ),
+    currentSource,
+  ].slice(-20);
   plan.requestId = `request-${createHash("sha256").update(`${plan.requestId}:${source}`).digest("hex").slice(0, 16)}`;
   plan.inputModality = options.inputModality ?? "typed";
-  plan.inputTimestamp = options.inputTimestamp ?? new Date().toISOString();
+  plan.inputTimestamp = currentSource.capturedAt;
   plan.clarificationQuestions = [];
   plan.ambiguities = [];
+  let appliedRevision = false;
 
   const fluidCorrection =
     /\b(?:korrektur\s*:\s*)?(?:doch\s+|eher\s+|stattdessen\s+)?(\d{1,4})\s*ml\b/i.exec(
@@ -1914,6 +2076,7 @@ export function reviseAssistantProposal(
       (fact) => fact.kind === "fluid-intake" && typeof fact.value === "number",
     );
     if (priorFluid) {
+      appliedRevision = true;
       const priorValue = priorFluid.value!;
       const nextValue = Number(fluidCorrection[1]);
       priorFluid.value = nextValue;
@@ -1924,12 +2087,14 @@ export function reviseAssistantProposal(
         : "certain";
       priorFluid.label = `${priorFluid.certainty === "uncertain" ? "etwa " : ""}${nextValue} ml getrunken`;
       priorFluid.sourceSpan = currentSpan;
+      priorFluid.sourceRecordIds = [currentSource.id];
       plan.corrections = [
         ...plan.corrections,
         {
           replacedText: `${priorValue} ml`,
           replacementText: `${nextValue} ml`,
           sourceSpan: currentSpan,
+          sourceRecordIds: [currentSource.id],
         },
       ].slice(-6);
       const note = plan.actions.find(
@@ -1943,7 +2108,10 @@ export function reviseAssistantProposal(
           ),
           `${priorFluid.certainty === "uncertain" ? "etwa " : ""}${nextValue} ml`,
         );
-        note.sourceSpan = currentSpan;
+        note.sourceRecordIds = [
+          ...(note.sourceRecordIds ?? []),
+          currentSource.id,
+        ].filter((id, index, values) => values.indexOf(id) === index);
       }
     } else {
       plan.clarificationQuestions = [
@@ -1954,6 +2122,7 @@ export function reviseAssistantProposal(
   }
 
   if (hasNegatedAction(source, "physician")) {
+    appliedRevision = true;
     plan.actions = plan.actions.filter(
       (action) =>
         action.type !== "communication-proposal" ||
@@ -1967,6 +2136,7 @@ export function reviseAssistantProposal(
   if (
     /\b(?:informieren|benachrichtigen|nachricht\s+(?:an|für))\b/i.test(source)
   ) {
+    appliedRevision = true;
     if (!options.namedRecipient) {
       plan.clarificationQuestions = [
         "Welche berechtigte Person oder Dienstrolle soll die Nachricht erhalten?",
@@ -1982,6 +2152,7 @@ export function reviseAssistantProposal(
         requested: true,
         message: source,
         sourceSpan: currentSpan,
+        sourceRecordIds: [currentSource.id],
       });
       plan.actions = plan.actions.filter(
         (action) =>
@@ -2002,6 +2173,7 @@ export function reviseAssistantProposal(
         priority: "routine",
         dueInMinutes: null,
         sourceSpan: currentSpan,
+        sourceRecordIds: [currentSource.id],
       });
     }
   }
@@ -2011,18 +2183,32 @@ export function reviseAssistantProposal(
       source,
     )
   ) {
+    appliedRevision = true;
     plan.actions = plan.actions.filter(
       (action) => action.type !== "task-proposal",
     );
     plan.taskChanges = plan.taskChanges.map((change) => ({
       ...change,
       executable: false,
+      sourceRecordIds: [
+        ...(change.sourceRecordIds ?? []),
+        currentSource.id,
+      ],
     }));
   }
-  if (/\bnur\s+dokumentation\s+und\s+nachricht\b/i.test(source))
+  if (/\bnur\s+dokumentation\s+und\s+nachricht\b/i.test(source)) {
+    appliedRevision = true;
     plan.actions = plan.actions.filter((action) =>
       ["note-proposal", "communication-proposal"].includes(action.type),
     );
+  }
+
+  if (!appliedRevision) {
+    plan.clarificationQuestions = [
+      "Ich konnte diese Korrektur nicht eindeutig auf den offenen Entwurf anwenden. Was genau soll ersetzt oder später erledigt werden?",
+    ];
+    plan.ambiguities = [...plan.clarificationQuestions];
+  }
 
   const priorActionIds = new Map(
     plan.actions.map((action, index) => [action.id, `action-${index + 1}`]),
@@ -2056,13 +2242,14 @@ export function reviseAssistantProposal(
       kind: "user-statement" as const,
       label: `Aktuelle Korrektur: ${source}`.slice(0, 200),
       sourceSpan: currentSpan,
+      sourceRecordIds: [currentSource.id],
     },
   ].slice(-20);
   plan.evidence.forEach((item, index) => {
     item.id = `evidence-${index + 1}`;
   });
   plan.summary = `${plan.actions.length} prüfbare Änderung${plan.actions.length === 1 ? "" : "en"} nach Korrektur`;
-  return assistantProposalSchema.parse(plan);
+  return verifyProposalSourceRecords(plan);
 }
 
 export function completionEvidenceIsIncomplete(source: string): boolean {
@@ -2343,6 +2530,19 @@ export function verifyModelProposalAgainstDeterministicCompiler(
     inputModality: "typed" as const,
     inputTimestamp: authoritativeInputTimestamp ?? new Date().toISOString(),
   };
+  const verifiedSource =
+    compiled?.sourceRecords?.[0] ??
+    proposalSourceRecord(
+      prompt.slice(0, 1200).trim(),
+      metadata.inputTimestamp,
+      metadata.inputModality,
+    );
+  const bindCurrentSource = <T extends { sourceRecordIds?: string[] }>(
+    item: T,
+  ): T =>
+    item.sourceRecordIds?.length
+      ? item
+      : { ...item, sourceRecordIds: [verifiedSource.id] };
   if (
     compiled?.actions.length === 0 &&
     compiled.understoodFacts.some((fact) => fact.polarity === "negated") &&
@@ -2413,6 +2613,8 @@ export function verifyModelProposalAgainstDeterministicCompiler(
     requestId: metadata.requestId,
     inputModality: metadata.inputModality,
     inputTimestamp: metadata.inputTimestamp,
+    sourceRecords: compiled?.sourceRecords ?? [verifiedSource],
+    actions: candidate.actions.map(bindCurrentSource),
     summary:
       candidate.actions.length > 0
         ? `${candidate.actions.length} prüfbare Änderung${candidate.actions.length === 1 ? "" : "en"} verstanden`
@@ -2422,7 +2624,7 @@ export function verifyModelProposalAgainstDeterministicCompiler(
     understoodFacts: (
       compiled?.understoodFacts ?? candidate.understoodFacts
     ).map((fact) => ({
-      ...fact,
+      ...bindCurrentSource(fact),
       label: fact.sourceSpan.quote,
       polarity: hasLocalNegation(
         prompt,
@@ -2433,21 +2635,26 @@ export function verifyModelProposalAgainstDeterministicCompiler(
         : ("affirmed" as const),
     })),
     workPerformed: (compiled?.workPerformed ?? []).map((work) => ({
-      ...work,
+      ...bindCurrentSource(work),
       activity: work.sourceSpan.quote,
     })),
     taskChanges: (compiled?.taskChanges ?? []).map((change) => ({
-      ...change,
+      ...bindCurrentSource(change),
       taskLabel: change.sourceSpan.quote,
     })),
     communications: (compiled?.communications ?? candidate.communications).map(
       (communication) => ({
-        ...communication,
+        ...bindCurrentSource(communication),
         message: communication.sourceSpan.quote,
       }),
     ),
-    workflowActions: compiled?.workflowActions ?? candidate.workflowActions,
-    corrections: compiled?.corrections ?? candidate.corrections,
+    workflowActions: (
+      compiled?.workflowActions ?? candidate.workflowActions
+    ).map(bindCurrentSource),
+    evidence: candidate.evidence.map(bindCurrentSource),
+    corrections: (compiled?.corrections ?? candidate.corrections).map(
+      bindCurrentSource,
+    ),
     temporal: compiled?.temporal ?? candidate.temporal,
     clarificationQuestions:
       candidate.clarificationQuestions.length > 0

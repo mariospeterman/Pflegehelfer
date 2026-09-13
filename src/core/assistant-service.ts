@@ -24,6 +24,7 @@ import {
   isDoubtfulObservation,
   reviseAssistantProposal,
   requiresDedicatedClinicalWorkflow,
+  verifyProposalSourceRecords,
   type ExecutableAssistantAction,
 } from "../ai/assistant-proposal.js";
 import {
@@ -862,7 +863,7 @@ export class AssistantService {
     ];
     if (classification.degraded)
       warnings.push(
-        "Das konfigurierte Modell war nicht verfügbar; sichere deterministische Navigation wurde verwendet.",
+        "Das Sprachmodell ist nicht verfügbar. Direkte Datenansichten und prüfpflichtige wörtliche Entwürfe bleiben verfügbar; freies Sprachverständnis ist nicht bestätigt.",
       );
     if (agentFailed)
       warnings.push(
@@ -1683,6 +1684,7 @@ export class AssistantService {
           });
           break;
         }
+        verifyProposalSourceRecords(planned.plan);
         runtime = {
           route: planned.degraded ? "safe-fallback" : "assistant",
           label: planned.degraded
@@ -1830,6 +1832,35 @@ export class AssistantService {
       }
       case "unknown":
         if (
+          classification.degraded &&
+          patient &&
+          ["care-assistant", "registered-nurse"].includes(actor.role) &&
+          !requiresDedicatedClinicalWorkflow(prompt) &&
+          !explicitlyRefusesDocumentation(prompt) &&
+          !/^\s*(?:was|wer|wen|wem|wie|wo|wann|warum|wieso|welche|welcher|welches|ist|sind|hat|haben|kann|können|soll|sollen|darf|dürfen)\b/i.test(
+            prompt,
+          ) &&
+          !/\?\s*$/.test(prompt)
+        ) {
+          components.push({
+            type: "AssistantText",
+            message:
+              "Das Sprachmodell ist nicht verfügbar. Ich habe deinen Wortlaut deshalb nicht interpretiert, sondern unverändert zur Prüfung vorbereitet.",
+          });
+          components.push({
+            type: "DraftAction",
+            kind: "nursing-note",
+            title: `Wörtlichen Eintrag prüfen · ${patient.displayName}`,
+            preview: prompt.slice(0, 1200),
+            actionLabel: "Wortlaut prüfen und übernehmen",
+            intentToken: issue("note:draft", {
+              structuredText: prompt.slice(0, 1200),
+              inputModality: request.inputModality ?? "typed",
+            }),
+            sourceLabel:
+              "Wörtliche Eingabe · keine automatische Bedeutungsinterpretation",
+          });
+        } else if (
           !agentRun ||
           (agentRun.status === "answer" && agentRun.toolCalls === 0) ||
           ["failed", "cancelled", "budget-exhausted"].includes(agentRun.status)

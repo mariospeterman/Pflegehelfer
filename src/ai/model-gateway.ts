@@ -772,7 +772,11 @@ export class ModelGateway {
         intent: fallback,
         mode: this.mode,
         model: "deterministic-clinical-router-v1",
-        degraded: false,
+        degraded: true,
+        failure: {
+          code: "not-configured",
+          message: "language-model-not-configured-direct-controls-only",
+        },
       };
     // Recognizable clinical commands stay deterministic and low-latency. The
     // model is reserved for ambiguous language; it never becomes the action
@@ -895,7 +899,11 @@ export class ModelGateway {
         plan: fallback,
         mode: this.mode,
         model: "deterministic-clinical-planner-v1",
-        degraded: this.mode !== "disabled" && this.mode !== "deterministic",
+        degraded: true,
+        failure: {
+          code: "not-configured",
+          message: "language-model-not-configured-verbatim-review-mode",
+        },
       };
 
     const controller = new AbortController();
