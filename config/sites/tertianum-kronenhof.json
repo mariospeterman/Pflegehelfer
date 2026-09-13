@@ -69,6 +69,8 @@
     {
       "actorId": "u-assistant",
       "role": "care-assistant",
+      "roleProfileId": "pflegeassistenz-srk",
+      "stationId": "rehabilitation-2",
       "shiftId": "early",
       "patientIds": [
         "p-anna",
@@ -82,6 +84,8 @@
     {
       "actorId": "u-nurse",
       "role": "registered-nurse",
+      "roleProfileId": "fage-efz",
+      "stationId": "rehabilitation-2",
       "shiftId": "early",
       "patientIds": [
         "p-anna",
@@ -95,6 +99,8 @@
     {
       "actorId": "u-nurse-evening",
       "role": "registered-nurse",
+      "roleProfileId": "pflege-hf",
+      "stationId": "rehabilitation-2",
       "shiftId": "late",
       "patientIds": [
         "p-anna",

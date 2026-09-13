@@ -451,6 +451,11 @@ export class PflegehelferService {
         ...candidate,
         wardIds: [],
         patientIds: [],
+        managedDevice:
+          candidate.id === user.id ? candidate.managedDevice : false,
+        ...(candidate.id === user.id && candidate.qualificationIds
+          ? { qualificationIds: candidate.qualificationIds }
+          : { qualificationIds: [] }),
       })),
       patients: visiblePatients,
       tasks: visibleTasks,

@@ -72,6 +72,15 @@ describe("least-privilege policy", () => {
     expect(snapshot.users.every((user) => user.wardIds.length === 0)).toBe(
       true,
     );
+    expect(
+      snapshot.users
+        .filter((candidate) => candidate.id !== snapshot.currentUser.id)
+        .every(
+          (candidate) =>
+            candidate.managedDevice === false &&
+            candidate.qualificationIds?.length === 0,
+        ),
+    ).toBe(true);
   });
 
   it("prevents one role from accepting another role's task", () => {

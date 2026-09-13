@@ -514,6 +514,12 @@ export function validateRuntimeSitePackBindings(
       { workflowId: string; actions: readonly string[] }
     >;
     workflows: Record<string, { eligibleRoles: readonly string[] }>;
+    staffAssignments: readonly {
+      actorId: string;
+      role: string;
+      roleProfileId: string;
+      stationId: string;
+    }[];
   },
   implementedRoles: ReadonlySet<string>,
 ): void {
@@ -551,6 +557,18 @@ export function validateRuntimeSitePackBindings(
       if (!role || !role.workflowIds.includes(skill.workflowId))
         throw new Error(`SITE_PACK_SKILL_ROLE_MISMATCH: ${skill.id}/${roleId}`);
     }
+  }
+  for (const assignment of configuration.staffAssignments) {
+    const role = snapshot.roles[assignment.roleProfileId];
+    if (!role || role.capabilityRole !== assignment.role)
+      throw new Error(
+        `SITE_PACK_ACTOR_ROLE_PROFILE_MISMATCH: ${assignment.actorId}`,
+      );
+    const station = snapshot.stations[assignment.stationId];
+    if (!station || station.departmentId !== configuration.department.id)
+      throw new Error(
+        `SITE_PACK_ACTOR_STATION_MISMATCH: ${assignment.actorId}`,
+      );
   }
 }
 

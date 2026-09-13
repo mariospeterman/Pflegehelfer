@@ -24,6 +24,7 @@ import {
 import { isDomainError, PflegehelferService } from "../core/service.js";
 import { emptyWorkflowState } from "../core/service.js";
 import { siteConfiguration } from "../core/site-config.js";
+import { runtimeSitePack } from "../core/runtime-instructions.js";
 import { InMemoryReferenceStatePort } from "../core/clinical-data-port.js";
 import { DomainError } from "../core/types.js";
 import {
@@ -259,6 +260,14 @@ export function buildApp(
       : ("institution-local" as const);
   const assistantWorkingContext = async (actorId: string) => {
     const actor = service.user(actorId);
+    const configuredWorkflowId =
+      siteConfiguration.roleProfiles[actor.role]?.workflowId ?? null;
+    const staffAssignment = siteConfiguration.staffAssignments.find(
+      (assignment) => assignment.actorId === actorId,
+    );
+    const runtimeRole = staffAssignment
+      ? runtimeSitePack.roles[staffAssignment.roleProfileId]
+      : null;
     const session = await operationalStore.getOrStartSession(
       actorId,
       actor.role,
@@ -292,6 +301,14 @@ export function buildApp(
       ? await operationalStore.getWorkday(actorId, actor.role)
       : null;
     return {
+      organizationId: siteConfiguration.institutionId,
+      sessionId: session.id,
+      threadId: session.threadId,
+      contextRevision: session.contextRevision,
+      departmentId: siteConfiguration.department.id,
+      stationId: staffAssignment?.stationId ?? null,
+      roleProfileId: runtimeRole?.id ?? null,
+      workflowId: configuredWorkflowId,
       currentStepId: session.currentStepId,
       activeEpisodeTitle: workday?.activeEpisode?.title ?? null,
       activeEpisodePatientId: workday?.activeEpisode?.patientId ?? null,

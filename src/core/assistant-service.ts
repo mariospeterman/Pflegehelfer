@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { z } from "zod";
 import {
   ModelGateway,
   type AuthorizedModelContext,
@@ -24,6 +25,16 @@ import {
   requiresDedicatedClinicalWorkflow,
   type ExecutableAssistantAction,
 } from "../ai/assistant-proposal.js";
+import {
+  AuthorizedToolRegistry,
+  BoundedAgentRuntime,
+  type AgentRunResult,
+} from "../ai/agent-runtime.js";
+import {
+  loadApprovedWorkflowSkill,
+  resolveRuntimeGuidance,
+  runtimeSitePack,
+} from "./runtime-instructions.js";
 
 export interface AssistantRequest {
   prompt: string;
@@ -32,6 +43,14 @@ export interface AssistantRequest {
   inputModality?: "typed" | "voice";
   voiceTranscriptConfirmed?: boolean;
   workingContext?: {
+    organizationId: string;
+    sessionId: string;
+    threadId: string;
+    contextRevision: number;
+    departmentId: string;
+    stationId: string | null;
+    roleProfileId: string | null;
+    workflowId: string | null;
     currentStepId: string;
     activeEpisodeTitle: string | null;
     activeEpisodePatientId: string | null;
@@ -68,6 +87,15 @@ export interface AssistantResponse {
     label: string;
     degraded: boolean;
     failure?: NonNullable<ClinicalPlanResult["failure"]>["code"];
+    agent?: {
+      packId: string;
+      packVersion: number;
+      packDigest: string;
+      instructionHashes: Readonly<Record<string, string>>;
+      toolCalls: number;
+      status: AgentRunResult["status"];
+      trace: AgentRunResult["trace"];
+    };
   };
   patientContext: {
     patientId: string;
@@ -383,26 +411,358 @@ export class AssistantService {
       // independently recognizable user language may unlock a mutation UI.
       safeIntent = "unknown";
     }
+    let agentRun: AgentRunResult | null = null;
+    let agentSelectedIntent: IntentClassification["intent"] | null = null;
+    let agentGuidance: ReturnType<typeof resolveRuntimeGuidance> | null = null;
+    const readOnlyAgentIntents = new Set([
+      "patient-summary",
+      "open-tasks",
+      "latest-vitals",
+      "handover",
+      "team-inbox",
+      "sync-status",
+      "unknown",
+    ]);
+    if (
+      request.workingContext &&
+      request.workingContext.roleProfileId &&
+      request.workingContext.workflowId &&
+      this.models.supportsAgent(request.workingContext.dataClass) &&
+      readOnlyAgentIntents.has(safeIntent)
+    ) {
+      agentGuidance = resolveRuntimeGuidance(runtimeSitePack, {
+        departmentId: request.workingContext.departmentId,
+        ...(request.workingContext.stationId
+          ? { stationId: request.workingContext.stationId }
+          : {}),
+        roleProfileId: request.workingContext.roleProfileId,
+        workflowId: request.workingContext.workflowId,
+      });
+      const emptyInput = z.object({}).strict();
+      const workflowSkillInput = z
+        .object({ skillId: z.string().regex(/^[a-z0-9-]{2,80}$/) })
+        .strict();
+      const selectedTools: string[] = [];
+      const record = (name: string) => selectedTools.push(name);
+      const registry = new AuthorizedToolRegistry([
+        {
+          name: "get_patient_summary",
+          version: 1,
+          description:
+            "Read the current authorized patient and encounter summary.",
+          effect: "read",
+          input: emptyInput,
+          execute: () => {
+            record("get_patient_summary");
+            return Promise.resolve({
+              referenceId: patient
+                ? `Patient/${patient.id}/_history/${patient.source.version}`
+                : "Patient/none",
+              sourceVersion: patient ? String(patient.source.version) : "0",
+              freshness: snapshot.serverTime,
+              complete: patient !== null,
+              data: patient
+                ? {
+                    id: patient.id,
+                    encounterId: patient.encounterId,
+                    displayName: patient.displayName,
+                    room: patient.room,
+                    risks: patient.risks,
+                    careGoals: patient.careGoals,
+                  }
+                : { patientContext: "not-selected" },
+            });
+          },
+        },
+        {
+          name: "get_open_tasks",
+          version: 1,
+          description:
+            "Read authorized open work, optionally scoped by the already selected patient.",
+          effect: "read",
+          input: emptyInput,
+          execute: () => {
+            record("get_open_tasks");
+            const tasks = snapshot.tasks
+              .filter(
+                (task) =>
+                  (!patient ||
+                    (task.patientId === patient.id &&
+                      task.encounterId === patient.encounterId)) &&
+                  task.state !== "completed",
+              )
+              .slice(0, 20)
+              .map(
+                ({ id, patientId, title, reason, state, priority, dueAt }) => ({
+                  id,
+                  patientId,
+                  title,
+                  reason,
+                  state,
+                  priority,
+                  dueAt,
+                }),
+              );
+            return Promise.resolve({
+              referenceId: `Task/search/${snapshot.serverTime}`,
+              freshness: snapshot.serverTime,
+              complete: true,
+              data: { tasks },
+            });
+          },
+        },
+        {
+          name: "get_latest_vitals",
+          version: 1,
+          description:
+            "Read accepted authorized observations for the selected encounter.",
+          effect: "read",
+          input: emptyInput,
+          execute: () => {
+            record("get_latest_vitals");
+            const observations = patient
+              ? snapshot.observations
+                  .filter(
+                    (item) =>
+                      item.patientId === patient.id &&
+                      item.encounterId === patient.encounterId &&
+                      item.approvedAt !== null,
+                  )
+                  .slice(-12)
+              : [];
+            return Promise.resolve({
+              referenceId: `Observation/search/${snapshot.serverTime}`,
+              freshness: snapshot.serverTime,
+              complete: patient !== null,
+              data: { observations },
+            });
+          },
+        },
+        {
+          name: "get_handover",
+          version: 1,
+          description:
+            "Read the actor-owned current workday handover and responsibility summary.",
+          effect: "read",
+          input: emptyInput,
+          execute: () => {
+            record("get_handover");
+            return Promise.resolve({
+              referenceId: request.workingContext!.workdayHandover
+                ? `WorkdayHandover/${request.workingContext!.workdayHandover.shiftKey}`
+                : "WorkdayHandover/none",
+              freshness: snapshot.serverTime,
+              complete: request.workingContext!.workdayHandover !== null,
+              data: request.workingContext!.workdayHandover ?? {
+                handover: "not-available-for-role",
+              },
+            });
+          },
+        },
+        {
+          name: "get_team_inbox",
+          version: 1,
+          description:
+            "Read authorized unresolved patient-team communications.",
+          effect: "read",
+          input: emptyInput,
+          execute: () => {
+            record("get_team_inbox");
+            const communications = snapshot.communications
+              .filter(
+                (item) =>
+                  (!patient ||
+                    (item.patientId === patient.id &&
+                      item.encounterId === patient.encounterId)) &&
+                  item.state !== "closed",
+              )
+              .slice(0, 20);
+            return Promise.resolve({
+              referenceId: `Communication/search/${snapshot.serverTime}`,
+              freshness: snapshot.serverTime,
+              complete: true,
+              data: { communications },
+            });
+          },
+        },
+        {
+          name: "get_sync_status",
+          version: 1,
+          description:
+            "Read current provider-delivery and reconciliation status without changing it.",
+          effect: "read",
+          input: emptyInput,
+          execute: () => {
+            record("get_sync_status");
+            if (patient)
+              return Promise.resolve({
+                referenceId: `ProviderSync/patient-scope-unavailable/${patient.id}`,
+                freshness: snapshot.serverTime,
+                complete: false,
+                data: {
+                  status:
+                    "patient-encounter-scoped delivery projection unavailable",
+                },
+              });
+            return Promise.resolve({
+              referenceId: `ProviderSync/${snapshot.serverTime}`,
+              freshness: snapshot.serverTime,
+              complete: true,
+              data: {
+                summary: snapshot.syncSummary,
+                deliveries: snapshot.outbox.slice(0, 20),
+              },
+            });
+          },
+        },
+        {
+          name: "load_workflow_skill",
+          version: 1,
+          description:
+            "Load one listed reviewed workflow skill by exact id when more guidance is needed.",
+          effect: "read",
+          input: workflowSkillInput,
+          execute: (input) => {
+            const { skillId } = workflowSkillInput.parse(input);
+            record("load_workflow_skill");
+            const skill = loadApprovedWorkflowSkill(runtimeSitePack, {
+              roleProfileId: request.workingContext!.roleProfileId!,
+              workflowId: request.workingContext!.workflowId!,
+              workflowSkillId: skillId,
+            });
+            return Promise.resolve({
+              referenceId: `RuntimeInstruction/${skill.id}/${skill.sha256}`,
+              sourceVersion: String(agentGuidance!.packVersion),
+              complete: true,
+              data: { id: skill.id, sha256: skill.sha256, body: skill.body },
+            });
+          },
+        },
+      ]);
+      agentRun = await new BoundedAgentRuntime(
+        this.models.agentAdapter(),
+        registry,
+      ).run({
+        request: prompt,
+        context: {
+          organizationId: request.workingContext.organizationId,
+          actorId: userId,
+          actorRole: actor.role,
+          purpose,
+          sessionId: request.workingContext.sessionId,
+          threadId: request.workingContext.threadId,
+          contextRevision: request.workingContext.contextRevision,
+          patientId: patient?.id ?? null,
+          encounterId: patient?.encounterId ?? null,
+          dataClass: request.workingContext.dataClass,
+          workingContext: {
+            currentStepId: request.workingContext.currentStepId,
+            activeEpisodeTitle: request.workingContext.activeEpisodeTitle,
+            activeEpisodePatientId:
+              request.workingContext.activeEpisodePatientId,
+            resumableEpisodePatientId:
+              request.workingContext.resumableEpisodePatientId,
+            recentConversation: request.workingContext.recentConversation ?? [],
+          },
+          instructions: {
+            packVersion: String(agentGuidance.packVersion),
+            packDigest: agentGuidance.packDigest,
+            system: [
+              ...agentGuidance.instructions.map(({ body }) => body),
+              `TRUSTED_WORKING_CONTEXT:\n${JSON.stringify({
+                currentStepId: request.workingContext.currentStepId,
+                activeEpisodeTitle: request.workingContext.activeEpisodeTitle,
+                activeEpisodePatientId:
+                  request.workingContext.activeEpisodePatientId,
+                resumableEpisodePatientId:
+                  request.workingContext.resumableEpisodePatientId,
+              })}`,
+            ],
+            skills: agentGuidance.availableSkills.map((skill) => ({
+              id: skill.id,
+              description: skill.description,
+              contentHash: runtimeSitePack.instructions[skill.id]!.sha256,
+            })),
+          },
+        },
+        allowedTools: [
+          "get_patient_summary",
+          "get_open_tasks",
+          "get_latest_vitals",
+          ...(!patient ? ["get_handover"] : []),
+          "get_team_inbox",
+          ...(!patient ? ["get_sync_status"] : []),
+          "load_workflow_skill",
+        ],
+      });
+      const routeByTool: Partial<
+        Record<string, IntentClassification["intent"]>
+      > = {
+        get_patient_summary: "patient-summary",
+        get_open_tasks: "open-tasks",
+        get_latest_vitals: "latest-vitals",
+        get_handover: "handover",
+        get_team_inbox: "team-inbox",
+        get_sync_status: "sync-status",
+      };
+      const selectedIntent = [...selectedTools]
+        .reverse()
+        .map((name) => routeByTool[name])
+        .find((intent): intent is IntentClassification["intent"] =>
+          Boolean(intent),
+        );
+      if (selectedIntent) {
+        agentSelectedIntent = selectedIntent;
+        safeIntent = selectedIntent;
+      }
+    }
     const classification: IntentClassification = {
       ...classified,
       intent: safeIntent,
     };
+    const agentFailed = Boolean(
+      agentRun &&
+      ["failed", "cancelled", "budget-exhausted"].includes(agentRun.status),
+    );
     let runtime: AssistantResponse["runtime"] = {
-      route:
-        classification.model === "deterministic-clinical-router-v1"
-          ? "deterministic"
-          : classification.mode === "hosted-test"
-            ? "hosted-test"
-            : "fast-local",
-      label:
-        classification.model === "deterministic-clinical-router-v1"
-          ? "Deterministische klinische Navigation"
-          : classification.mode === "hosted-test"
-            ? `Synthetischer Testdienst · ${classification.model}`
-            : `Lokales Sprachmodell · ${classification.model}`,
-      degraded: classification.degraded,
+      route: agentFailed
+        ? "deterministic"
+        : agentRun && classification.mode === "hosted-test"
+          ? "hosted-test"
+          : agentRun
+            ? "fast-local"
+            : classification.model === "deterministic-clinical-router-v1"
+              ? "deterministic"
+              : classification.mode === "hosted-test"
+                ? "hosted-test"
+                : "fast-local",
+      label: agentFailed
+        ? "Sicherer deterministischer Fallback · Agentenlauf nicht abgeschlossen"
+        : agentRun && classification.mode === "hosted-test"
+          ? `Synthetischer Agententest · ${this.models.model}`
+          : agentRun
+            ? `Lokaler klinischer Coworker · ${this.models.model}`
+            : classification.model === "deterministic-clinical-router-v1"
+              ? "Deterministische klinische Navigation"
+              : classification.mode === "hosted-test"
+                ? `Synthetischer Testdienst · ${classification.model}`
+                : `Lokales Sprachmodell · ${classification.model}`,
+      degraded: classification.degraded || agentFailed,
       ...(classification.failure
         ? { failure: classification.failure.code }
+        : {}),
+      ...(agentRun && agentGuidance
+        ? {
+            agent: {
+              packId: agentGuidance.packId,
+              packVersion: agentGuidance.packVersion,
+              packDigest: agentGuidance.packDigest,
+              instructionHashes: agentGuidance.provenance.instructionHashes,
+              toolCalls: agentRun.toolCalls,
+              status: agentRun.status,
+              trace: agentRun.trace,
+            },
+          }
         : {}),
     };
     const evidence: AssistantResponse["evidence"] = [];
@@ -414,6 +774,44 @@ export class AssistantService {
       warnings.push(
         "Das konfigurierte Modell war nicht verfügbar; sichere deterministische Navigation wurde verwendet.",
       );
+    if (agentFailed)
+      warnings.push(
+        "Der begrenzte Agentenlauf wurde nicht abgeschlossen; angezeigt wird ausschliesslich die sichere deterministische Ansicht.",
+      );
+    const groundedAgentLead: Partial<
+      Record<IntentClassification["intent"], string>
+    > = {
+      "patient-summary":
+        "Hier ist die aktuelle Übersicht aus dem bewusst gewählten Patientenkontext.",
+      "open-tasks":
+        "Hier sind die derzeit offenen Arbeiten aus deinem freigegebenen Kontext.",
+      "latest-vitals":
+        "Hier sind die bestätigten Werte; neuere Entwürfe bleiben getrennt sichtbar.",
+      handover:
+        "Hier ist dein aktueller operationaler Übergabe- und Verantwortungsstand.",
+      "team-inbox":
+        "Hier sind die offenen Teamfragen im aktuellen Gesprächskontext.",
+      "sync-status":
+        "Hier ist der technische Zustell- und Abgleichstatus; er sagt nichts über Dienstanwesenheit aus.",
+    };
+    const agentLead = agentRun
+      ? agentRun.status === "answer" && agentRun.toolCalls > 0
+        ? agentSelectedIntent
+          ? groundedAgentLead[agentSelectedIntent]
+          : null
+        : agentRun.status === "clarification-needed"
+          ? "Ich brauche noch eine kurze Präzisierung, bevor ich den passenden freigegebenen Kontext öffne."
+          : agentRun.status === "no-action"
+            ? "Verstanden. Es wurde keine Aktion vorbereitet oder ausgeführt."
+            : agentRun.status === "safe-handoff"
+              ? "Diese Anfrage braucht den dafür vorgesehenen sicheren Arbeitsablauf."
+              : null
+      : null;
+    if (agentLead)
+      components.push({
+        type: "AssistantText",
+        message: agentLead,
+      });
 
     const requirePatient = () => {
       if (!patient)
@@ -725,13 +1123,26 @@ export class AssistantService {
       case "handover": {
         const operationalHandover = request.workingContext?.workdayHandover;
         if (operationalHandover) {
+          const patientOpenTasks = patient
+            ? snapshot.tasks.filter(
+                (task) =>
+                  task.patientId === patient.id &&
+                  task.encounterId === patient.encounterId &&
+                  task.state !== "completed",
+              )
+            : [];
           components.push({
             type: "HandoverChecklist",
             title: patient
               ? `Aktuelle Verantwortung · ${patient.displayName}`
               : "Aktuelle Schichtübergabe",
-            summary: operationalHandover.summary,
-            openCount: operationalHandover.openCount,
+            summary: patient
+              ? patientOpenTasks.map(({ title }) => title).join(" · ") ||
+                "Keine offenen Arbeiten im aktuellen Patientenkontext."
+              : operationalHandover.summary,
+            openCount: patient
+              ? patientOpenTasks.length
+              : operationalHandover.openCount,
             sourceLabel: `Operationaler Verantwortungsstand · ${operationalHandover.shiftKey} · ${operationalHandover.status}`,
           });
           break;
@@ -822,6 +1233,14 @@ export class AssistantService {
         break;
       }
       case "sync-status": {
+        if (patient) {
+          components.push({
+            type: "UnknownState",
+            message:
+              "Der technische Gesamtstatus ist nur im allgemeinen Assistenzgespräch verfügbar; eine encounter-gebundene Zustellansicht ist noch nicht freigegeben.",
+          });
+          break;
+        }
         const pending = snapshot.outbox.filter(
           (item) => !isTerminalOutboxState(item.state),
         );
@@ -1337,11 +1756,16 @@ export class AssistantService {
         break;
       }
       case "unknown":
-        components.push({
-          type: "UnknownState",
-          message:
-            "Ich kann Patientenübersicht, Vitalwerte, offene Aufgaben, Übergabe, lokale Richtlinien sowie prüfpflichtige Notiz- oder Arztfrage-Entwürfe vorbereiten.",
-        });
+        if (
+          !agentRun ||
+          (agentRun.status === "answer" && agentRun.toolCalls === 0) ||
+          ["failed", "cancelled", "budget-exhausted"].includes(agentRun.status)
+        )
+          components.push({
+            type: "UnknownState",
+            message:
+              "Ich kann Patientenübersicht, Vitalwerte, offene Aufgaben, Übergabe, lokale Richtlinien sowie prüfpflichtige Notiz- oder Arztfrage-Entwürfe vorbereiten.",
+          });
         break;
     }
 
@@ -1365,6 +1789,9 @@ export class AssistantService {
         model: classification.model,
         evidenceCount: evidence.length,
         degraded: classification.degraded,
+        agentToolCalls: agentRun?.toolCalls ?? 0,
+        runtimePackVersion: agentGuidance?.packVersion ?? 0,
+        runtimePackDigest: agentGuidance?.packDigest ?? null,
       },
     });
     return {
