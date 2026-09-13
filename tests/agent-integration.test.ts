@@ -6,6 +6,8 @@ import { PflegehelferService } from "../src/core/service.js";
 
 afterEach(() => vi.unstubAllGlobals());
 
+const syntheticCredential = ["synthetic", "test", "credential"].join("-");
+
 describe("runtime-guided assistant agent", () => {
   it("sends reviewed Markdown, observes an authorized tool result, and returns grounded GenUI", async () => {
     const bodies: Array<Record<string, unknown>> = [];
@@ -69,7 +71,7 @@ describe("runtime-guided assistant agent", () => {
       PFH_DEMO_MODE: "true",
       PFH_LLM_DATA_CLASSIFICATION: "synthetic-only",
       PFH_ALLOW_EXTERNAL_AI: "true",
-      PFH_LLM_API_KEY: "synthetic-test-key",
+      PFH_LLM_API_KEY: syntheticCredential,
       PFH_LLM_BASE_URL: "https://synthetic-model.example.invalid/v1",
       PFH_LLM_MODEL: "fixture-agent",
     });
@@ -160,7 +162,7 @@ describe("runtime-guided assistant agent", () => {
     expect(JSON.stringify(bodies[4])).toContain(
       "4/6 Patientenkontexte geprüft",
     );
-    expect(JSON.stringify(bodies)).not.toContain("synthetic-test-key");
+    expect(JSON.stringify(bodies)).not.toContain(syntheticCredential);
   });
 
   it("reports a failed agent run and falls back to deterministic read UI", async () => {
@@ -173,7 +175,7 @@ describe("runtime-guided assistant agent", () => {
       PFH_DEMO_MODE: "true",
       PFH_LLM_DATA_CLASSIFICATION: "synthetic-only",
       PFH_ALLOW_EXTERNAL_AI: "true",
-      PFH_LLM_API_KEY: "synthetic-test-key",
+      PFH_LLM_API_KEY: syntheticCredential,
       PFH_LLM_BASE_URL: "https://synthetic-model.example.invalid/v1",
       PFH_LLM_MODEL: "fixture-agent",
     });
