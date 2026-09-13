@@ -334,7 +334,10 @@ export function verifyProposalSourceRecords(input: unknown): AssistantProposal {
     (plan.sourceRecords ?? []).map((record) => [record.id, record]),
   );
   for (const record of records.values())
-    if (createHash("sha256").update(record.text).digest("hex") !== record.contentHash)
+    if (
+      createHash("sha256").update(record.text).digest("hex") !==
+      record.contentHash
+    )
       throw new Error("CLINICAL_PLAN_SOURCE_RECORD_HASH_MISMATCH");
   const referenced = [
     ...plan.understoodFacts,
@@ -346,8 +349,11 @@ export function verifyProposalSourceRecords(input: unknown): AssistantProposal {
     ...plan.actions,
     ...plan.corrections,
     ...plan.evidence.filter(
-      (item): item is typeof item & { sourceSpan: NonNullable<typeof item.sourceSpan> } =>
-        item.sourceSpan !== null,
+      (
+        item,
+      ): item is typeof item & {
+        sourceSpan: NonNullable<typeof item.sourceSpan>;
+      } => item.sourceSpan !== null,
     ),
   ];
   for (const item of referenced) {
@@ -367,7 +373,8 @@ export function verifyProposalSourceRecords(input: unknown): AssistantProposal {
     if (
       action.type === "note-proposal" &&
       action.structuredText !== action.sourceSpan.quote &&
-      ((action.sourceRecordIds?.length ?? 0) < 2 || plan.corrections.length === 0)
+      ((action.sourceRecordIds?.length ?? 0) < 2 ||
+        plan.corrections.length === 0)
     )
       throw new Error("CLINICAL_PLAN_REWRITTEN_NOTE_WITHOUT_PROVENANCE");
   return plan;
@@ -387,8 +394,11 @@ function withLegacySourceRecords(plan: AssistantProposal): AssistantProposal {
     ...copy.actions,
     ...copy.corrections,
     ...copy.evidence.filter(
-      (item): item is typeof item & { sourceSpan: NonNullable<typeof item.sourceSpan> } =>
-        item.sourceSpan !== null,
+      (
+        item,
+      ): item is typeof item & {
+        sourceSpan: NonNullable<typeof item.sourceSpan>;
+      } => item.sourceSpan !== null,
     ),
   ];
   for (const item of sourced) {
@@ -1537,12 +1547,7 @@ export function deterministicAssistantProposal(
         );
         continue;
       }
-      if (
-        isFutureSameDayOccurrence(
-          localOccurrence,
-          inputTimestamp,
-        )
-      ) {
+      if (isFutureSameDayOccurrence(localOccurrence, inputTimestamp)) {
         observations.push({
           actionId: null,
           code: spec.code,
@@ -2190,10 +2195,7 @@ export function reviseAssistantProposal(
     plan.taskChanges = plan.taskChanges.map((change) => ({
       ...change,
       executable: false,
-      sourceRecordIds: [
-        ...(change.sourceRecordIds ?? []),
-        currentSource.id,
-      ],
+      sourceRecordIds: [...(change.sourceRecordIds ?? []), currentSource.id],
     }));
   }
   if (/\bnur\s+dokumentation\s+und\s+nachricht\b/i.test(source)) {
@@ -2537,12 +2539,14 @@ export function verifyModelProposalAgainstDeterministicCompiler(
       metadata.inputTimestamp,
       metadata.inputModality,
     );
-  const bindCurrentSource = <T extends { sourceRecordIds?: string[] }>(
+  const bindCurrentSource = <
+    T extends { sourceRecordIds?: string[] | undefined },
+  >(
     item: T,
   ): T =>
-    item.sourceRecordIds?.length
+    (item.sourceRecordIds?.length
       ? item
-      : { ...item, sourceRecordIds: [verifiedSource.id] };
+      : { ...item, sourceRecordIds: [verifiedSource.id] }) as T;
   if (
     compiled?.actions.length === 0 &&
     compiled.understoodFacts.some((fact) => fact.polarity === "negated") &&

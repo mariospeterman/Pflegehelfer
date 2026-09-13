@@ -101,16 +101,18 @@ Processing order:
 1. Authenticate; resolve organization, role, session, thread, patient context and purpose.
 2. Resolve the immutable instruction pack and the actor's explicit role-profile/station/workflow binding.
 3. For natural read/navigation requests, let one bounded model choose from request-specific typed read tools, observe each authorized result and either choose another tool or stop. Budgets cap turns, calls, time, repeats and result bytes. SQL, shell, arbitrary HTTP, approval, publish and final-write tools do not exist in the registry.
-4. Hydrate clinical facts and the leading GenUI response deterministically from the selected server projection. Free model prose is never treated as a clinical fact; a successful harmless tool call cannot launder an invented answer. Tool results are marked untrusted data and remain thread/patient/encounter scoped.
+4. Hydrate clinical components from selected server projections. The model may author the leading answer or clarification when it cites exact references emitted by completed authorized tools; invented/missing references, unsupported numeric claims, executable links/tokens and claims of completed writes fail closed. Generated prose remains assistant output, not a signed clinical fact. Tool results are marked untrusted data and remain thread/patient/encounter scoped.
 5. For documentation or work changes, build a generic typed `AssistantProposal` containing understood facts, work performed, observations, task changes, communications, workflow actions, ambiguities and evidence. A model may propose meaning, but deterministic code independently validates every executable sub-schema.
 6. Stream non-executable OpenUI fragments, validate catalog/bounds/context/evidence/workflow/policy, persist the validated proposal and only then issue server-side review authority.
-7. Send the final authoritative frame that can open deterministic review. AI-disabled or failed-agent mode uses the same safe deterministic commands and explicitly reports degradation.
+7. Send the final authoritative frame that can open fixed server-controlled review. AI-disabled or failed-agent mode explicitly reports degradation and offers direct records/work controls plus verbatim draft capture; it does not claim general language understanding.
 
 Malformed, incomplete, unsupported or disconnected streams create no intent or clinical mutation. The deterministic composer is a first-class fallback, not a pretend LLM. AI-disabled mode preserves critical workflows.
 
 ## Deterministic safety
 
-“Deterministic” means the same validated inputs and policy version produce the same permitted result, without a probabilistic model deciding a write. It does not mean static.
+“Deterministic” means the same reviewed revision, source/read set and policy version produce the same permitted effect, without a probabilistic model deciding or rewriting a write. It does not mean static, canned or keyword-only conversation.
+
+Faithfulness is an end-to-end record boundary: (1) original employee input and reviewed ASR transcript/corrections, (2) immutable authorized source records with version and occurrence time, (3) model interpretation or optional professional wording, (4) the exact reviewed revision and selected effects, and (5) accepted content plus Medplum/provider mapping versions and receipts. Human approval identifies the reviewed attributed report; it is not independent proof that the event occurred. See ADR-0015.
 
 The model may interpret “Dokumentiere RR 128/76, Mobilisation erledigt und frage den Arzt wegen Schwindel” and arrange a useful multi-card response. The server independently parses/validates every candidate, checks access/source versions, shows an exact diff and only then creates selected note/Observation/Communication objects. The model cannot prescribe, diagnose, sign, approve, implicitly select a patient, choose provider capability or bypass review.
 

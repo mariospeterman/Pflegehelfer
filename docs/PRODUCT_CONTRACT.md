@@ -9,6 +9,8 @@ One coherent working session may link multiple explicitly scoped conversations: 
 
 The invariant is **conversational outside, structured inside**. Employees never fill or see an `AssistantProposal`; they talk naturally, receive a short coworker response, and see only the minimum editable GenUI required for the current safe review.
 
+The assistant is natural on top and controlled underneath. Ordinary questions normally get concise, source-linked model-authored answers without a proposal. “Deterministic” means that reviewed meaning is independently validated, authorized, versioned, persisted and delivered; it does not mean scripted conversation. Without an accepted model, the product labels degraded operation and offers direct records/work controls plus verbatim review—it does not pretend to understand arbitrary language.
+
 ## Authority boundary
 
 - A model may interpret language, identify evidence spans, ask clarifying questions and compose allowlisted presentation.
@@ -16,6 +18,7 @@ The invariant is **conversational outside, structured inside**. Employees never 
 - Internally, one generic typed `AssistantProposal` separates understood facts, performed work, observations, task changes, communications, workflow actions, ambiguities and evidence. Deterministic server code validates its specific executable sub-schemas against source text and current authorised resources, presents the exact meaningful change, binds approval to that version and executes an idempotent command graph.
 - Negation, uncertainty, historical reporting, occurrence time and correction remain explicit. Missing intent never becomes a default physician message, repeat measurement, elevated priority, completion or billable activity.
 - Medplum owns clinical FHIR resources and provenance. Pflegehelfer PostgreSQL owns workflow/session/episode state, proposals, approvals, receipts, durable events and provider delivery. Provider systems remain authoritative only for configured domains.
+- Original input/reviewed transcript, provider/history evidence, model interpretation, reviewed revision, accepted content and downstream receipt are distinct records. A schema-valid or human-approved report is attributable evidence, not proof that the reported care occurred, a zero-hallucination claim or compliance certification.
 
 ## Reference workday
 

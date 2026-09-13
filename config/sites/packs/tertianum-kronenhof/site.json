@@ -15,7 +15,7 @@
   },
   "baseGuidance": {
     "path": "assistant/BASE.md",
-    "sha256": "10fcbf8d00155830d83ad21e2fd4e73a70dceed8bcd1787f97127830ed530f5b"
+    "sha256": "3de8ce165c1b4abb680d4b05858025624a4c930683265d392ec3f279d73455cc"
   },
   "siteConfiguration": {
     "path": "sites/tertianum-kronenhof.json",

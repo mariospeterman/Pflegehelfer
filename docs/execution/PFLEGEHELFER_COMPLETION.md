@@ -14,6 +14,12 @@
 
 This document is for the coding agent. Do NOT paste it into the clinical runtime system prompt: deployed role/skill instructions must stay concise and load progressively.
 
+## Locked natural-coworker correction
+
+The binding invariant is: **a natural agentic coworker on top, faithful reviewed documentation underneath—not a deterministic chatbot and not an unrestricted model writer.** “Deterministic” applies to permission, validation, preservation, acceptance and delivery, not to canned conversation. Ordinary questions normally receive source-linked natural answers without a proposal. Write requests preserve immutable input/source provenance, revise one pending review and expose only the minimum useful GenUI. Schema validity and human approval identify an attributable reviewed report; neither independently proves the event, eliminates hallucination risk or establishes compliance. AI-disabled operation is explicitly degraded and offers direct controls plus verbatim capture.
+
+This correction preserves all G0–G7 gates. In particular, source input/reviewed transcript, provider/history evidence, model interpretation, reviewed revision/action set, accepted record and Medplum/provider receipt remain separate. After approval, no model may rewrite the accepted content. See ADR-0015.
+
 This is the complete revised contract replacing the attached Runtime Markdown/Workspaces instruction. It preserves its patient/staff privacy, roles, workflows, UI, provider, operations and acceptance requirements, while making the runtime agent loop and low-code boundary explicit. All paths and commands introduced below are implementation targets unless identified as currently verified.
 
 ## 0. Mission, precedence and what this document is

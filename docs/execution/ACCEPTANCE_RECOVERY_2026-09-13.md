@@ -70,8 +70,10 @@ PFH_DEMO_MODE=true node --env-file=.env.demo node_modules/vitest/vitest.mjs run 
   --no-file-parallelism --reporter=dot
 ```
 
-Result: 5 files and 29 tests passed. The migration ledger verified versions
-1–7 before applying pending SQL.
+Latest focused result: 5 files and 24 tests passed against operational
+PostgreSQL. The migration ledger verified versions 1–8; migration 008 adds
+provider-version, adapter-version, mapping-version and read-back-hash evidence
+to durable provider receipts.
 
 The live scenario accepted the following three turns in one Luca conversation:
 
@@ -84,6 +86,29 @@ one message to Nora Frei, retained approximation around 150 ml, left weight
 deferred, contained no physician action and contained no task/completion. One
 command ID was executed and replayed; the second response returned the same
 receipt and did not duplicate provider or Medplum records.
+
+The current correction also stores three immutable SHA-256-bound input records
+for that three-turn review. The merged 150 ml note references both the original
+report and correction instead of falsely claiming the correction sentence was
+the whole note. A direct source-record validator passes before authority is
+issued. Unrecognized natural corrections now ask one concise clarification
+instead of silently presenting stale meaning as corrected.
+
+The bounded agent now permits natural terminal prose only when tool-backed
+answers cite exact result references emitted during that run. Missing or
+invented references, authority claims, URLs/tokens and unsupported numbers are
+withheld while server-grounded components remain usable. No-model operation is
+labelled degraded and offers verbatim review. The latest pending review is
+restored after refresh by a fresh short-lived token for the same proposal;
+parallel tokens consume that proposal only once. The focused mobile 390 px
+Playwright regression passed in 1.3 minutes.
+
+Clinical projection leasing is now strictly ordered across unresolved
+whole-state checkpoints, preventing an older retry from overwriting a newer
+checkpoint. Provider acknowledgement is accepted as delivered only after exact
+mapped read-back and matching provider version; the receipt retains the
+provider, adapter and mapping versions plus read-back hash. This is simulator
+and generic-kernel evidence, not a real WiCare/careCoach/SAP acceptance claim.
 
 A live Medplum optimistic-concurrency test created a synthetic resource,
 captured its version, wrote a newer version and proved that the stale accepted

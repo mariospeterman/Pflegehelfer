@@ -6,6 +6,8 @@ Allowlisted step kinds are `orientation`, `context-selection`, `work-queue`, `do
 
 The executable demo rules are the strictly validated `config/sites/tertianum-kronenhof.json`. The active directory manifest under `config/sites/packs/tertianum-kronenhof/` pins that rule file plus reviewed institution, department, station, role, provider and workflow Markdown. The Markdown reaches the bounded model as human guidance but is never executable policy: it cannot grant actions, change role ceilings, approve work or enable a provider.
 
+The model may choose how to explain, query or help navigate the current obligation; the workflow service alone owns mandatory steps, responsibility and transitions. Questions and interruptions do not silently complete, supersede or discard pending work. Runtime Markdown changes assistance only after governed publication and never changes executable permissions by itself.
+
 ## Nursing day (`nursing-day`, version 2)
 
 | Order | Step             | Completion                                             |

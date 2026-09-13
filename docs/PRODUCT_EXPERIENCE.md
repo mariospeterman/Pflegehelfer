@@ -12,6 +12,8 @@ The shared conversation shell with docked text/voice composer is central. A comp
 
 The coworker states the current step, shows source-linked facts/work, accepts natural language/voice or component input, shows exact identity/diff/evidence for drafts, and gives a receipt distinguishing local acceptance from external acknowledgement. Mentions, alarms, replies and conflicts enter the appropriate authorized thread proactively. Private drafts never enter a shared team audience automatically. One sentence may yield multiple separately reviewable candidates.
 
+Ordinary questions lead with a concise natural answer based on cited records; they do not create a form or proposal. Generated explanations are visibly assistant output and may be corrected. A write review preserves the employee's attributed meaning and shows only the relevant editable choices. Refresh restores the latest pending review with revalidated authority instead of requiring re-dictation. If no model is accepted, the UI says so and offers a clearly labelled verbatim draft rather than simulated understanding.
+
 ## Team and voice
 
 `@name`/`@role` create visible recipient obligations with sent, acknowledged, answered, escalated and closed states, linked to patient/workflow/source/resulting task. The assistant may draft/route but cannot impersonate an answer.
@@ -26,7 +28,7 @@ Use semantic white/black/deep blue; red for safety, amber for pending/conflict, 
 
 ## Failures
 
-Offline approvals/sends are disabled and never silently queued. AI failure leaves deterministic workflows available. Medplum/provider failure is explicit and never shown as acknowledged success. Invalid/incomplete model streams expose no executable control. Context/version changes close stale review and explain why.
+Offline approvals/sends are disabled and never silently queued. AI failure leaves direct server-controlled workflows and verbatim review available. Medplum/provider failure is explicit and never shown as acknowledged success; local acceptance, Medplum storage and provider confirmation are separate states. Invalid/incomplete model streams expose no executable control. Context/version changes close stale authority while preserving eligible draft content for revalidation.
 
 ## Acceptance
 
