@@ -1723,7 +1723,9 @@ export function deterministicAssistantProposal(
       workPerformed.some((item) => item.status === "planned-later"));
   const completed =
     !notPerformed &&
-    /\b(?:durchgeführt|erledigt|mobilisiert|getrunken|gegeben)\b/i.test(source);
+    /\b(?:durchgeführt|erledigt|mobilisiert|getrunken|gegeben|bereitgestellt)\b/i.test(
+      source,
+    );
   const pureIdentityCorrection =
     Boolean(identityCorrection) && facts.length === 1;
   const pureTimeCorrection =
@@ -2095,13 +2097,21 @@ const completionStopWords = new Set([
 ]);
 
 function evidenceStems(value: string): Set<string> {
+  const canonicalStem = (token: string): string => {
+    // User-facing alarm language is German (Klingel/Ruf), while migrated
+    // synthetic episodes may still carry the vendor-neutral "Nurse-call"
+    // label. Canonicalising this one bounded synonym family keeps direct
+    // completion tied to the exact episode without opening fuzzy matching.
+    if (/^(?:klingel|ruf|alarm|nurse|call)/u.test(token)) return "ruf";
+    return token.slice(0, 6);
+  };
   return new Set(
     value
       .toLocaleLowerCase("de-CH")
       .replace(/[^\p{L}\p{N}]+/gu, " ")
       .split(/\s+/)
       .filter((token) => token.length >= 4 && !completionStopWords.has(token))
-      .map((token) => token.slice(0, 6)),
+      .map(canonicalStem),
   );
 }
 

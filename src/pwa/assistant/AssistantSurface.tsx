@@ -589,7 +589,7 @@ function WorkdayCard({
                           episodeId: workday.activeEpisode!.id,
                           patientId: alarmPatient.id,
                           encounterId: alarmPatient.encounterId,
-                          title: `Simulierter Nurse-call · Zimmer ${alarmPatient.room}`,
+                          title: `Simulierter Klingelruf · Zimmer ${alarmPatient.room}`,
                           pausedDraftText: evidence,
                         },
                         "Alarm konnte nicht übernommen werden.",
