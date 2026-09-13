@@ -991,8 +991,9 @@ input:focus-visible {
   font-size: 25px;
 }
 .vital-chart {
+  display: block;
   width: 100%;
-  min-height: 120px;
+  height: clamp(120px, 22vw, 180px);
   border-block: 1px solid var(--line);
   color: var(--blue);
   overflow: visible;

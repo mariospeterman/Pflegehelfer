@@ -275,67 +275,69 @@ const VitalTrendCard = defineComponent({
         <strong>{value}</strong>
         {points.length > 0 && (
           <>
-            <svg
-              className="vital-chart"
-              viewBox="0 0 100 56"
-              role="img"
-              aria-label={`${label}: ${points.length} echte Messpunkte, keine berechneten Zwischenwerte`}
-            >
-              {approved.length > 1 && (
-                <>
-                  <polyline
-                    points={approved
-                      .map(
-                        ({ point, index }) => `${x(index)},${y(point.value)}`,
-                      )
-                      .join(" ")}
-                    fill="none"
-                    vectorEffect="non-scaling-stroke"
-                  />
-                  {approved.every(
-                    ({ point }) => point.secondaryValue !== undefined,
-                  ) && (
+            {points.length > 1 && (
+              <svg
+                className="vital-chart"
+                viewBox="0 0 100 56"
+                role="img"
+                aria-label={`${label}: ${points.length} echte Messpunkte, keine berechneten Zwischenwerte`}
+              >
+                {approved.length > 1 && (
+                  <>
                     <polyline
-                      className="secondary-series"
                       points={approved
                         .map(
-                          ({ point, index }) =>
-                            `${x(index)},${y(point.secondaryValue!)}`,
+                          ({ point, index }) => `${x(index)},${y(point.value)}`,
                         )
                         .join(" ")}
                       fill="none"
                       vectorEffect="non-scaling-stroke"
                     />
-                  )}
-                </>
-              )}
-              {points.map((point, index) =>
-                point.status === "pending-review" ? (
-                  <g key={point.id} className="pending-point">
-                    <line
-                      x1={x(index) - 2}
-                      y1={y(point.value) - 2}
-                      x2={x(index) + 2}
-                      y2={y(point.value) + 2}
+                    {approved.every(
+                      ({ point }) => point.secondaryValue !== undefined,
+                    ) && (
+                      <polyline
+                        className="secondary-series"
+                        points={approved
+                          .map(
+                            ({ point, index }) =>
+                              `${x(index)},${y(point.secondaryValue!)}`,
+                          )
+                          .join(" ")}
+                        fill="none"
+                        vectorEffect="non-scaling-stroke"
+                      />
+                    )}
+                  </>
+                )}
+                {points.map((point, index) =>
+                  point.status === "pending-review" ? (
+                    <g key={point.id} className="pending-point">
+                      <line
+                        x1={x(index) - 2}
+                        y1={y(point.value) - 2}
+                        x2={x(index) + 2}
+                        y2={y(point.value) + 2}
+                      />
+                      <line
+                        x1={x(index) + 2}
+                        y1={y(point.value) - 2}
+                        x2={x(index) - 2}
+                        y2={y(point.value) + 2}
+                      />
+                    </g>
+                  ) : (
+                    <circle
+                      key={point.id}
+                      className={point.status}
+                      cx={x(index)}
+                      cy={y(point.value)}
+                      r="2"
                     />
-                    <line
-                      x1={x(index) + 2}
-                      y1={y(point.value) - 2}
-                      x2={x(index) - 2}
-                      y2={y(point.value) + 2}
-                    />
-                  </g>
-                ) : (
-                  <circle
-                    key={point.id}
-                    className={point.status}
-                    cx={x(index)}
-                    cy={y(point.value)}
-                    r="2"
-                  />
-                ),
-              )}
-            </svg>
+                  ),
+                )}
+              </svg>
+            )}
             <div className="vital-table-scroll">
               <table className="vital-point-table">
                 <caption className="sr-only">
