@@ -244,7 +244,10 @@ export function toStrictStructuredOutputSchema(schema: JsonSchema): JsonSchema {
     if (node === null || typeof node !== "object") return node;
     const current = node as JsonSchema;
     const mapped: JsonSchema = Object.fromEntries(
-      Object.entries(current).map(([key, value]) => [key, visit(value)]),
+      Object.entries(current).map(([key, value]) => [
+        key === "oneOf" ? "anyOf" : key,
+        visit(value),
+      ]),
     );
     if (current.type !== "object" || !current.properties) return mapped;
     const properties = current.properties as Record<string, JsonSchema>;
@@ -409,6 +412,8 @@ export class ModelGateway {
   private readonly baseUrl: string | null;
   private readonly apiKey: string | null;
   private readonly timeoutMs: number;
+  private readonly hostedMaxCallsPerHour: number;
+  private readonly hostedCallTimes: number[] = [];
   private verifiedAt: number | null = null;
 
   constructor(env: NodeJS.ProcessEnv = process.env) {
@@ -431,6 +436,10 @@ export class ModelGateway {
       30_000,
       Math.max(2_000, Number(env.PFH_LLM_TIMEOUT_MS ?? 10_000)),
     );
+    const hostedCallLimit = Number(env.PFH_HOSTED_AI_MAX_CALLS_PER_HOUR ?? 60);
+    this.hostedMaxCallsPerHour = Number.isFinite(hostedCallLimit)
+      ? Math.min(1_000, Math.max(1, Math.floor(hostedCallLimit)))
+      : 60;
     if (
       this.mode === "local-openai" &&
       env.PFH_DEMO_MODE !== "true" &&
@@ -454,6 +463,22 @@ export class ModelGateway {
     return Boolean(
       this.baseUrl && (this.mode !== "hosted-test" || this.apiKey),
     );
+  }
+
+  private claimHostedCall(): void {
+    if (this.mode !== "hosted-test") return;
+    const cutoff = Date.now() - 60 * 60_000;
+    while (
+      this.hostedCallTimes.length > 0 &&
+      this.hostedCallTimes[0]! <= cutoff
+    )
+      this.hostedCallTimes.shift();
+    if (this.hostedCallTimes.length >= this.hostedMaxCallsPerHour)
+      throw new ModelResponseError(
+        "rate-limited",
+        "hosted-demo-budget-exhausted",
+      );
+    this.hostedCallTimes.push(Date.now());
   }
 
   supportsAgent(dataClass: AuthorizedModelContext["dataClass"]): boolean {
@@ -506,6 +531,7 @@ export class ModelGateway {
           ),
           800,
         );
+        this.claimHostedCall();
         const response = await fetch(
           `${this.baseUrl!.replace(/\/$/, "")}${contract.path}`,
           {
@@ -680,6 +706,7 @@ export class ModelGateway {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 3_000);
     try {
+      this.claimHostedCall();
       const response = await fetch(
         `${this.baseUrl.replace(/\/$/, "")}/models`,
         {
@@ -787,6 +814,7 @@ export class ModelGateway {
         toStrictStructuredOutputSchema(z.toJSONSchema(assistantIntentSchema)),
         40,
       );
+      this.claimHostedCall();
       const response = await fetch(
         `${this.baseUrl!.replace(/\/$/, "")}${contract.path}`,
         {
@@ -883,6 +911,7 @@ export class ModelGateway {
         toStrictStructuredOutputSchema(z.toJSONSchema(assistantProposalSchema)),
         1200,
       );
+      this.claimHostedCall();
       const response = await fetch(
         `${this.baseUrl!.replace(/\/$/, "")}${contract.path}`,
         {

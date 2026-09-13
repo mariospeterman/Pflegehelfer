@@ -25,10 +25,14 @@ and grounded GenUI lead. Mutation requests continue through the generic typed
 proposal compiler, independent validation, one-use review authority and human
 approval.
 
-Provider delivery uses a separate relational worker kernel with validated
-write-only commands, leases, receipt polling and fail-closed uncertain-outcome
-handling. It is not the live application queue until accepted commands are
-atomically enqueued by the main command path.
+Provider delivery uses the relational worker with validated write-only
+commands, leases, receipt polling, mandatory remote read-back and fail-closed
+uncertain-outcome handling. Reviewed assistant commands atomically enqueue
+their provider and version-bound Medplum projection jobs with the accepted
+command, episode evidence, recovery checkpoint and authority envelope. The
+normal integrated server starts both workers. Unmigrated direct non-assistant
+clinical writes fail closed; inbound/conflict processing remains migration
+work.
 
 ## Consequences
 
@@ -38,6 +42,6 @@ atomically enqueued by the main command path.
 - Array order never selects a staff role profile, station, recipient or policy.
 - An available model is optional for critical work and a failed agent run is
   explicitly degraded.
-- Database-backed pack publication/signatures, full shared-thread ACLs and the
-  atomic application-to-provider outbox transition remain separate completion
-  gates rather than being implied by this decision.
+- Database-backed pack publication/signatures, full shared-thread ACLs,
+  resource-native reconstruction, remaining direct-command migration and
+  relational inbound/conflict processing remain separate completion gates.

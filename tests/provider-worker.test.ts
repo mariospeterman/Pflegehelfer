@@ -29,7 +29,7 @@ function command(key: string): CanonicalClinicalCommand {
         valueQuantity: { value: 37.8, code: "Cel" },
       },
     },
-    expectedProviderVersion: "sim-v1",
+    expectedProviderVersion: null,
     mappingVersion: "synthetic-v1",
     correlationId: randomUUID(),
     causationId: randomUUID(),
@@ -157,6 +157,12 @@ describe("bounded provider delivery worker", () => {
     expect(pending[0]!.command.resource.body).not.toHaveProperty(
       "resourceType",
     );
+    expect(
+      service.retireAcceptedProviderCommands([
+        pending[0]!.command.idempotencyKey,
+      ]),
+    ).toBe(1);
+    expect(service.pendingProviderCommands()).toEqual([]);
   });
 
   it("delivers a leased command through the configured simulator", async () => {
@@ -213,7 +219,7 @@ describe("bounded provider delivery worker", () => {
 
   it("retries only explicitly idempotent transport failures", async () => {
     const registry = createSyntheticProviderRegistry();
-    registry.setSimulatorMode("device-gateway", "down");
+    await registry.setSimulatorMode("device-gateway", "down");
     const safeStore = new RecordingDeliveryStore([job("idempotent-provider")]);
     const unsafeStore = new RecordingDeliveryStore([
       job("reconcile-before-retry"),

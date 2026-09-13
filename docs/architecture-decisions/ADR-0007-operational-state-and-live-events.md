@@ -19,7 +19,7 @@ Committed mutations write operational state and an event/outbox record in one da
 
 ## Transitional implementation
 
-The current single-process queue, checkpoint Binary, conversation Binary and in-memory SSE revision are accepted only for the fictional single-replica showcase. They are `PARTIAL`, not the production architecture. The application must continue to fail closed for non-demo use until the operational repository, identity and deployment controls are configured.
+The integrated profile now atomically persists reviewed assistant command acceptance, matching episode evidence, the latest recovery checkpoint and resource/provider delivery jobs in PostgreSQL, then runs leased workers from the normal server lifecycle. Startup restores the newest local acceptance before traffic; projection remains worker-owned. The accepted assistant path removes its old in-process queue copy; the legacy processor is not callable and unmigrated direct clinical writes fail closed in this profile. The checkpoint Binary remains a migration seam, and resource-native reconstruction, inbound processing, multi-replica replay, identity and deployment controls remain `PARTIAL`. The memory profile remains explicitly fictional and non-durable.
 
 ## Consequences
 

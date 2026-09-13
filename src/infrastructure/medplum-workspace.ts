@@ -51,6 +51,11 @@ const managedClinicalResourceTypes = [
   "DocumentReference",
   "QuestionnaireResponse",
 ] satisfies ResourceType[];
+const transactionalClinicalResourceTypes: readonly ResourceType[] = [
+  ...managedClinicalResourceTypes,
+  "AuditEvent",
+  "Provenance",
+];
 const dataClassificationSystem =
   "https://pflegehelfer.example.invalid/data-classification";
 const legacyResourceReferencePattern = new RegExp(
@@ -78,8 +83,9 @@ function isNotFoundError(error: unknown): boolean {
     (typeof error === "object" &&
       error !== null &&
       "outcome" in error &&
-      JSON.stringify(error).includes("not found")) ||
-    (error instanceof Error && /not found|404/i.test(error.message))
+      /not found|gone|deleted|"code":"deleted"/i.test(JSON.stringify(error))) ||
+    (error instanceof Error &&
+      /not found|gone|deleted|404|410/i.test(error.message))
   );
 }
 const identifiedRecord = z
@@ -460,7 +466,15 @@ export interface ClinicalWorkspace {
     checkpoint?: ServiceCheckpoint,
     removedReferences?: string[],
     commandReceipt?: CommandReceipt,
+    expectedVersions?: Readonly<Record<string, string | null>>,
   ): Promise<void>;
+  loadResourceVersions?(
+    references: readonly string[],
+  ): Promise<Record<string, string | null>>;
+  verifyProjection?(
+    resources: Resource[],
+    removedReferences?: readonly string[],
+  ): Promise<boolean>;
   loadCheckpoint(): Promise<ServiceCheckpoint | null>;
   loadCommandReceipt(key: string): Promise<CommandReceipt | null>;
   status(): Promise<ClinicalWorkspaceStatus>;
@@ -474,6 +488,16 @@ export class InMemoryClinicalWorkspace implements ClinicalWorkspace {
   }
   synchronize(): Promise<void> {
     return Promise.resolve();
+  }
+  loadResourceVersions(
+    references: readonly string[],
+  ): Promise<Record<string, string | null>> {
+    return Promise.resolve(
+      Object.fromEntries(references.map((reference) => [reference, null])),
+    );
+  }
+  verifyProjection(): Promise<boolean> {
+    return Promise.resolve(true);
   }
   loadCheckpoint(): Promise<ServiceCheckpoint | null> {
     return Promise.resolve(null);
@@ -712,6 +736,7 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
     checkpoint?: ServiceCheckpoint,
     removedReferences: string[] = [],
     commandReceipt?: CommandReceipt,
+    expectedVersions?: Readonly<Record<string, string | null>>,
   ): Promise<void> {
     await this.connect();
     if (checkpoint && !this.checkpointVersionId) {
@@ -756,11 +781,29 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
             resource.id === checkpointId &&
             this.checkpointVersionId
               ? { ifMatch: `W/"${this.checkpointVersionId}"` }
-              : {}),
+              : expectedVersions &&
+                  Object.hasOwn(
+                    expectedVersions,
+                    `${resource.resourceType}/${resource.id}`,
+                  )
+                ? expectedVersions[`${resource.resourceType}/${resource.id}`]
+                  ? {
+                      ifMatch: `W/"${expectedVersions[`${resource.resourceType}/${resource.id}`]}"`,
+                    }
+                  : {}
+                : {}),
           },
         })),
         ...referencesToRemove.map((reference) => ({
-          request: { method: "DELETE" as const, url: reference },
+          request: {
+            method: "DELETE" as const,
+            url: reference,
+            ...(expectedVersions && Object.hasOwn(expectedVersions, reference)
+              ? expectedVersions[reference]
+                ? { ifMatch: `W/"${expectedVersions[reference]}"` }
+                : {}
+              : {}),
+          },
         })),
       ],
     };
@@ -769,10 +812,14 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
       const status = entry.response?.status ?? "";
       return !/^2\d\d(?:\s|$)/.test(status);
     });
-    if (failed)
+    if (failed) {
+      const diagnostics = JSON.stringify(failed.response?.outcome ?? {})
+        .replace(/\s+/g, " ")
+        .slice(0, 320);
       throw new Error(
-        `Medplum transaction rejected: ${failed.response?.status ?? "missing status"}`,
+        `Medplum transaction rejected: ${failed.response?.status ?? "missing status"}${diagnostics && diagnostics !== "{}" ? ` (${diagnostics})` : ""}`,
       );
+    }
     if (checkpoint) {
       const checkpointIndex = synchronizedResources.findIndex(
         (resource) => resource.resourceType === "Binary",
@@ -785,6 +832,88 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
       this.legacyCheckpointReferenceToDelete = null;
       this.legacyResourceReferencesToDelete = [];
     }
+  }
+
+  async loadResourceVersions(
+    references: readonly string[],
+  ): Promise<Record<string, string | null>> {
+    await this.connect();
+    const versions: Record<string, string | null> = {};
+    for (const reference of [...new Set(references)]) {
+      const match = /^([A-Za-z][A-Za-z]+)\/([A-Za-z0-9.-]{1,64})$/.exec(
+        reference,
+      );
+      if (
+        !match ||
+        !transactionalClinicalResourceTypes.includes(match[1] as ResourceType)
+      )
+        throw new Error(`INVALID_CLINICAL_RESOURCE_REFERENCE:${reference}`);
+      try {
+        const resource = await this.client.readResource(
+          match[1] as ResourceType,
+          match[2]!,
+        );
+        const version = resource.meta?.versionId;
+        if (!version)
+          throw new Error(`MEDPLUM_RESOURCE_VERSION_MISSING:${reference}`);
+        versions[reference] = version;
+      } catch (error) {
+        if (!isNotFoundError(error)) throw error;
+        versions[reference] = null;
+      }
+    }
+    return versions;
+  }
+
+  async verifyProjection(
+    resources: Resource[],
+    removedReferences: readonly string[] = [],
+  ): Promise<boolean> {
+    await this.connect();
+    const canonical = (value: unknown): string => {
+      if (value === null || typeof value !== "object")
+        return JSON.stringify(value);
+      if (Array.isArray(value))
+        return `[${value.map((item) => canonical(item)).join(",")}]`;
+      const record = value as Record<string, unknown>;
+      return `{${Object.keys(record)
+        .sort()
+        .map((key) => `${JSON.stringify(key)}:${canonical(record[key])}`)
+        .join(",")}}`;
+    };
+    const normalize = (resource: Resource): unknown => {
+      const copy = structuredClone(resource);
+      if (copy.meta) {
+        delete copy.meta.versionId;
+        delete copy.meta.lastUpdated;
+        delete copy.meta.author;
+        delete copy.meta.project;
+        delete copy.meta.compartment;
+      }
+      return copy;
+    };
+    for (const expected of resources) {
+      if (!expected.id) return false;
+      const actual = await this.client.readResource(
+        expected.resourceType,
+        expected.id,
+      );
+      if (canonical(normalize(actual)) !== canonical(normalize(expected)))
+        return false;
+    }
+    for (const reference of removedReferences) {
+      const match = /^([A-Za-z][A-Za-z]+)\/([A-Za-z0-9.-]{1,64})$/.exec(
+        reference,
+      );
+      if (!match) return false;
+      try {
+        await this.client.readResource(match[1] as ResourceType, match[2]!);
+        return false;
+      } catch (error) {
+        if (!isNotFoundError(error)) throw error;
+      }
+    }
+    return true;
   }
 
   private async supersededNoteResources(

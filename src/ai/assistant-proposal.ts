@@ -63,7 +63,14 @@ export const clinicalActionSchema = z.discriminatedUnion("type", [
     .object({
       ...common,
       type: z.literal("communication-proposal"),
-      recipientRole: z.literal("physician"),
+      recipientRole: z.enum([
+        "registered-nurse",
+        "physician",
+        "pharmacy",
+        "physiotherapy",
+        "occupational-therapy",
+      ]),
+      recipientLabel: z.string().trim().min(1).max(120),
       request: z.string().trim().min(3).max(500),
       reason: z.string().trim().min(3).max(1000),
       priority: z.enum(["routine", "elevated", "urgent"]),
@@ -919,7 +926,9 @@ export function deterministicAssistantProposal(
   }
 
   const laterWork =
-    /\b(mobilisation|morgenpflege)\s+(?:später|nachher)\b/i.exec(source);
+    /\b(mobilisation|morgenpflege|gewicht)\s+(?:später|nachher)\b/i.exec(
+      source,
+    );
   if (laterWork?.index !== undefined) {
     const sourceSpan = span(
       source,
@@ -928,7 +937,9 @@ export function deterministicAssistantProposal(
     );
     const activity = /^mobilisation/i.test(laterWork[1]!)
       ? "Mobilisation"
-      : "Morgenpflege";
+      : /^gewicht/i.test(laterWork[1]!)
+        ? "Gewicht erfassen"
+        : "Morgenpflege";
     workPerformed.push({
       id: `work-${workIndex++}`,
       activity,
@@ -1603,6 +1614,7 @@ export function deterministicAssistantProposal(
       addAction({
         type: "communication-proposal",
         recipientRole: "physician",
+        recipientLabel: "Ärztlicher Dienst",
         request: "Berichteten Pflegezustand beurteilen",
         reason: source,
         priority: hasAffirmedUrgency(physicianClause.text)
@@ -1707,8 +1719,7 @@ export function deterministicAssistantProposal(
     );
   const partialWork =
     workPerformed.some((item) => item.status === "partial") ||
-    (/\bnur\b/i.test(source) &&
-      workPerformed.some((item) => item.status === "performed") &&
+    (workPerformed.some((item) => item.status === "performed") &&
       workPerformed.some((item) => item.status === "planned-later"));
   const completed =
     !notPerformed &&
@@ -1842,6 +1853,216 @@ export function deterministicAssistantProposal(
   });
 }
 
+export function reviseAssistantProposal(
+  previousInput: unknown,
+  prompt: string,
+  options: ClinicalCompilerOptions & {
+    namedRecipient?: {
+      label: string;
+      role:
+        | "registered-nurse"
+        | "physician"
+        | "pharmacy"
+        | "physiotherapy"
+        | "occupational-therapy";
+    };
+  } = {},
+): AssistantProposal | null {
+  const previous = assistantProposalSchema.safeParse(previousInput);
+  const source = prompt.slice(0, 1200).trim();
+  const isRevision =
+    /\b(?:korrektur|stattdessen|eher|nur|doch|noch\s+nichts)\b/i.test(source);
+  if (!previous.success || !isRevision)
+    return deterministicAssistantProposal(source, options);
+
+  // “Nur <konkrete Pflegearbeit> …” corrects the previously understood care
+  // report as a whole. Recompile that utterance instead of carrying stale
+  // completions or observations forward. Category-only instructions such as
+  // “nur Dokumentation und Nachricht” are handled below and intentionally keep
+  // the facts already established in the conversation.
+  if (/\bnur\s+(?:die\s+)?(?:morgenpflege|mobilisation)\b/i.test(source)) {
+    const replacement = deterministicAssistantProposal(source, options);
+    if (!replacement) return null;
+    replacement.corrections = [
+      ...previous.data.corrections,
+      {
+        replacedText: previous.data.summary,
+        replacementText: source,
+        sourceSpan: span(source, 0, source.length),
+      },
+    ].slice(-6);
+    replacement.summary = `${replacement.actions.length} prüfbare Änderung${replacement.actions.length === 1 ? "" : "en"} nach Korrektur`;
+    return assistantProposalSchema.parse(replacement);
+  }
+
+  const plan = structuredClone(previous.data);
+  const currentSpan = span(source, 0, source.length);
+  plan.requestId = `request-${createHash("sha256").update(`${plan.requestId}:${source}`).digest("hex").slice(0, 16)}`;
+  plan.inputModality = options.inputModality ?? "typed";
+  plan.inputTimestamp = options.inputTimestamp ?? new Date().toISOString();
+  plan.clarificationQuestions = [];
+  plan.ambiguities = [];
+
+  const fluidCorrection =
+    /\b(?:korrektur\s*:\s*)?(?:doch\s+|eher\s+|stattdessen\s+)?(\d{1,4})\s*ml\b/i.exec(
+      source,
+    );
+  if (fluidCorrection) {
+    const priorFluid = plan.understoodFacts.find(
+      (fact) => fact.kind === "fluid-intake" && typeof fact.value === "number",
+    );
+    if (priorFluid) {
+      const priorValue = priorFluid.value!;
+      const nextValue = Number(fluidCorrection[1]);
+      priorFluid.value = nextValue;
+      priorFluid.certainty = /\b(?:eher|ca\.?|circa|etwa|ungefähr)\b/i.test(
+        source,
+      )
+        ? "uncertain"
+        : "certain";
+      priorFluid.label = `${priorFluid.certainty === "uncertain" ? "etwa " : ""}${nextValue} ml getrunken`;
+      priorFluid.sourceSpan = currentSpan;
+      plan.corrections = [
+        ...plan.corrections,
+        {
+          replacedText: `${priorValue} ml`,
+          replacementText: `${nextValue} ml`,
+          sourceSpan: currentSpan,
+        },
+      ].slice(-6);
+      const note = plan.actions.find(
+        (action) => action.type === "note-proposal",
+      );
+      if (note?.type === "note-proposal") {
+        note.structuredText = note.structuredText.replace(
+          new RegExp(
+            `(?:ca\\.?|circa|etwa|ungefähr)?\\s*${priorValue}\\s*ml`,
+            "i",
+          ),
+          `${priorFluid.certainty === "uncertain" ? "etwa " : ""}${nextValue} ml`,
+        );
+        note.sourceSpan = currentSpan;
+      }
+    } else {
+      plan.clarificationQuestions = [
+        `Worauf bezieht sich die Korrektur „${fluidCorrection[0]}“?`,
+      ];
+      plan.ambiguities = [...plan.clarificationQuestions];
+    }
+  }
+
+  if (hasNegatedAction(source, "physician")) {
+    plan.actions = plan.actions.filter(
+      (action) =>
+        action.type !== "communication-proposal" ||
+        action.recipientRole !== "physician",
+    );
+    plan.communications = plan.communications.filter(
+      (item) => !/ärzt/i.test(item.recipientLabel),
+    );
+  }
+
+  if (
+    /\b(?:informieren|benachrichtigen|nachricht\s+(?:an|für))\b/i.test(source)
+  ) {
+    if (!options.namedRecipient) {
+      plan.clarificationQuestions = [
+        "Welche berechtigte Person oder Dienstrolle soll die Nachricht erhalten?",
+      ];
+      plan.ambiguities = [...plan.clarificationQuestions];
+    } else {
+      plan.communications = plan.communications.filter(
+        (item) => item.recipientLabel !== options.namedRecipient!.label,
+      );
+      plan.communications.push({
+        id: "communication-1",
+        recipientLabel: options.namedRecipient.label,
+        requested: true,
+        message: source,
+        sourceSpan: currentSpan,
+      });
+      plan.actions = plan.actions.filter(
+        (action) =>
+          action.type !== "communication-proposal" ||
+          action.recipientLabel !== options.namedRecipient!.label,
+      );
+      plan.actions.push({
+        id: "action-1",
+        dependencies: [],
+        requestedByUser: true,
+        type: "communication-proposal",
+        recipientRole: options.namedRecipient.role,
+        recipientLabel: options.namedRecipient.label,
+        request: "Pflegebericht zur Kenntnis nehmen",
+        reason:
+          plan.actions.find((action) => action.type === "note-proposal")
+            ?.structuredText ?? source,
+        priority: "routine",
+        dueInMinutes: null,
+        sourceSpan: currentSpan,
+      });
+    }
+  }
+
+  if (
+    /\b(?:noch\s+nichts|nichts|keine?\s+aufgabe)\s+abschliess(?:en|e)|\bnoch\s+keine?\s+aufgabe\s+erledigen/i.test(
+      source,
+    )
+  ) {
+    plan.actions = plan.actions.filter(
+      (action) => action.type !== "task-proposal",
+    );
+    plan.taskChanges = plan.taskChanges.map((change) => ({
+      ...change,
+      executable: false,
+    }));
+  }
+  if (/\bnur\s+dokumentation\s+und\s+nachricht\b/i.test(source))
+    plan.actions = plan.actions.filter((action) =>
+      ["note-proposal", "communication-proposal"].includes(action.type),
+    );
+
+  const priorActionIds = new Map(
+    plan.actions.map((action, index) => [action.id, `action-${index + 1}`]),
+  );
+  plan.actions.forEach((action, index) => {
+    action.id = `action-${index + 1}`;
+    action.dependencies = action.dependencies
+      .map((dependency) => priorActionIds.get(dependency))
+      .filter((dependency): dependency is string => Boolean(dependency));
+  });
+  for (const observation of plan.observations)
+    observation.actionId = observation.actionId
+      ? (priorActionIds.get(observation.actionId) ?? null)
+      : null;
+  plan.understoodFacts.forEach((fact, index) => {
+    fact.id = `fact-${index + 1}`;
+  });
+  plan.workPerformed.forEach((work, index) => {
+    work.id = `work-${index + 1}`;
+  });
+  plan.taskChanges.forEach((change, index) => {
+    change.id = `task-change-${index + 1}`;
+  });
+  plan.communications.forEach((communication, index) => {
+    communication.id = `communication-${index + 1}`;
+  });
+  plan.evidence = [
+    ...plan.evidence,
+    {
+      id: "evidence-1",
+      kind: "user-statement" as const,
+      label: `Aktuelle Korrektur: ${source}`.slice(0, 200),
+      sourceSpan: currentSpan,
+    },
+  ].slice(-20);
+  plan.evidence.forEach((item, index) => {
+    item.id = `evidence-${index + 1}`;
+  });
+  plan.summary = `${plan.actions.length} prüfbare Änderung${plan.actions.length === 1 ? "" : "en"} nach Korrektur`;
+  return assistantProposalSchema.parse(plan);
+}
+
 export function completionEvidenceIsIncomplete(source: string): boolean {
   if (requiresDedicatedClinicalWorkflow(source)) return true;
   const meaning = deterministicAssistantProposal(source);
@@ -1943,7 +2164,7 @@ export function actionReviewLabel(action: ExecutableAssistantAction): string {
         }[action.code]
       } (${({ current: "aktuell", historical: "historisch", reported: "berichtet", uncertain: "unsicher" } as const)[action.reportingStatus]}${action.occurrenceText ? ` · ${action.occurrenceText}` : ""}): ${action.value}${action.secondaryValue === null ? "" : `/${action.secondaryValue}`} ${action.unit}`;
     case "communication-proposal":
-      return `Teamnachricht an Ärztlicher Dienst · Priorität ${priority(action.priority)}${action.dueInMinutes === null ? "" : ` · fällig in ${action.dueInMinutes} Minuten`}: ${action.request}. Begründung: ${action.reason}`;
+      return `Teamnachricht an ${action.recipientLabel} · Priorität ${priority(action.priority)}${action.dueInMinutes === null ? " · ohne Antwortfrist" : ` · fällig in ${action.dueInMinutes} Minuten`}: ${action.request}. Begründung: ${action.reason}`;
     case "task-proposal":
       return `Folgeaufgabe für Dipl. Pflege · Priorität ${priority(action.priority)}${action.dueInMinutes === null ? "" : ` · fällig in ${action.dueInMinutes} Minuten`}: ${action.title}. Begründung: ${action.reason}`;
     case "workflow-proposal":
@@ -2055,6 +2276,8 @@ function validateModelAction(
       )
         throw new Error("CLINICAL_PLAN_COMMUNICATION_CONTENT_NOT_GROUNDED");
       if (
+        action.recipientRole !== "physician" ||
+        action.recipientLabel !== "Ärztlicher Dienst" ||
         !/\b(?:arzt|ärztin|ärztlich(?:e|en|er)?\s+dienst)\b/i.test(grounded) ||
         !/\b(?:informieren|benachrichtigen|fragen|nachricht|melden)\b/i.test(
           grounded,

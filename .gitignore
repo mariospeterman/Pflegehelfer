@@ -11,3 +11,4 @@ artifacts/
 backups/
 .gstack/
 .pfh/
+.data/

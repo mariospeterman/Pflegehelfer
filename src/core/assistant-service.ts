@@ -22,6 +22,7 @@ import {
   assistantProposalSchema,
   explicitlyRefusesDocumentation,
   isDoubtfulObservation,
+  reviseAssistantProposal,
   requiresDedicatedClinicalWorkflow,
   type ExecutableAssistantAction,
 } from "../ai/assistant-proposal.js";
@@ -61,6 +62,7 @@ export interface AssistantRequest {
       role: "user" | "assistant";
       text: string;
     }>;
+    previousCarePlan?: string | null;
     organizationLabel: string;
     actorRole: string;
     dataClass: "synthetic-demo" | "institution-local";
@@ -77,14 +79,9 @@ export interface AssistantRequest {
 
 export interface AssistantResponse {
   id: string;
-  classification: IntentClassification;
+  classification: Pick<IntentClassification, "intent">;
   runtime: {
-    route:
-      | "deterministic"
-      | "fast-local"
-      | "hosted-test"
-      | "deep-local"
-      | "deep-hosted-test";
+    route: "assistant" | "safe-fallback";
     label: string;
     degraded: boolean;
     failure?: NonNullable<ClinicalPlanResult["failure"]>["code"];
@@ -416,6 +413,12 @@ export class AssistantService {
       // independently recognizable user language may unlock a mutation UI.
       safeIntent = "unknown";
     }
+    if (
+      patient &&
+      request.workingContext?.previousCarePlan &&
+      /\b(?:korrektur|stattdessen|eher|nur|doch|noch\s+nichts)\b/i.test(prompt)
+    )
+      safeIntent = "care-update";
     let agentRun: AgentRunResult | null = null;
     let agentSelectedIntent: IntentClassification["intent"] | null = null;
     let agentGuidance: ReturnType<typeof resolveRuntimeGuidance> | null = null;
@@ -787,28 +790,15 @@ export class AssistantService {
       ["failed", "cancelled", "budget-exhausted"].includes(agentRun.status),
     );
     let runtime: AssistantResponse["runtime"] = {
-      route: agentFailed
-        ? "deterministic"
-        : agentRun && classification.mode === "hosted-test"
-          ? "hosted-test"
-          : agentRun
-            ? "fast-local"
-            : classification.model === "deterministic-clinical-router-v1"
-              ? "deterministic"
-              : classification.mode === "hosted-test"
-                ? "hosted-test"
-                : "fast-local",
+      route:
+        agentFailed || classification.degraded ? "safe-fallback" : "assistant",
       label: agentFailed
-        ? "Sicherer deterministischer Fallback · Agentenlauf nicht abgeschlossen"
-        : agentRun && classification.mode === "hosted-test"
-          ? `Synthetischer Agententest · ${this.models.model}`
+        ? "Sicherer Fallback · Assistenzlauf nicht abgeschlossen"
+        : classification.degraded
+          ? "Sicherer Fallback · Sprachdienst nicht verfügbar"
           : agentRun
-            ? `Lokaler klinischer Coworker · ${this.models.model}`
-            : classification.model === "deterministic-clinical-router-v1"
-              ? "Deterministische klinische Navigation"
-              : classification.mode === "hosted-test"
-                ? `Synthetischer Testdienst · ${classification.model}`
-                : `Lokales Sprachmodell · ${classification.model}`,
+            ? "Klinischer Coworker mit freigegebenen Werkzeugen"
+            : "Klinischer Coworker",
       degraded: classification.degraded || agentFailed,
       ...(classification.failure
         ? { failure: classification.failure.code }
@@ -1592,11 +1582,60 @@ export class AssistantService {
           });
           break;
         }
-        const planned = await this.models.planCareUpdate(
+        const modelPlan = await this.models.planCareUpdate(
           prompt,
           modelContext,
           request.signal,
         );
+        const mentionedRecipients = snapshot.users
+          .filter((candidate) => candidate.id !== actor.id)
+          .filter((candidate) => {
+            const givenName = candidate.displayName
+              .replace(/^Dr\.\s*/i, "")
+              .split(/\s+/)[0];
+            return Boolean(
+              givenName &&
+              new RegExp(
+                `(?:^|[^\\p{L}])${givenName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:$|[^\\p{L}])`,
+                "iu",
+              ).test(prompt),
+            );
+          });
+        const namedRecipient =
+          mentionedRecipients.length === 1 &&
+          [
+            "registered-nurse",
+            "physician",
+            "pharmacy",
+            "physiotherapy",
+            "occupational-therapy",
+          ].includes(mentionedRecipients[0]!.role)
+            ? mentionedRecipients[0]!
+            : null;
+        const revisedPlan = request.workingContext?.previousCarePlan
+          ? reviseAssistantProposal(
+              JSON.parse(request.workingContext.previousCarePlan),
+              prompt,
+              {
+                inputModality: request.inputModality ?? "typed",
+                inputTimestamp: new Date().toISOString(),
+                ...(namedRecipient
+                  ? {
+                      namedRecipient: {
+                        label: namedRecipient.displayName,
+                        role: namedRecipient.role as
+                          | "registered-nurse"
+                          | "physician"
+                          | "pharmacy"
+                          | "physiotherapy"
+                          | "occupational-therapy",
+                      },
+                    }
+                  : {}),
+              },
+            )
+          : null;
+        const planned = { ...modelPlan, plan: revisedPlan ?? modelPlan.plan };
         if (!planned.plan) {
           components.push({
             type: "UnknownState",
@@ -1613,16 +1652,10 @@ export class AssistantService {
           break;
         }
         runtime = {
-          route:
-            planned.model === "deterministic-clinical-planner-v1"
-              ? "deterministic"
-              : planned.mode === "hosted-test"
-                ? "hosted-test"
-                : "fast-local",
-          label:
-            planned.model === "deterministic-clinical-planner-v1"
-              ? "Deterministischer klinischer Aktionsplan"
-              : `${planned.mode === "hosted-test" ? "Synthetischer Testdienst" : "Lokales Sprachmodell"} · strukturierter Aktionsplan`,
+          route: planned.degraded ? "safe-fallback" : "assistant",
+          label: planned.degraded
+            ? "Sicherer Fallback · Sprachdienst nicht verfügbar"
+            : "Klinischer Coworker · vorbereitete Änderungen",
           degraded: planned.degraded,
           ...(planned.failure ? { failure: planned.failure.code } : {}),
         };
@@ -1651,49 +1684,6 @@ export class AssistantService {
                     ? ("task" as const)
                     : ("workflow" as const),
         }));
-        const performedMarkers = planned.plan.workPerformed
-          .filter((item) => item.status === "performed")
-          .flatMap((item) =>
-            [
-              "mobilis",
-              "morgenpflege",
-              "frühstück",
-              "essen",
-              "trink",
-              "lager",
-              "hygiene",
-            ].filter((marker) =>
-              item.activity.toLocaleLowerCase("de-CH").includes(marker),
-            ),
-          );
-        const taskCandidates = snapshot.tasks.filter((task) => {
-          const searchable = `${task.title} ${task.reason}`.toLocaleLowerCase(
-            "de-CH",
-          );
-          return (
-            task.patientId === current.id &&
-            task.encounterId === current.encounterId &&
-            ["new", "accepted", "in-progress", "waiting"].includes(
-              task.state,
-            ) &&
-            performedMarkers.some((marker) => searchable.includes(marker))
-          );
-        });
-        const linkedTask =
-          taskCandidates.length === 1 ? taskCandidates[0]! : null;
-        const linkedTaskActionId = linkedTask
-          ? `action-${planned.plan.actions.length + 1}`
-          : null;
-        if (
-          linkedTask &&
-          linkedTaskActionId &&
-          /^action-(?:[1-9]|1[0-2])$/.test(linkedTaskActionId)
-        )
-          reviewItems.push({
-            id: linkedTaskActionId,
-            label: `Bestehende Aufgabe abschliessen: ${linkedTask.title}`,
-            kind: "task",
-          });
         const bundlePreview = reviewItems
           .map((item, index) => `${index + 1}. ${item.label}`)
           .join("\n");
@@ -1719,13 +1709,6 @@ export class AssistantService {
           intentToken: issue("care-update:draft", {
             plan: JSON.stringify(planned.plan),
             inputModality: request.inputModality ?? "typed",
-            ...(linkedTask && linkedTaskActionId
-              ? {
-                  linkedTaskId: linkedTask.id,
-                  linkedTaskActionId,
-                  linkedTaskLabel: linkedTask.title,
-                }
-              : {}),
           }),
           sourceLabel: "Aus deiner Aussage · vor Übernahme sicher geprüft",
           reviewItems,
@@ -1740,18 +1723,10 @@ export class AssistantService {
           request.workingContext?.dataClass ?? "institution-local",
         );
         runtime = {
-          route:
-            answer.mode === "local-deep-llm"
-              ? "deep-local"
-              : answer.mode === "hosted-test-deep-llm"
-                ? "deep-hosted-test"
-                : "deterministic",
-          label:
-            answer.mode === "local-deep-llm"
-              ? `Lokales Deep-LLM + freigegebene Wissensbasis · ${this.knowledge.model}`
-              : answer.mode === "hosted-test-deep-llm"
-                ? `Synthetischer Deep-LLM-Testdienst · ${this.knowledge.model}`
-                : "Deterministische lokale Wissenssuche",
+          route: answer.degraded ? "safe-fallback" : "assistant",
+          label: answer.degraded
+            ? "Sicherer Fallback · Wissensdienst nicht verfügbar"
+            : "Freigegebene Wissensunterstützung",
           degraded: answer.degraded,
         };
         for (const citation of answer.citations)
@@ -1862,7 +1837,7 @@ export class AssistantService {
     });
     return {
       id: randomUUID(),
-      classification,
+      classification: { intent: classification.intent },
       runtime,
       patientContext: patient
         ? {
@@ -1901,9 +1876,10 @@ export class AssistantService {
       });
       throw error;
     }
-    const currentPatient = this.clinical
-      .snapshot(userId, intent.purpose)
-      .patients.find((patient) => patient.id === intent.patientId);
+    const currentSnapshot = this.clinical.snapshot(userId, intent.purpose);
+    const currentPatient = currentSnapshot.patients.find(
+      (patient) => patient.id === intent.patientId,
+    );
     if (
       !currentPatient ||
       currentPatient.source.version !== intent.resourceVersion
@@ -2144,12 +2120,20 @@ export class AssistantService {
                   purpose: intent.purpose,
                 });
               }
-              case "communication-proposal":
-                if (action.dueInMinutes === null)
+              case "communication-proposal": {
+                const recipientMatches = currentSnapshot.users.filter(
+                  (candidate) =>
+                    candidate.role === action.recipientRole &&
+                    candidate.displayName === action.recipientLabel,
+                );
+                if (
+                  action.recipientLabel !== "Ärztlicher Dienst" &&
+                  recipientMatches.length !== 1
+                )
                   throw new DomainError(
-                    "VALIDATION",
-                    "Die sichtbare Teamnachricht enthält keine bestätigte Frist.",
-                    400,
+                    "VERSION_CONFLICT",
+                    "Die gewählte empfangende Person ist im aktuellen Behandlungsteam nicht mehr eindeutig verfügbar.",
+                    409,
                   );
                 return this.clinical.createCommunication(userId, {
                   patientId: intent.patientId,
@@ -2157,12 +2141,17 @@ export class AssistantService {
                   request: action.request,
                   reason: action.reason,
                   recipientRole: action.recipientRole,
+                  recipientId: recipientMatches[0]?.id ?? null,
                   priority: action.priority,
-                  dueAt: new Date(
-                    Date.now() + action.dueInMinutes * 60_000,
-                  ).toISOString(),
+                  dueAt:
+                    action.dueInMinutes === null
+                      ? null
+                      : new Date(
+                          Date.now() + action.dueInMinutes * 60_000,
+                        ).toISOString(),
                   purpose: intent.purpose,
                 });
+              }
               case "task-proposal":
                 if (action.dueInMinutes === null)
                   throw new DomainError(

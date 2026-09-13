@@ -2,11 +2,40 @@ import { describe, expect, it } from "vitest";
 import {
   deterministicAssistantProposal,
   isDoubtfulObservation,
+  reviseAssistantProposal,
   verifyModelProposalAgainstDeterministicCompiler,
 } from "../src/ai/assistant-proposal.js";
 import { resolveOccurrenceTime } from "../src/core/assistant-service.js";
 
 describe("conversational AssistantProposal compiler regressions", () => {
+  it("replaces stale work when a correction says only morning care was done", () => {
+    const previous = deterministicAssistantProposal("Luca mobilisiert.");
+    const revised = reviseAssistantProposal(
+      previous,
+      "Nur Morgenpflege erledigt, Mobilisation später.",
+    );
+    expect(revised?.workPerformed).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          activity: "Morgenpflege",
+          status: "performed",
+        }),
+        expect.objectContaining({
+          activity: "Mobilisation",
+          status: "planned-later",
+        }),
+      ]),
+    );
+    expect(revised?.workPerformed).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          activity: "Mobilisation",
+          status: "performed",
+        }),
+      ]),
+    );
+  });
+
   it("does not turn explicitly negated follow-up actions into positives", () => {
     const plan = deterministicAssistantProposal(
       "Mobilisiert, Blutdruck 151 zu 88; Arzt nicht informieren, keine Folgekontrolle.",

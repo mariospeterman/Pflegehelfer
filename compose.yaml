@@ -145,6 +145,35 @@ services:
       - "127.0.0.1:3001:3000"
     networks: [clinical]
 
+  provider-simulator:
+    build: .
+    restart: unless-stopped
+    command: ["node", "dist/src/server/provider-simulator.js"]
+    environment:
+      PORT: 8787
+      HOST: 0.0.0.0
+      PFH_PROVIDER_SIMULATOR_TOKEN: ${PFH_PROVIDER_SIMULATOR_TOKEN:?Run pnpm demo:env first}
+      PFH_PROVIDER_SIMULATOR_STATE_PATH: /var/lib/pfh-provider/state.json
+    ports: ["127.0.0.1:8787:8787"]
+    volumes:
+      - provider-simulator-data:/var/lib/pfh-provider
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          'fetch("http://127.0.0.1:8787/health",{headers:{authorization:"Bearer "+process.env.PFH_PROVIDER_SIMULATOR_TOKEN}}).then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))',
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [clinical]
+
   pflegehelfer:
     profiles: [showcase]
     build: .
@@ -152,8 +181,11 @@ services:
     environment:
       PFH_AI_MODE: deterministic
       PFH_DEMO_MODE: "true"
+      PFH_RUNTIME_PROFILE: integrated-demo
       PFH_STORAGE_MODE: medplum
       PFH_OPERATIONAL_DATABASE_URL: postgresql://pflegehelfer:${PFH_DEMO_POSTGRES_PASSWORD}@pflegehelfer-postgres:5432/pflegehelfer
+      PFH_PROVIDER_SIMULATOR_BASE_URL: http://provider-simulator:8787
+      PFH_PROVIDER_SIMULATOR_TOKEN: ${PFH_PROVIDER_SIMULATOR_TOKEN:?Run pnpm demo:env first}
       PFH_FHIR_BASE_URL: http://medplum-server:8103/
       MEDPLUM_APP_BASE_URL: http://localhost:3001/
       MEDPLUM_DEFAULT_SUPER_ADMIN_CLIENT_ID: ${MEDPLUM_DEFAULT_SUPER_ADMIN_CLIENT_ID:?Run pnpm demo:env first}
@@ -163,6 +195,8 @@ services:
       pflegehelfer-postgres:
         condition: service_healthy
       medplum-server:
+        condition: service_healthy
+      provider-simulator:
         condition: service_healthy
     read_only: true
     tmpfs: [/tmp]
@@ -183,3 +217,4 @@ volumes:
   pflegehelfer-postgres-data:
   medplum-postgres-data:
   medplum-binary-data:
+  provider-simulator-data:

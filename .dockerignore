@@ -1,4 +1,8 @@
 .git
+.gstack
+.pfh
+.data
+.env.demo
 node_modules
 dist
 artifacts

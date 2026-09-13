@@ -13,6 +13,84 @@ afterEach(async () => {
 });
 
 describe("assistant request cancellation", () => {
+  it("retains one-use authority after a normally delivered HTTP response", async () => {
+    const operationalStore = new InMemoryOperationalStore();
+    const app = buildApp(undefined, {
+      demoMode: true,
+      operationalStore,
+      modelGateway: new ModelGateway({ PFH_AI_MODE: "deterministic" }),
+    });
+    apps.push(app);
+    await app.inject({
+      method: "POST",
+      url: "/api/v1/assistant/context",
+      headers: {
+        "x-demo-user": "u-assistant",
+        "x-command-id": crypto.randomUUID(),
+      },
+      payload: { patientId: "p-luca" },
+    });
+
+    let stored:
+      | Parameters<InMemoryOperationalStore["storeIntentAuthority"]>[0]
+      | undefined;
+    const originalStore =
+      operationalStore.storeIntentAuthority.bind(operationalStore);
+    vi.spyOn(operationalStore, "storeIntentAuthority").mockImplementation(
+      async (input) => {
+        stored = input;
+        await originalStore(input);
+      },
+    );
+
+    const address = await app.listen({ host: "127.0.0.1", port: 0 });
+    const body = JSON.stringify({
+      patientId: "p-luca",
+      prompt: "Luca mobilisiert, etwa 200 ml getrunken. Gewicht später.",
+      inputModality: "typed",
+    });
+    await new Promise<void>((resolve, reject) => {
+      const request = httpRequest(
+        `${address}/api/v1/assistant/query`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "content-length": Buffer.byteLength(body),
+            "x-demo-user": "u-assistant",
+            "x-command-id": crypto.randomUUID(),
+          },
+        },
+        (response) => {
+          response.resume();
+          response.once("end", () => {
+            if (response.statusCode === 200) resolve();
+            else reject(new Error(`unexpected-status:${response.statusCode}`));
+          });
+        },
+      );
+      request.once("error", reject);
+      request.end(body);
+    });
+
+    expect(stored).toBeDefined();
+    const authority = stored!;
+    await expect(
+      operationalStore.loadIntentAuthority({
+        tokenHash: authority.tokenHash,
+        actorId: authority.record.actorId,
+        sessionId: authority.sessionId,
+        threadId: authority.threadId,
+        contextRevision: authority.contextRevision,
+        patientId: authority.record.patientId,
+        encounterId: authority.record.encounterId,
+      }),
+    ).resolves.toMatchObject({
+      actorId: authority.record.actorId,
+      command: "care-update:draft",
+    });
+  });
+
   it.each(["/api/v1/assistant/query", "/api/v1/assistant/query/stream"])(
     "revokes authority when the client disconnects during durable insertion at %s",
     async (url) => {

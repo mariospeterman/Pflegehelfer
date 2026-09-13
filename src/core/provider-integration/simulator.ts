@@ -33,6 +33,20 @@ interface SimulatorOptions {
   createId?: () => string;
 }
 
+export interface ProviderSimulatorState {
+  schemaVersion: 1;
+  mode: ProviderSimulatorMode;
+  records: ProviderRecord[];
+  changeLog: ProviderRecord[];
+  acknowledgements: Array<{
+    idempotencyKey: string;
+    payloadHash: string;
+    acknowledgement: ProviderAcknowledgement;
+    command: CanonicalClinicalCommand;
+    applied: boolean;
+  }>;
+}
+
 function clone<T>(value: T): T {
   return structuredClone(value);
 }
@@ -97,6 +111,32 @@ export class ProviderContractSimulator implements ProviderAdapter {
       this.changeLog.length,
       ...clone(this.initialRecords),
     );
+  }
+
+  exportState(): ProviderSimulatorState {
+    return clone({
+      schemaVersion: 1,
+      mode: this.mode,
+      records: this.records,
+      changeLog: this.changeLog,
+      acknowledgements: [...this.acknowledgements.entries()].map(
+        ([idempotencyKey, value]) => ({ idempotencyKey, ...value }),
+      ),
+    });
+  }
+
+  restoreState(state: ProviderSimulatorState): void {
+    if (state.schemaVersion !== 1) throw new Error("SIMULATOR_STATE_VERSION");
+    this.mode = state.mode;
+    this.records.splice(0, this.records.length, ...clone(state.records));
+    this.changeLog.splice(0, this.changeLog.length, ...clone(state.changeLog));
+    this.acknowledgements.clear();
+    this.receiptById.clear();
+    for (const stored of state.acknowledgements) {
+      const { idempotencyKey, ...value } = stored;
+      this.acknowledgements.set(idempotencyKey, clone(value));
+      this.receiptById.set(value.acknowledgement.receiptId, idempotencyKey);
+    }
   }
 
   /** Add a synthetic provider-side change so inbound polling can be tested. */
@@ -228,9 +268,23 @@ export class ProviderContractSimulator implements ProviderAdapter {
       return clone(previous.acknowledgement);
     }
 
-    const providerVersion = nextVersion(
-      prepared.command.expectedProviderVersion,
+    const currentRecord = this.records.find(
+      (candidate) =>
+        candidate.reference.resourceType ===
+          prepared.command.resource.resourceType &&
+        candidate.reference.externalId === prepared.command.resource.id,
     );
+    const currentVersion = currentRecord?.originVersion ?? null;
+    const forcedConflict = this.mode === "conflict";
+    const versionConflict =
+      forcedConflict ||
+      ((this.mode === "normal" || this.mode === "delay") &&
+        prepared.command.expectedProviderVersion !== currentVersion);
+    const providerVersion = forcedConflict
+      ? nextVersion(prepared.command.expectedProviderVersion)
+      : versionConflict
+        ? currentVersion
+        : nextVersion(currentVersion);
     const receiptId = `sim-${this.createId()}`;
     const acknowledgement: ProviderAcknowledgement = {
       receiptId,
@@ -240,30 +294,33 @@ export class ProviderContractSimulator implements ProviderAdapter {
           ? "pending"
           : this.mode === "reject"
             ? "rejected"
-            : this.mode === "conflict"
+            : versionConflict
               ? "conflict"
               : "acknowledged",
       providerVersion,
       errorCode:
         this.mode === "reject"
           ? "SIMULATED_CONTENT_REJECTION"
-          : this.mode === "conflict"
+          : forcedConflict
             ? "SIMULATED_VERSION_CONFLICT"
-            : null,
+            : versionConflict
+              ? "PROVIDER_VERSION_CONFLICT"
+              : null,
       errorClassification:
         this.mode === "reject"
           ? "clinical-content"
-          : this.mode === "conflict"
+          : versionConflict
             ? "version-conflict"
             : null,
-      providerSnapshot:
-        this.mode === "conflict"
-          ? {
+      providerSnapshot: versionConflict
+        ? currentRecord
+          ? clone(currentRecord)
+          : {
               reference: {
                 resourceType: prepared.command.resource.resourceType,
                 externalId: prepared.command.resource.id,
               },
-              originVersion: providerVersion,
+              originVersion: providerVersion ?? "absent",
               effectiveAt: prepared.command.approvedAt,
               recordedAt: this.now(),
               receivedAt: this.now(),
@@ -273,9 +330,11 @@ export class ProviderContractSimulator implements ProviderAdapter {
                 syntheticConflict: true,
               },
             }
-          : null,
+        : null,
       receivedAt: this.now(),
     };
+    if (forcedConflict && !currentRecord && acknowledgement.providerSnapshot)
+      this.injectInboundRecord(acknowledgement.providerSnapshot);
     this.acknowledgements.set(prepared.command.idempotencyKey, {
       payloadHash: prepared.payloadHash,
       acknowledgement: clone(acknowledgement),

@@ -120,13 +120,13 @@ describe("purpose-specific BFF", () => {
         patientId: "p-anna",
         encounterId: "enc-anna-2026",
         code: "temperature",
-        value: 999,
+        value: 987654321.123,
         effectiveAt: "not-a-date",
       },
     });
     expect(response.statusCode).toBe(400);
     expect(response.body).not.toContain("p-anna");
-    expect(response.body).not.toContain("999");
+    expect(response.body).not.toContain("987654321.123");
   });
 
   it("enforces high-assurance and occurrence time on every observation entry path", async () => {
@@ -270,11 +270,52 @@ describe("purpose-specific BFF", () => {
     expect(response.json()).toEqual(
       expect.objectContaining({
         status: "ready",
-        aiRequired: false,
-        providersRequired: false,
+        profile: "memory-demo",
+        durability: "memory-only",
         auditValid: true,
       }),
     );
+  });
+
+  it("keeps detailed component diagnostics behind an operator role", async () => {
+    const app = buildApp(undefined, { demoMode: true });
+    apps.push(app);
+    const denied = await app.inject({
+      method: "GET",
+      url: "/api/v1/diagnostics",
+      headers: { "x-demo-user": "u-assistant" },
+    });
+    expect(denied.statusCode).toBe(403);
+    const allowed = await app.inject({
+      method: "GET",
+      url: "/api/v1/diagnostics",
+      headers: { "x-demo-user": "u-it" },
+    });
+    expect(allowed.statusCode).toBe(200);
+    const diagnostics = allowed.json<{
+      profile: string;
+      profileMatchesRuntime: boolean;
+      components: {
+        postgresql: { mode: string; ready: boolean };
+        medplum: { mode: string; ready: boolean };
+        providerWorker: { mode: string; ready: boolean };
+        model: { mode: string };
+        asr: { mode: string };
+        tts: { mode: string };
+      };
+    }>();
+    expect(diagnostics).toMatchObject({
+      profile: "memory-demo",
+      profileMatchesRuntime: true,
+      components: {
+        postgresql: { mode: "in-memory", ready: true },
+        medplum: { mode: "in-memory", ready: true },
+        providerWorker: { mode: "memory-demo-checkpoint", ready: true },
+      },
+    });
+    expect(typeof diagnostics.components.model.mode).toBe("string");
+    expect(typeof diagnostics.components.asr.mode).toBe("string");
+    expect(typeof diagnostics.components.tts.mode).toBe("string");
   });
 
   it("never returns canonical clinical commands from operator endpoints", async () => {
@@ -619,5 +660,53 @@ describe("purpose-specific BFF", () => {
       },
     });
     expect(rejected.statusCode).toBe(403);
+  });
+
+  it("revises one natural review across correction, recipient negation and no-completion", async () => {
+    const app = buildApp(undefined, { demoMode: true });
+    apps.push(app);
+    await app.inject({
+      method: "POST",
+      url: "/api/v1/assistant/context",
+      headers: commandHeaders("u-assistant"),
+      payload: { patientId: "p-luca" },
+    });
+    const ask = (prompt: string) =>
+      app.inject({
+        method: "POST",
+        url: "/api/v1/assistant/query",
+        headers: commandHeaders("u-assistant"),
+        payload: {
+          patientId: "p-luca",
+          prompt,
+          inputModality: "typed",
+        },
+      });
+    await ask("Luca mobilisiert, etwa 200 ml getrunken. Gewicht später.");
+    const corrected = await ask(
+      "Korrektur: eher 150 ml. Nora informieren, nicht den Arzt.",
+    );
+    expect(corrected.statusCode).toBe(200);
+    const final = await ask(
+      "Nur Dokumentation und Nachricht, noch nichts abschliessen.",
+    );
+    const review = final
+      .json<{
+        components: Array<{
+          type: string;
+          reviewItems?: Array<{ kind: string; label: string }>;
+        }>;
+      }>()
+      .components.find((component) => component.type === "DraftAction");
+    expect(review?.reviewItems).toHaveLength(2);
+    expect(review?.reviewItems?.map((item) => item.kind)).toEqual([
+      "note",
+      "communication",
+    ]);
+    expect(review?.reviewItems?.[0]?.label).toContain("etwa 150 ml");
+    expect(review?.reviewItems?.[1]?.label).toContain("Nora Frei");
+    expect(JSON.stringify(review)).toContain("Gewicht später");
+    expect(JSON.stringify(review)).not.toContain("Arzt");
+    expect(JSON.stringify(review)).not.toContain('"kind":"task"');
   });
 });

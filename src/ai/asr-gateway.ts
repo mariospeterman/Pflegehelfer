@@ -51,6 +51,8 @@ export class AsrGateway {
   readonly model: string;
   private readonly baseUrl: string | null;
   private readonly apiKey: string | null;
+  private readonly hostedMaxCallsPerHour: number;
+  private readonly hostedCallTimes: number[] = [];
   private verifiedAt: number | null = null;
 
   constructor(env: NodeJS.ProcessEnv = process.env) {
@@ -69,6 +71,10 @@ export class AsrGateway {
         : (env.PFH_ASR_BASE_URL ??
           (this.mode === "hosted-test" ? "https://api.openai.com/v1" : null));
     this.apiKey = env.PFH_ASR_API_KEY ?? env.OPENAI_API_KEY ?? null;
+    const hostedCallLimit = Number(env.PFH_HOSTED_ASR_MAX_CALLS_PER_HOUR ?? 20);
+    this.hostedMaxCallsPerHour = Number.isFinite(hostedCallLimit)
+      ? Math.min(200, Math.max(1, Math.floor(hostedCallLimit)))
+      : 20;
     if (
       this.mode === "local-openai" &&
       env.PFH_DEMO_MODE !== "true" &&
@@ -88,6 +94,23 @@ export class AsrGateway {
       throw new Error(
         "Hosted ASR requires explicit external-AI consent and synthetic demo data.",
       );
+  }
+
+  private claimHostedCall(): void {
+    if (this.mode !== "hosted-test") return;
+    const cutoff = Date.now() - 60 * 60_000;
+    while (
+      this.hostedCallTimes.length > 0 &&
+      this.hostedCallTimes[0]! <= cutoff
+    )
+      this.hostedCallTimes.shift();
+    if (this.hostedCallTimes.length >= this.hostedMaxCallsPerHour)
+      throw new DomainError(
+        "PROVIDER_UNAVAILABLE",
+        "Das Stundenbudget der synthetischen Spracherkennung ist ausgeschöpft.",
+        429,
+      );
+    this.hostedCallTimes.push(Date.now());
   }
 
   status(): AsrRuntimeStatus {
@@ -207,6 +230,7 @@ export class AsrGateway {
         form.set("response_format", "verbose_json");
       const controller = new AbortController();
       timer = setTimeout(() => controller.abort(), 60_000);
+      this.claimHostedCall();
       const response = await fetch(
         `${this.baseUrl.replace(/\/$/, "")}/audio/transcriptions`,
         {

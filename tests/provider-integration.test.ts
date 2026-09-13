@@ -31,7 +31,7 @@ function command(idempotencyKey: string): CanonicalClinicalCommand {
         valueQuantity: { value: 37.8, code: "Cel" },
       },
     },
-    expectedProviderVersion: "sim-v1",
+    expectedProviderVersion: null,
     mappingVersion: "ch-core-6.0.0-v1",
     correlationId: "correlation-1",
     causationId: "approval-1",
@@ -232,7 +232,7 @@ describe("full provider simulator contract", () => {
         externalId: "observation-1",
       }),
     ).resolves.toMatchObject({
-      originVersion: "sim-v2",
+      originVersion: "sim-v1",
       payload: {
         resourceType: "Observation",
         id: "observation-1",
@@ -276,7 +276,7 @@ describe("full provider simulator contract", () => {
         resourceType: "Observation",
         externalId: "observation-1",
       }),
-    ).resolves.toMatchObject({ originVersion: "sim-v2" });
+    ).resolves.toMatchObject({ originVersion: "sim-v1" });
 
     delayed.injectInboundRecord({
       reference: {
@@ -365,8 +365,43 @@ describe("full provider simulator contract", () => {
     ).resolves.toMatchObject({
       status: "conflict",
       errorClassification: "version-conflict",
-      providerSnapshot: { originVersion: "sim-v2" },
+      providerSnapshot: { originVersion: "sim-v1" },
     });
+  });
+
+  it("rejects stale or missing provider versions without overwriting state", async () => {
+    const manifest = providerRegistryFixtures.simulatorManifest("wicare");
+    const simulator = new ProviderContractSimulator(manifest, {
+      now: () => now,
+    });
+    const created = await simulator.executeCommand(
+      await simulator.prepareCommand(command("create-once")),
+    );
+    expect(created).toMatchObject({
+      status: "acknowledged",
+      providerVersion: "sim-v1",
+    });
+    const stale = await simulator.executeCommand(
+      await simulator.prepareCommand({
+        ...command("stale-write"),
+        resource: {
+          ...command("stale-write").resource,
+          body: { ...command("stale-write").resource.body, status: "amended" },
+        },
+        expectedProviderVersion: null,
+      }),
+    );
+    expect(stale).toMatchObject({
+      status: "conflict",
+      errorCode: "PROVIDER_VERSION_CONFLICT",
+      providerVersion: "sim-v1",
+    });
+    await expect(
+      simulator.read({
+        resourceType: "Observation",
+        externalId: "observation-1",
+      }),
+    ).resolves.toMatchObject({ payload: { status: "final" } });
   });
 });
 

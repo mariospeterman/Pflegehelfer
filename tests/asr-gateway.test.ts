@@ -137,6 +137,32 @@ describe("local ASR privacy boundary", () => {
     expect([...bytes]).toEqual([0, 0, 0]);
   });
 
+  it("stops hosted transcription before transport when its demo budget is exhausted", async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ text: "Synthetischer Text" }), {
+          status: 200,
+        }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const gateway = new AsrGateway({
+      PFH_ASR_MODE: "hosted-test",
+      PFH_DEMO_MODE: "true",
+      PFH_LLM_DATA_CLASSIFICATION: "synthetic-only",
+      PFH_ALLOW_EXTERNAL_AI: "true",
+      OPENAI_API_KEY: "x",
+      PFH_HOSTED_ASR_MAX_CALLS_PER_HOUR: "1",
+    });
+    await expect(
+      gateway.transcribe(new Uint8Array([1]), "audio/webm", "synthetic-demo"),
+    ).resolves.toMatchObject({ text: "Synthetischer Text" });
+    await expect(
+      gateway.transcribe(new Uint8Array([2]), "audio/webm", "synthetic-demo"),
+    ).rejects.toMatchObject({ statusCode: 429 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("does not claim a browser engine was accepted before a real browser test", () => {
     expect(
       new AsrGateway({

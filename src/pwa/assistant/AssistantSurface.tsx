@@ -22,17 +22,9 @@ interface AssistantResponse {
   id: string;
   classification: {
     intent: string;
-    mode: "disabled" | "deterministic" | "hosted-test" | "local-openai";
-    model: string;
-    degraded: boolean;
   };
   runtime: {
-    route:
-      | "deterministic"
-      | "fast-local"
-      | "hosted-test"
-      | "deep-local"
-      | "deep-hosted-test";
+    route: "assistant" | "safe-fallback";
     label: string;
     degraded: boolean;
     failure?:

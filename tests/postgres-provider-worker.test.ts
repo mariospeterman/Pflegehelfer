@@ -28,7 +28,7 @@ function command(key: string, id = randomUUID()): CanonicalClinicalCommand {
         valueQuantity: { value: 37.8, code: "Cel" },
       },
     },
-    expectedProviderVersion: "sim-v1",
+    expectedProviderVersion: null,
     mappingVersion: "synthetic-v1",
     correlationId: randomUUID(),
     causationId: randomUUID(),
@@ -210,7 +210,7 @@ describe.runIf(Boolean(databaseUrl))(
             start,
           ],
         );
-        registry.setSimulatorMode("device-gateway", "delay");
+        await registry.setSimulatorMode("device-gateway", "delay");
         const first = new ProviderDeliveryWorker(store, registry, {
           workerId: "pending-worker",
           profile: "synthetic-simulator",
@@ -222,7 +222,7 @@ describe.runIf(Boolean(databaseUrl))(
           claimed: 1,
           retrying: 1,
         });
-        registry.setSimulatorMode("device-gateway", "normal");
+        await registry.setSimulatorMode("device-gateway", "normal");
         const second = new ProviderDeliveryWorker(store, registry, {
           workerId: "receipt-poller",
           profile: "synthetic-simulator",

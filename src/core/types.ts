@@ -154,7 +154,7 @@ export interface Communication {
   escalationRecipientRole: Role | null;
   escalatedAt: string | null;
   priority: "routine" | "elevated" | "urgent";
-  dueAt: string;
+  dueAt: string | null;
   state: "sent" | "acknowledged" | "answered" | "closed" | "escalated";
   acknowledgedBy: string | null;
   answeredBy: string | null;

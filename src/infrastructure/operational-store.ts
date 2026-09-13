@@ -1,7 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
+import type { Resource } from "@medplum/fhirtypes";
 import pg from "pg";
 import { workflowForRole, type WorkflowDefinition } from "../core/workflows.js";
 import type { DurableIntentRecord } from "../core/assistant.js";
+import type { ServiceCheckpoint } from "../core/service.js";
 import {
   providerIdSchema,
   providerOutboxPayloadSchema,
@@ -215,6 +217,62 @@ export interface DurableVoiceAuthority {
   expiresAt: number;
 }
 
+export interface AcceptedCommandReceipt {
+  id: string;
+  statusCode: number;
+  payload: unknown;
+  replayed: boolean;
+}
+
+export interface LocalIntentAcceptance {
+  tokenHash: string;
+  actorId: string;
+  actorRole: Role;
+  purpose: Purpose;
+  patientId: string;
+  encounterId: string;
+  sessionId: string;
+  threadId: string;
+  contextRevision: number;
+  resourceVersion: number;
+  commandKey: string;
+  requestHash: string;
+  statusCode: number;
+  resultPayload: unknown;
+  selectedActionIds: string[];
+  policyVersion: string;
+  sourceReadSet: unknown[];
+  auditEntries: AuditEntry[];
+  clinicalResources: Resource[];
+  removedReferences: string[];
+  clinicalExpectedVersions: Record<string, string | null>;
+  checkpoint: ServiceCheckpoint;
+  episodeEvidence?: string;
+  providerCommands: Array<{
+    provider: ProviderOutboxJob["provider"];
+    profile: ProviderProfile;
+    command: CanonicalClinicalCommand;
+    retrySafety: ProviderOutboxPayload["retrySafety"];
+  }>;
+}
+
+export interface ClinicalProjectionJob {
+  id: string;
+  acceptedCommandId: string;
+  idempotencyKey: string;
+  resources: Resource[];
+  removedReferences: string[];
+  expectedVersions: Record<string, string | null>;
+  checkpoint: ServiceCheckpoint;
+  attempts: number;
+}
+
+export interface DeliveryDiagnostics {
+  acceptedCommands: Record<string, number>;
+  clinicalProjections: Record<string, number>;
+  providerDeliveries: Record<string, number>;
+}
+
 export interface WorkingSessionView {
   id: string;
   organizationId: string;
@@ -243,6 +301,7 @@ export interface DurableUiEvent {
 }
 
 export interface OperationalStore {
+  readonly mode: "in-memory" | "postgresql";
   initialize(): Promise<void>;
   getOrStartSession(actorId: string, role: Role): Promise<WorkingSessionView>;
   changePatientContext(
@@ -260,6 +319,12 @@ export interface OperationalStore {
     role: Role,
     patientId?: string | null,
   ): Promise<StoredConversationTurn[]>;
+  loadPendingCarePlan(
+    actorId: string,
+    patientId: string,
+    encounterId: string,
+    threadId: string,
+  ): Promise<string | null>;
   listConversations(
     actorId: string,
     role: Role,
@@ -312,6 +377,33 @@ export interface OperationalStore {
     encounterId: string;
   }): Promise<DurableIntentRecord | null>;
   consumeIntentAuthority(tokenHash: string): Promise<boolean>;
+  acceptIntentCommand(
+    input: LocalIntentAcceptance,
+  ): Promise<AcceptedCommandReceipt>;
+  loadAcceptedCommandReceipt(
+    commandKey: string,
+    requestHash: string,
+  ): Promise<AcceptedCommandReceipt | null>;
+  loadLatestAcceptedCheckpoint(): Promise<ServiceCheckpoint | null>;
+  claimClinicalProjection(input: {
+    workerId: string;
+    leaseDurationMs: number;
+    now?: Date;
+  }): Promise<ClinicalProjectionJob | null>;
+  finishClinicalProjection(input: {
+    jobId: string;
+    workerId: string;
+  }): Promise<void>;
+  failClinicalProjection(input: {
+    jobId: string;
+    workerId: string;
+    errorCode: string;
+    retryAt: Date | null;
+  }): Promise<void>;
+  providerDeliveryState(
+    patientIds: readonly string[],
+  ): Promise<"pending" | "simulated-acknowledged" | "external-gated">;
+  deliveryDiagnostics(): Promise<DeliveryDiagnostics>;
   releaseIntentAuthority(tokenHash: string): Promise<void>;
   revokeActorAuthorities(actorId: string): Promise<void>;
   storeVoiceAuthority(
@@ -335,6 +427,7 @@ interface MemorySession extends WorkingSessionView {
 }
 
 export class InMemoryOperationalStore implements OperationalStore {
+  readonly mode = "in-memory" as const;
   private readonly sessions = new Map<string, MemorySession>();
   private readonly memoryThreads = new Map<
     string,
@@ -364,6 +457,16 @@ export class InMemoryOperationalStore implements OperationalStore {
     string,
     { record: DurableVoiceAuthority; consumed: boolean }
   >();
+  private readonly acceptedCommands = new Map<
+    string,
+    { requestHash: string; receipt: AcceptedCommandReceipt }
+  >();
+  private readonly clinicalProjectionJobs: Array<
+    ClinicalProjectionJob & {
+      state: "pending" | "leased" | "delivered" | "retry" | "manual";
+      leaseOwner: string | null;
+    }
+  > = [];
   initialize(): Promise<void> {
     return Promise.resolve();
   }
@@ -493,6 +596,23 @@ export class InMemoryOperationalStore implements OperationalStore {
         ? turns
         : turns.filter((turn) => storedTurnPatientId(turn) === patientId),
     );
+  }
+  loadPendingCarePlan(
+    actorId: string,
+    patientId: string,
+    encounterId: string,
+    threadId: string,
+  ): Promise<string | null> {
+    const candidates = [...this.authorities.values()].filter(
+      ({ record, consumed }) =>
+        !consumed &&
+        record.actorId === actorId &&
+        record.patientId === patientId &&
+        record.encounterId === encounterId &&
+        record.command === "care-update:draft" &&
+        this.sessions.get(actorId)?.threadId === threadId,
+    );
+    return Promise.resolve(candidates.at(-1)?.record.payload.plan ?? null);
   }
   async appendConversationTurn(
     actorId: string,
@@ -971,6 +1091,130 @@ export class InMemoryOperationalStore implements OperationalStore {
     authority.consumed = true;
     return Promise.resolve(true);
   }
+  acceptIntentCommand(
+    input: LocalIntentAcceptance,
+  ): Promise<AcceptedCommandReceipt> {
+    const prior = this.acceptedCommands.get(input.commandKey);
+    if (prior) {
+      if (prior.requestHash !== input.requestHash)
+        return Promise.reject(new Error("COMMAND_ID_PAYLOAD_MISMATCH"));
+      return Promise.resolve({
+        ...structuredClone(prior.receipt),
+        replayed: true,
+      });
+    }
+    const authority = this.authorities.get(input.tokenHash);
+    if (
+      !authority ||
+      authority.consumed ||
+      authority.record.expiresAt < Date.now() ||
+      authority.record.actorId !== input.actorId ||
+      authority.record.patientId !== input.patientId ||
+      authority.record.encounterId !== input.encounterId ||
+      authority.sessionId !== input.sessionId ||
+      authority.threadId !== input.threadId ||
+      authority.contextRevision !== input.contextRevision
+    )
+      return Promise.reject(new Error("INTENT_AUTHORITY_INVALID"));
+    authority.consumed = true;
+    const receipt: AcceptedCommandReceipt = {
+      id: randomUUID(),
+      statusCode: input.statusCode,
+      payload: structuredClone(input.resultPayload),
+      replayed: false,
+    };
+    this.acceptedCommands.set(input.commandKey, {
+      requestHash: input.requestHash,
+      receipt,
+    });
+    this.clinicalProjectionJobs.push({
+      id: randomUUID(),
+      acceptedCommandId: receipt.id,
+      idempotencyKey: `clinical:${receipt.id}`,
+      resources: structuredClone(input.clinicalResources),
+      removedReferences: [...input.removedReferences],
+      expectedVersions: structuredClone(input.clinicalExpectedVersions),
+      checkpoint: structuredClone(input.checkpoint),
+      attempts: 0,
+      state: "pending",
+      leaseOwner: null,
+    });
+    return Promise.resolve(structuredClone(receipt));
+  }
+  loadAcceptedCommandReceipt(
+    commandKey: string,
+    requestHash: string,
+  ): Promise<AcceptedCommandReceipt | null> {
+    const prior = this.acceptedCommands.get(commandKey);
+    if (!prior) return Promise.resolve(null);
+    if (prior.requestHash !== requestHash)
+      return Promise.reject(new Error("COMMAND_ID_PAYLOAD_MISMATCH"));
+    return Promise.resolve({
+      ...structuredClone(prior.receipt),
+      replayed: true,
+    });
+  }
+  loadLatestAcceptedCheckpoint(): Promise<ServiceCheckpoint | null> {
+    const latest = this.clinicalProjectionJobs.at(-1);
+    return Promise.resolve(latest ? structuredClone(latest.checkpoint) : null);
+  }
+  claimClinicalProjection(input: {
+    workerId: string;
+    leaseDurationMs: number;
+    now?: Date;
+  }): Promise<ClinicalProjectionJob | null> {
+    void input.leaseDurationMs;
+    void input.now;
+    const job = this.clinicalProjectionJobs.find((candidate) =>
+      ["pending", "retry"].includes(candidate.state),
+    );
+    if (!job) return Promise.resolve(null);
+    job.state = "leased";
+    job.leaseOwner = input.workerId;
+    job.attempts += 1;
+    return Promise.resolve(structuredClone(job));
+  }
+  finishClinicalProjection(input: {
+    jobId: string;
+    workerId: string;
+  }): Promise<void> {
+    const job = this.clinicalProjectionJobs.find(
+      (candidate) =>
+        candidate.id === input.jobId && candidate.leaseOwner === input.workerId,
+    );
+    if (!job)
+      return Promise.reject(new Error("CLINICAL_PROJECTION_LEASE_LOST"));
+    job.state = "delivered";
+    job.leaseOwner = null;
+    return Promise.resolve();
+  }
+  failClinicalProjection(input: {
+    jobId: string;
+    workerId: string;
+    errorCode: string;
+    retryAt: Date | null;
+  }): Promise<void> {
+    void input.errorCode;
+    const job = this.clinicalProjectionJobs.find(
+      (candidate) =>
+        candidate.id === input.jobId && candidate.leaseOwner === input.workerId,
+    );
+    if (!job)
+      return Promise.reject(new Error("CLINICAL_PROJECTION_LEASE_LOST"));
+    job.state = input.retryAt ? "retry" : "manual";
+    job.leaseOwner = null;
+    return Promise.resolve();
+  }
+  providerDeliveryState(): Promise<"external-gated"> {
+    return Promise.resolve("external-gated");
+  }
+  deliveryDiagnostics(): Promise<DeliveryDiagnostics> {
+    return Promise.resolve({
+      acceptedCommands: {},
+      clinicalProjections: {},
+      providerDeliveries: {},
+    });
+  }
   releaseIntentAuthority(tokenHash: string): Promise<void> {
     const authority = this.authorities.get(tokenHash);
     if (authority && authority.record.expiresAt >= Date.now())
@@ -1024,6 +1268,8 @@ export class InMemoryOperationalStore implements OperationalStore {
     this.handoverClinical.clear();
     this.authorities.clear();
     this.voiceAuthorities.clear();
+    this.acceptedCommands.clear();
+    this.clinicalProjectionJobs.splice(0, this.clinicalProjectionJobs.length);
     return Promise.resolve();
   }
   close(): Promise<void> {
@@ -1034,6 +1280,7 @@ export class InMemoryOperationalStore implements OperationalStore {
 export class PostgresOperationalStore
   implements OperationalStore, ProviderDeliveryStore
 {
+  readonly mode = "postgresql" as const;
   private readonly pool: pg.Pool;
   constructor(connectionString: string) {
     this.pool = new Pool({
@@ -1491,6 +1738,23 @@ export class PostgresOperationalStore
       ...row.content,
       createdAt: row.content.createdAt ?? row.created_at.toISOString(),
     }));
+  }
+  async loadPendingCarePlan(
+    actorId: string,
+    patientId: string,
+    encounterId: string,
+    threadId: string,
+  ): Promise<string | null> {
+    const result = await this.pool.query<{ plan: string | null }>(
+      `SELECT p.payload->'payload'->>'plan' AS plan
+       FROM assistant_proposal_revisions p
+       WHERE p.organization_id=$1 AND p.actor_id=$2 AND p.thread_id=$3
+         AND p.patient_id=$4 AND p.encounter_id=$5 AND p.status='pending'
+         AND p.payload->>'command'='care-update:draft'
+       ORDER BY p.revision DESC,p.created_at DESC LIMIT 1`,
+      [organizationId, actorId, threadId, patientId, encounterId],
+    );
+    return result.rows[0]?.plan ?? null;
   }
   async listConversations(
     actorId: string,
@@ -2661,6 +2925,572 @@ export class PostgresOperationalStore
     );
     return Boolean(result.rowCount);
   }
+  async acceptIntentCommand(
+    input: LocalIntentAcceptance,
+  ): Promise<AcceptedCommandReceipt> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+        [`${organizationId}:accepted-command:${input.commandKey}`],
+      );
+      const prior = await client.query<{
+        id: string;
+        request_hash: string;
+        status_code: number;
+        result_payload: unknown;
+      }>(
+        `SELECT id::text,request_hash,status_code,result_payload
+         FROM accepted_commands
+         WHERE organization_id=$1 AND command_key=$2 FOR UPDATE`,
+        [organizationId, input.commandKey],
+      );
+      if (prior.rows[0]) {
+        if (prior.rows[0].request_hash !== input.requestHash)
+          throw new DomainError(
+            "INVALID_STATE",
+            "Befehls-ID wurde bereits mit einem anderen Inhalt verwendet.",
+            409,
+          );
+        await client.query("COMMIT");
+        return {
+          id: prior.rows[0].id,
+          statusCode: prior.rows[0].status_code,
+          payload: structuredClone(prior.rows[0].result_payload),
+          replayed: true,
+        };
+      }
+      const authority = await client.query<{
+        binding: DurableIntentRecord;
+        proposal_revision_id: string;
+        proposal_hash: string;
+        review_items: unknown;
+        workflow_template_id: string;
+        workflow_version: number;
+      }>(
+        `SELECT a.binding,a.proposal_revision_id::text,a.proposal_hash,
+                p.review_items,s.workflow_template_id,s.workflow_version
+         FROM safety_authority a
+         JOIN assistant_proposal_revisions p
+           ON p.organization_id=a.organization_id AND p.id=a.proposal_revision_id
+         JOIN working_sessions s
+           ON s.organization_id=a.organization_id AND s.id=a.session_id
+         JOIN assistant_threads t
+           ON t.organization_id=a.organization_id AND t.id=a.thread_id
+         WHERE a.organization_id=$1 AND a.token_hash=$2
+           AND a.authority_type='intent' AND a.actor_id=$3
+           AND a.session_id=$4 AND a.thread_id=$5
+           AND a.context_revision=$6 AND a.patient_id=$7
+           AND a.binding->>'encounterId'=$8
+           AND a.consumed_at IS NULL AND a.expires_at > now()
+           AND p.status='pending' AND p.proposal_hash=a.proposal_hash
+           AND s.status='active' AND s.actor_id=$3
+           AND s.assistant_thread_id=$5
+           AND t.site_id=$9 AND t.department_id=$10
+           AND t.context_revision=$6 AND t.patient_id=$7
+           AND t.subject_encounter_id=$8
+         FOR UPDATE OF a,p,s,t`,
+        [
+          organizationId,
+          input.tokenHash,
+          input.actorId,
+          input.sessionId,
+          input.threadId,
+          input.contextRevision,
+          input.patientId,
+          input.encounterId,
+          siteConfiguration.siteId,
+          departmentId,
+        ],
+      );
+      const bound = authority.rows[0];
+      if (
+        !bound ||
+        bound.binding.actorId !== input.actorId ||
+        bound.binding.purpose !== input.purpose ||
+        bound.binding.patientId !== input.patientId ||
+        bound.binding.encounterId !== input.encounterId ||
+        bound.binding.resourceVersion !== input.resourceVersion
+      )
+        throw new DomainError(
+          "AUTH_DENIED",
+          "Assistenzaktion ist ungültig, abgelaufen oder bereits verwendet.",
+          403,
+        );
+      const reviewItems: unknown[] = Array.isArray(bound.review_items)
+        ? (bound.review_items as unknown[])
+        : [];
+      const reviewIds = new Set(
+        reviewItems.flatMap((item): string[] => {
+          if (!item || typeof item !== "object" || !("id" in item)) return [];
+          const id = (item as { id?: unknown }).id;
+          return typeof id === "string" ? [id] : [];
+        }),
+      );
+      if (input.selectedActionIds.some((id) => !reviewIds.has(id)))
+        throw new DomainError(
+          "AUTH_DENIED",
+          "Die bestätigte Auswahl gehört nicht zur geprüften Änderung.",
+          403,
+        );
+
+      const acceptedCommandId = randomUUID();
+      await client.query(
+        `INSERT INTO accepted_commands
+           (organization_id,id,command_key,request_hash,actor_id,actor_role,site_id,
+            department_id,purpose,patient_id,encounter_id,session_id,thread_id,
+            context_revision,workflow_template_id,workflow_version,policy_version,
+            proposal_revision_id,proposal_hash,selected_action_ids,source_read_set,
+            result_payload,status_code,state)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,
+                 $18,$19,$20,$21,$22,$23,'delivery-pending')`,
+        [
+          organizationId,
+          acceptedCommandId,
+          input.commandKey,
+          input.requestHash,
+          input.actorId,
+          input.actorRole,
+          siteConfiguration.siteId,
+          departmentId,
+          input.purpose,
+          input.patientId,
+          input.encounterId,
+          input.sessionId,
+          input.threadId,
+          input.contextRevision,
+          bound.workflow_template_id,
+          bound.workflow_version,
+          input.policyVersion,
+          bound.proposal_revision_id,
+          bound.proposal_hash,
+          JSON.stringify(input.selectedActionIds),
+          JSON.stringify(input.sourceReadSet),
+          JSON.stringify(input.resultPayload),
+          input.statusCode,
+        ],
+      );
+      await client.query(
+        `UPDATE safety_authority SET consumed_at=now()
+         WHERE organization_id=$1 AND token_hash=$2 AND consumed_at IS NULL`,
+        [organizationId, input.tokenHash],
+      );
+      await client.query(
+        `UPDATE assistant_proposal_revisions
+         SET status='consumed',consumed_at=now()
+         WHERE organization_id=$1 AND id=$2 AND status='pending'`,
+        [organizationId, bound.proposal_revision_id],
+      );
+      await client.query(
+        `INSERT INTO command_receipts
+           (organization_id,command_key,request_hash,status_code,result_ref,expires_at)
+         VALUES ($1,$2,$3,$4,$5,now()+interval '30 days')`,
+        [
+          organizationId,
+          input.commandKey,
+          input.requestHash,
+          input.statusCode,
+          JSON.stringify({
+            acceptedCommandId,
+            payload: input.resultPayload,
+          }),
+        ],
+      );
+      for (const entry of input.auditEntries)
+        await client.query(
+          `INSERT INTO audit_entries
+             (organization_id,actor_id,actor_role,action,outcome,patient_id,purpose,
+              detail,previous_hash,entry_hash,occurred_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+           ON CONFLICT (organization_id,entry_hash) DO NOTHING`,
+          [
+            organizationId,
+            entry.actorId,
+            entry.actorRole,
+            entry.action,
+            entry.outcome,
+            entry.patientId,
+            entry.purpose,
+            entry.detail,
+            entry.previousHash,
+            entry.hash,
+            entry.occurredAt,
+          ],
+        );
+      await client.query(
+        `INSERT INTO domain_events
+           (organization_id,aggregate_type,aggregate_id,event_type,audience,payload)
+         VALUES ($1,'accepted-command',$2,'CommandLocallyAccepted',$3,$4)`,
+        [
+          organizationId,
+          acceptedCommandId,
+          JSON.stringify({ actorIds: [input.actorId] }),
+          JSON.stringify({ acceptedCommandId }),
+        ],
+      );
+      const episodeEvidence = input.episodeEvidence?.trim().slice(0, 1200);
+      if (episodeEvidence)
+        await client.query(
+          `UPDATE work_episodes
+           SET draft_text=CASE
+                 WHEN position($6 in draft_text)>0 THEN draft_text
+                 WHEN draft_text='' THEN $6
+                 ELSE left(draft_text || E'\n' || $6,1200)
+               END,
+               row_version=row_version+1
+           WHERE organization_id=$1 AND actor_id=$2 AND session_id=$3
+             AND patient_id=$4 AND encounter_id=$5 AND state='active'`,
+          [
+            organizationId,
+            input.actorId,
+            input.sessionId,
+            input.patientId,
+            input.encounterId,
+            episodeEvidence,
+          ],
+        );
+      await client.query(
+        `INSERT INTO clinical_projection_outbox
+           (organization_id,id,accepted_command_id,idempotency_key,payload,state)
+         VALUES ($1,$2,$3,$4,$5,'pending')`,
+        [
+          organizationId,
+          randomUUID(),
+          acceptedCommandId,
+          `clinical:${acceptedCommandId}`,
+          JSON.stringify({
+            resources: input.clinicalResources,
+            removedReferences: input.removedReferences,
+            expectedVersions: input.clinicalExpectedVersions,
+            checkpoint: input.checkpoint,
+          }),
+        ],
+      );
+      const authorityEnvelope = {
+        acceptedCommandId,
+        organizationId,
+        siteId: siteConfiguration.siteId,
+        departmentId,
+        actorId: input.actorId,
+        actorRole: input.actorRole,
+        purpose: input.purpose,
+        patientId: input.patientId,
+        encounterId: input.encounterId,
+        sessionId: input.sessionId,
+        threadId: input.threadId,
+        contextRevision: input.contextRevision,
+        proposalRevisionId: bound.proposal_revision_id,
+        proposalHash: bound.proposal_hash,
+        policyVersion: input.policyVersion,
+        acceptedAt: new Date().toISOString(),
+      };
+      for (const pending of input.providerCommands) {
+        const payload = providerOutboxPayloadSchema.parse({
+          schemaVersion: 1,
+          command: pending.command,
+          retrySafety: pending.retrySafety,
+        });
+        const outboxId = randomUUID();
+        const inserted = await client.query(
+          `INSERT INTO provider_outbox
+             (organization_id,id,provider_id,profile_id,operation,idempotency_key,
+              payload,state,accepted_command_id,authority_envelope)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,'pending',$8,$9)
+           ON CONFLICT (organization_id,provider_id,profile_id,idempotency_key)
+           DO NOTHING RETURNING id`,
+          [
+            organizationId,
+            outboxId,
+            pending.provider,
+            pending.profile,
+            pending.command.operation,
+            pending.command.idempotencyKey,
+            payload,
+            acceptedCommandId,
+            authorityEnvelope,
+          ],
+        );
+        if (!inserted.rowCount) {
+          const existing = await client.query<{ payload: unknown }>(
+            `SELECT payload FROM provider_outbox
+             WHERE organization_id=$1 AND provider_id=$2 AND profile_id=$3
+               AND idempotency_key=$4`,
+            [
+              organizationId,
+              pending.provider,
+              pending.profile,
+              pending.command.idempotencyKey,
+            ],
+          );
+          if (
+            canonicalJson(existing.rows[0]?.payload) !== canonicalJson(payload)
+          )
+            throw new Error("IDEMPOTENCY_KEY_PAYLOAD_MISMATCH");
+        }
+      }
+      await client.query("COMMIT");
+      return {
+        id: acceptedCommandId,
+        statusCode: input.statusCode,
+        payload: structuredClone(input.resultPayload),
+        replayed: false,
+      };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+  async loadAcceptedCommandReceipt(
+    commandKey: string,
+    requestHash: string,
+  ): Promise<AcceptedCommandReceipt | null> {
+    const result = await this.pool.query<{
+      id: string;
+      request_hash: string;
+      status_code: number;
+      result_payload: unknown;
+    }>(
+      `SELECT id::text,request_hash,status_code,result_payload
+       FROM accepted_commands WHERE organization_id=$1 AND command_key=$2`,
+      [organizationId, commandKey],
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    if (row.request_hash !== requestHash)
+      throw new DomainError(
+        "INVALID_STATE",
+        "Befehls-ID wurde bereits mit einem anderen Inhalt verwendet.",
+        409,
+      );
+    return {
+      id: row.id,
+      statusCode: row.status_code,
+      payload: structuredClone(row.result_payload),
+      replayed: true,
+    };
+  }
+  async loadLatestAcceptedCheckpoint(): Promise<ServiceCheckpoint | null> {
+    const result = await this.pool.query<{
+      payload: { checkpoint?: unknown };
+    }>(
+      `SELECT c.payload
+       FROM clinical_projection_outbox c
+       JOIN accepted_commands a
+         ON a.organization_id=c.organization_id AND a.id=c.accepted_command_id
+       WHERE c.organization_id=$1
+       ORDER BY a.accepted_at DESC,a.id DESC LIMIT 1`,
+      [organizationId],
+    );
+    const checkpoint = result.rows[0]?.payload.checkpoint;
+    if (!checkpoint) return null;
+    return structuredClone(checkpoint) as ServiceCheckpoint;
+  }
+  async claimClinicalProjection(input: {
+    workerId: string;
+    leaseDurationMs: number;
+    now?: Date;
+  }): Promise<ClinicalProjectionJob | null> {
+    const now = input.now ?? new Date();
+    const leaseExpiresAt = new Date(now.getTime() + input.leaseDurationMs);
+    const result = await this.pool.query<{
+      id: string;
+      accepted_command_id: string;
+      idempotency_key: string;
+      payload: {
+        resources: Resource[];
+        removedReferences: string[];
+        expectedVersions: Record<string, string | null>;
+        checkpoint: ServiceCheckpoint;
+      };
+      attempts: number;
+    }>(
+      `WITH candidate AS (
+         SELECT organization_id,id FROM clinical_projection_outbox
+         WHERE organization_id=$1 AND (
+           (state IN ('pending','retry') AND next_attempt_at <= $2)
+           OR (state='leased' AND lease_expires_at <= $2)
+         )
+         ORDER BY next_attempt_at,id FOR UPDATE SKIP LOCKED LIMIT 1
+       )
+       UPDATE clinical_projection_outbox o
+       SET state='leased',attempts=o.attempts+1,lease_owner=$3,
+           lease_expires_at=$4,last_error_class=NULL
+       FROM candidate c
+       WHERE o.organization_id=c.organization_id AND o.id=c.id
+       RETURNING o.id::text,o.accepted_command_id::text,o.idempotency_key,
+                 o.payload,o.attempts`,
+      [organizationId, now, input.workerId, leaseExpiresAt],
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    const payload = row.payload;
+    const references = [
+      ...(Array.isArray(payload?.resources)
+        ? payload.resources.map(
+            (resource) => `${resource.resourceType}/${resource.id}`,
+          )
+        : []),
+      ...(Array.isArray(payload?.removedReferences)
+        ? payload.removedReferences
+        : []),
+    ];
+    const validPayload =
+      Array.isArray(payload?.resources) &&
+      Array.isArray(payload?.removedReferences) &&
+      payload.expectedVersions !== null &&
+      typeof payload.expectedVersions === "object" &&
+      payload.checkpoint?.formatVersion === 1 &&
+      references.every(
+        (reference) =>
+          Object.hasOwn(payload.expectedVersions, reference) &&
+          (payload.expectedVersions[reference] === null ||
+            typeof payload.expectedVersions[reference] === "string"),
+      );
+    if (!validPayload) {
+      await this.failClinicalProjection({
+        jobId: row.id,
+        workerId: input.workerId,
+        errorCode: "CLINICAL_OUTBOX_PAYLOAD_INVALID",
+        retryAt: null,
+      });
+      return null;
+    }
+    return {
+      id: row.id,
+      acceptedCommandId: row.accepted_command_id,
+      idempotencyKey: row.idempotency_key,
+      resources: structuredClone(payload.resources),
+      removedReferences: [...payload.removedReferences],
+      expectedVersions: structuredClone(payload.expectedVersions),
+      checkpoint: structuredClone(payload.checkpoint),
+      attempts: Number(row.attempts),
+    };
+  }
+  async finishClinicalProjection(input: {
+    jobId: string;
+    workerId: string;
+  }): Promise<void> {
+    const result = await this.pool.query(
+      `WITH projected AS (
+         UPDATE clinical_projection_outbox
+         SET state='delivered',lease_owner=NULL,lease_expires_at=NULL,
+             delivered_at=now(),last_error_class=NULL
+         WHERE organization_id=$1 AND id=$2 AND state='leased' AND lease_owner=$3
+         RETURNING accepted_command_id
+       )
+       UPDATE accepted_commands a SET state=CASE
+         WHEN a.state='manual-review' OR EXISTS (
+           SELECT 1 FROM clinical_projection_outbox c
+           WHERE c.organization_id=a.organization_id
+             AND c.accepted_command_id=a.id AND c.state='manual'
+         ) OR EXISTS (
+           SELECT 1 FROM provider_outbox p
+           WHERE p.organization_id=a.organization_id
+             AND p.accepted_command_id=a.id AND p.state='manual'
+         ) THEN 'manual-review'
+         WHEN EXISTS (
+           SELECT 1 FROM provider_outbox p
+           WHERE p.organization_id=a.organization_id
+             AND p.accepted_command_id=a.id AND p.state<>'delivered'
+         ) THEN 'delivery-pending' ELSE 'delivered' END
+       FROM projected
+       WHERE a.organization_id=$1 AND a.id=projected.accepted_command_id
+       RETURNING a.id`,
+      [organizationId, input.jobId, input.workerId],
+    );
+    if (!result.rowCount) throw new Error("CLINICAL_PROJECTION_LEASE_LOST");
+  }
+  async failClinicalProjection(input: {
+    jobId: string;
+    workerId: string;
+    errorCode: string;
+    retryAt: Date | null;
+  }): Promise<void> {
+    const result = await this.pool.query(
+      `WITH failed AS (
+         UPDATE clinical_projection_outbox
+         SET state=$4,next_attempt_at=COALESCE($5,next_attempt_at),
+             lease_owner=NULL,lease_expires_at=NULL,last_error_class=$6
+         WHERE organization_id=$1 AND id=$2 AND state='leased' AND lease_owner=$3
+         RETURNING accepted_command_id
+       ), marked AS (
+         UPDATE accepted_commands a SET state='manual-review'
+         FROM failed
+         WHERE $4='manual' AND a.organization_id=$1
+           AND a.id=failed.accepted_command_id
+         RETURNING a.id
+       )
+       SELECT accepted_command_id FROM failed`,
+      [
+        organizationId,
+        input.jobId,
+        input.workerId,
+        input.retryAt ? "retry" : "manual",
+        input.retryAt,
+        input.errorCode,
+      ],
+    );
+    if (result.rowCount !== 1)
+      throw new Error("CLINICAL_PROJECTION_LEASE_LOST");
+  }
+  async providerDeliveryState(
+    patientIds: readonly string[],
+  ): Promise<"pending" | "simulated-acknowledged" | "external-gated"> {
+    if (patientIds.length === 0) return "external-gated";
+    const references = patientIds.map((id) => `Patient/${id}`);
+    const result = await this.pool.query<{ state: string; count: number }>(
+      `SELECT state,count(*)::int count FROM provider_outbox
+       WHERE organization_id=$1
+         AND payload->'command'->>'patientReference'=ANY($2::text[])
+       GROUP BY state`,
+      [organizationId, references],
+    );
+    if (result.rows.length === 0) return "external-gated";
+    if (
+      result.rows.some((row) =>
+        ["pending", "leased", "retry", "manual"].includes(row.state),
+      )
+    )
+      return "pending";
+    return result.rows.every((row) => row.state === "delivered")
+      ? "simulated-acknowledged"
+      : "external-gated";
+  }
+  async deliveryDiagnostics(): Promise<DeliveryDiagnostics> {
+    const result = await this.pool.query<{
+      queue: "accepted" | "clinical" | "provider";
+      state: string;
+      count: number;
+    }>(
+      `SELECT 'accepted' queue,state,count(*)::int count
+       FROM accepted_commands WHERE organization_id=$1 GROUP BY state
+       UNION ALL
+       SELECT 'clinical' queue,state,count(*)::int count
+       FROM clinical_projection_outbox WHERE organization_id=$1 GROUP BY state
+       UNION ALL
+       SELECT 'provider' queue,state,count(*)::int count
+       FROM provider_outbox WHERE organization_id=$1 GROUP BY state`,
+      [organizationId],
+    );
+    const diagnostics: DeliveryDiagnostics = {
+      acceptedCommands: {},
+      clinicalProjections: {},
+      providerDeliveries: {},
+    };
+    for (const row of result.rows) {
+      const target =
+        row.queue === "accepted"
+          ? diagnostics.acceptedCommands
+          : row.queue === "clinical"
+            ? diagnostics.clinicalProjections
+            : diagnostics.providerDeliveries;
+      target[row.state] = Number(row.count);
+    }
+    return diagnostics;
+  }
   async releaseIntentAuthority(tokenHash: string): Promise<void> {
     await this.pool.query(
       `WITH released AS (
@@ -2816,11 +3646,21 @@ export class PostgresOperationalStore
         attempts: number;
         prior_state: string;
         latest_receipt_id: string | null;
+        accepted_command_id: string | null;
+        authority_envelope: Record<string, unknown> | null;
       }>(
         `WITH candidates AS (
            SELECT organization_id,id,state AS prior_state
            FROM provider_outbox
            WHERE organization_id=$1 AND profile_id=$2
+             AND (
+               accepted_command_id IS NULL OR EXISTS (
+                 SELECT 1 FROM clinical_projection_outbox clinical
+                 WHERE clinical.organization_id=provider_outbox.organization_id
+                   AND clinical.accepted_command_id=provider_outbox.accepted_command_id
+                   AND clinical.state='delivered'
+               )
+             )
              AND (
                (state IN ('pending','retry') AND next_attempt_at <= $3)
                OR (state='leased' AND lease_expires_at <= $3)
@@ -2838,7 +3678,8 @@ export class PostgresOperationalStore
          )
          SELECT c.id::text,c.provider_id,c.profile_id,c.operation,
                 c.idempotency_key,c.payload,c.attempts,c.prior_state,
-                receipt.external_reference AS latest_receipt_id
+                receipt.external_reference AS latest_receipt_id,
+                c.accepted_command_id::text,c.authority_envelope
          FROM claimed c
          LEFT JOIN LATERAL (
            SELECT external_reference
@@ -2869,6 +3710,12 @@ export class PostgresOperationalStore
                AND lease_owner=$3`,
             [organizationId, row.id, workerId],
           );
+          if (row.accepted_command_id)
+            await client.query(
+              `UPDATE accepted_commands SET state='manual-review'
+               WHERE organization_id=$1 AND id=$2`,
+              [organizationId, row.accepted_command_id],
+            );
           await client.query(
             `INSERT INTO domain_events
                (organization_id,aggregate_type,aggregate_id,event_type,audience,payload)
@@ -2892,6 +3739,8 @@ export class PostgresOperationalStore
           attempts: Number(row.attempts),
           recoveredExpiredLease: row.prior_state === "leased",
           latestReceiptId: row.latest_receipt_id,
+          acceptedCommandId: row.accepted_command_id,
+          authorityEnvelope: row.authority_envelope,
         });
       }
       await client.query("COMMIT");
@@ -2927,12 +3776,13 @@ export class PostgresOperationalStore
       const updated = await client.query<{
         provider_id: string;
         idempotency_key: string;
+        accepted_command_id: string | null;
       }>(
         `UPDATE provider_outbox
          SET state=$4,next_attempt_at=$5,lease_owner=NULL,lease_expires_at=NULL,
              last_error_class=$6
          WHERE organization_id=$1 AND id=$2 AND state='leased' AND lease_owner=$3
-         RETURNING provider_id,idempotency_key`,
+         RETURNING provider_id,idempotency_key,accepted_command_id::text`,
         [
           organizationId,
           input.jobId,
@@ -2983,6 +3833,30 @@ export class PostgresOperationalStore
           },
         ],
       );
+      if (updated.rows[0].accepted_command_id)
+        await client.query(
+          `UPDATE accepted_commands a SET state=CASE
+             WHEN a.state='manual-review' OR EXISTS (
+               SELECT 1 FROM clinical_projection_outbox c
+               WHERE c.organization_id=a.organization_id
+                 AND c.accepted_command_id=a.id AND c.state='manual'
+             ) OR EXISTS (
+               SELECT 1 FROM provider_outbox p
+               WHERE p.organization_id=a.organization_id
+                 AND p.accepted_command_id=a.id AND p.state='manual'
+             ) THEN 'manual-review'
+             WHEN EXISTS (
+               SELECT 1 FROM clinical_projection_outbox c
+               WHERE c.organization_id=a.organization_id
+                 AND c.accepted_command_id=a.id AND c.state<>'delivered'
+             ) OR EXISTS (
+               SELECT 1 FROM provider_outbox p
+               WHERE p.organization_id=a.organization_id
+                 AND p.accepted_command_id=a.id AND p.state<>'delivered'
+             ) THEN 'delivery-pending' ELSE 'delivered' END
+           WHERE a.organization_id=$1 AND a.id=$2`,
+          [organizationId, updated.rows[0].accepted_command_id],
+        );
       await client.query("COMMIT");
     } catch (error) {
       await client.query("ROLLBACK");
@@ -2999,21 +3873,38 @@ export class PostgresOperationalStore
     retryAt: Date | null;
   }): Promise<void> {
     const state = input.retryAt ? "retry" : "manual";
-    const result = await this.pool.query(
-      `UPDATE provider_outbox
-       SET state=$4,next_attempt_at=COALESCE($5,next_attempt_at),
-           lease_owner=NULL,lease_expires_at=NULL,last_error_class=$6
-       WHERE organization_id=$1 AND id=$2 AND state='leased' AND lease_owner=$3`,
-      [
-        organizationId,
-        input.jobId,
-        input.workerId,
-        state,
-        input.retryAt,
-        `${input.errorClassification}:${input.errorCode}`,
-      ],
-    );
-    if (result.rowCount !== 1) throw new Error("PROVIDER_OUTBOX_LEASE_LOST");
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const result = await client.query<{ accepted_command_id: string | null }>(
+        `UPDATE provider_outbox
+         SET state=$4,next_attempt_at=COALESCE($5,next_attempt_at),
+             lease_owner=NULL,lease_expires_at=NULL,last_error_class=$6
+         WHERE organization_id=$1 AND id=$2 AND state='leased' AND lease_owner=$3
+         RETURNING accepted_command_id::text`,
+        [
+          organizationId,
+          input.jobId,
+          input.workerId,
+          state,
+          input.retryAt,
+          `${input.errorClassification}:${input.errorCode}`,
+        ],
+      );
+      if (!result.rows[0]) throw new Error("PROVIDER_OUTBOX_LEASE_LOST");
+      if (state === "manual" && result.rows[0].accepted_command_id)
+        await client.query(
+          `UPDATE accepted_commands SET state='manual-review'
+           WHERE organization_id=$1 AND id=$2`,
+          [organizationId, result.rows[0].accepted_command_id],
+        );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
   async health(): Promise<boolean> {
     try {
@@ -3027,6 +3918,26 @@ export class PostgresOperationalStore
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      await client.query(
+        `DELETE FROM provider_receipts WHERE organization_id=$1`,
+        [organizationId],
+      );
+      await client.query(
+        `DELETE FROM provider_outbox WHERE organization_id=$1`,
+        [organizationId],
+      );
+      await client.query(
+        `DELETE FROM clinical_projection_outbox WHERE organization_id=$1`,
+        [organizationId],
+      );
+      await client.query(
+        `DELETE FROM accepted_commands WHERE organization_id=$1`,
+        [organizationId],
+      );
+      await client.query(
+        `DELETE FROM command_receipts WHERE organization_id=$1`,
+        [organizationId],
+      );
       await client.query(
         `DELETE FROM safety_authority WHERE organization_id=$1`,
         [organizationId],

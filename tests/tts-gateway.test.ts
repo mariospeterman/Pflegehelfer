@@ -83,4 +83,26 @@ describe("TTS privacy and acceptance boundary", () => {
     ).rejects.toMatchObject({ code: "AUTH_DENIED" });
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it("stops hosted speech before transport when its demo budget is exhausted", async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(new Response(new Uint8Array([1, 2, 3]))),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const gateway = new TtsGateway({
+      PFH_TTS_MODE: "hosted-test",
+      PFH_DEMO_MODE: "true",
+      PFH_LLM_DATA_CLASSIFICATION: "synthetic-only",
+      PFH_ALLOW_EXTERNAL_AI: "true",
+      OPENAI_API_KEY: "x",
+      PFH_HOSTED_TTS_MAX_CALLS_PER_HOUR: "1",
+    });
+    await expect(
+      gateway.synthesize("Synthetischer Test.", "synthetic-demo"),
+    ).resolves.toMatchObject({ audioRetained: false });
+    await expect(
+      gateway.synthesize("Noch ein Test.", "synthetic-demo"),
+    ).rejects.toMatchObject({ statusCode: 429 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
 });

@@ -149,7 +149,27 @@ export async function runMigrations(
 
     for (const migration of migrations) {
       if (appliedBefore.has(migration.version)) continue;
-      await client.query(migration.sql);
+      const ownsTransaction = /^\s*BEGIN\s*;/i.test(migration.sql);
+      if (ownsTransaction) {
+        await client.query(migration.sql);
+      } else {
+        await client.query("BEGIN");
+        try {
+          await client.query(migration.sql);
+          if (!(await tableExists(client, "public.pfh_migration_history")))
+            throw new Error("MIGRATION_HISTORY_NOT_INITIALIZED");
+          await client.query(
+            `INSERT INTO pfh_migration_history
+               (version,name,checksum,provenance)
+             VALUES ($1,$2,$3,'verified-current-run')`,
+            [migration.version, migration.name, migration.checksum],
+          );
+          await client.query("COMMIT");
+        } catch (error) {
+          await client.query("ROLLBACK");
+          throw error;
+        }
+      }
       appliedThisRun.add(migration.version);
     }
 

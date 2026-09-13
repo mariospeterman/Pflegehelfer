@@ -24,14 +24,18 @@ import {
 import { isDomainError, PflegehelferService } from "../core/service.js";
 import { emptyWorkflowState } from "../core/service.js";
 import { siteConfiguration } from "../core/site-config.js";
+import { decide, type Action } from "../core/policy.js";
 import { runtimeSitePack } from "../core/runtime-instructions.js";
 import { InMemoryReferenceStatePort } from "../core/clinical-data-port.js";
-import { DomainError } from "../core/types.js";
+import { DomainError, type Purpose } from "../core/types.js";
 import {
   createProductionProviderRegistry,
   createSyntheticProviderRegistry,
+  ProviderDeliveryWorker,
   providerIntegrationRoutes,
+  type ProviderDeliveryStore,
 } from "../core/provider-integration/index.js";
+import { ClinicalProjectionWorker } from "../core/clinical-projection-worker.js";
 import {
   InMemoryClinicalWorkspace,
   type ClinicalWorkspace,
@@ -42,6 +46,7 @@ import {
   type OperationalStore,
 } from "../infrastructure/operational-store.js";
 import type { WorkdayCommand } from "../core/workday.js";
+import type { RuntimeProfileConfiguration } from "./runtime-profile.js";
 
 const roleSchema = z.enum([
   "care-assistant",
@@ -230,11 +235,24 @@ export function buildApp(
     workspace?: ClinicalWorkspace;
     operationalStore?: OperationalStore;
     modelGateway?: ModelGateway;
+    runtime?: RuntimeProfileConfiguration;
     loggerStream?: Writable;
     loggerLevel?: string;
   } = {},
 ): FastifyInstance {
   const demoMode = options.demoMode ?? process.env.PFH_DEMO_MODE === "true";
+  const workspace = options.workspace ?? new InMemoryClinicalWorkspace();
+  const operationalStore =
+    options.operationalStore ?? new InMemoryOperationalStore();
+  const runtime =
+    options.runtime ??
+    ({
+      profile: demoMode ? "memory-demo" : "production",
+      demoMode,
+      storageMode: workspace.mode,
+      persistenceMode: operationalStore.mode,
+      providerMode: demoMode ? "in-process-simulator" : "production",
+    } satisfies RuntimeProfileConfiguration);
   const service =
     providedService ??
     new PflegehelferService(
@@ -246,9 +264,6 @@ export function buildApp(
         : createProductionProviderRegistry(),
       demoMode ? "synthetic-simulator" : "production",
     );
-  const workspace = options.workspace ?? new InMemoryClinicalWorkspace();
-  const operationalStore =
-    options.operationalStore ?? new InMemoryOperationalStore();
   const models = options.modelGateway ?? new ModelGateway();
   const asr = new AsrGateway();
   const tts = new TtsGateway();
@@ -259,7 +274,10 @@ export function buildApp(
     service.providerProfile === "synthetic-simulator"
       ? ("synthetic-demo" as const)
       : ("institution-local" as const);
-  const assistantWorkingContext = async (actorId: string) => {
+  const assistantWorkingContext = async (
+    actorId: string,
+    previousCarePlan: string | null = null,
+  ) => {
     const actor = service.user(actorId);
     const configuredWorkflowId =
       siteConfiguration.roleProfiles[actor.role]?.workflowId ?? null;
@@ -316,6 +334,7 @@ export function buildApp(
       resumableEpisodePatientId: workday?.resumableEpisode?.patientId ?? null,
       recentPrompts,
       recentConversation,
+      previousCarePlan,
       organizationLabel: siteConfiguration.displayName,
       actorRole: actor.role,
       dataClass: effectiveDataClass(),
@@ -639,6 +658,14 @@ export function buildApp(
     if (typeof value !== "string" || value.length > 80) return "u-assistant";
     return value;
   };
+  const requireMigratedClinicalMutation = (): void => {
+    if (runtime.profile === "integrated-demo")
+      throw new DomainError(
+        "INVALID_STATE",
+        "Diese Detailaktion ist im integrierten Profil nur über die geprüfte Assistenzfreigabe verfügbar.",
+        409,
+      );
+  };
   const persistReadAudit = <T>(operation: () => T): Promise<T> => {
     const pending = persistenceQueue.then(async () => {
       const beforeAuditLength = service.audit.length;
@@ -698,6 +725,16 @@ export function buildApp(
     await pending;
     return result;
   };
+  const runSerializedMutation = <T>(
+    operation: () => Promise<T>,
+  ): Promise<T> => {
+    const pending = persistenceQueue.then(operation);
+    persistenceQueue = pending.then(
+      () => undefined,
+      () => undefined,
+    );
+    return pending;
+  };
   const app = Fastify({
     logger: {
       level:
@@ -741,42 +778,134 @@ export function buildApp(
   void app.register(fastifyMultipart, {
     limits: { files: 1, fields: 0, fileSize: 8 * 1024 * 1024 },
   });
-  if (demoMode) {
+  {
     const configuredInterval = Number(
       process.env.PFH_ESCALATION_INTERVAL_MS ?? "5000",
     );
     const intervalMs = Number.isFinite(configuredInterval)
       ? Math.max(1000, configuredInterval)
       : 5000;
-    const escalationTimer = setInterval(() => {
-      void persist(
-        () => {
-          const now = new Date().toISOString();
-          service.runScheduledEscalations(now);
-        },
-        undefined,
-        200,
-        true,
-      ).catch((error: unknown) => {
-        app.log.error(
-          {
-            errorType:
-              error instanceof Error ? error.constructor.name : "UnknownError",
-          },
-          "deterministic deadline sweep failed",
-        );
-      });
-    }, intervalMs);
-    escalationTimer.unref();
+    const escalationTimer = demoMode
+      ? setInterval(() => {
+          void persist(
+            () => {
+              const now = new Date().toISOString();
+              service.runScheduledEscalations(now);
+            },
+            undefined,
+            200,
+            true,
+          ).catch((error: unknown) => {
+            app.log.error(
+              {
+                errorType:
+                  error instanceof Error
+                    ? error.constructor.name
+                    : "UnknownError",
+              },
+              "deterministic deadline sweep failed",
+            );
+          });
+        }, intervalMs)
+      : null;
+    escalationTimer?.unref();
     let providerWorkerRunning = false;
     const providerWorkerInterval = Math.max(
       1000,
       Number(process.env.PFH_PROVIDER_WORKER_INTERVAL_MS ?? "2000"),
     );
+    const relationalProviderWorker =
+      runtime.profile !== "memory-demo"
+        ? new ProviderDeliveryWorker(
+            operationalStore as OperationalStore & ProviderDeliveryStore,
+            service.providerRegistry,
+            {
+              workerId: `api-provider-${process.pid}`,
+              profile: service.providerProfile,
+              authorizeDelivery: (job) => {
+                const envelope = job.authorityEnvelope;
+                if (
+                  !job.acceptedCommandId ||
+                  !envelope ||
+                  envelope.acceptedCommandId !== job.acceptedCommandId ||
+                  envelope.organizationId !== siteConfiguration.institutionId ||
+                  envelope.siteId !== siteConfiguration.siteId ||
+                  envelope.departmentId !== siteConfiguration.department.id ||
+                  envelope.patientId !==
+                    job.payload.command.patientReference.slice(
+                      "Patient/".length,
+                    ) ||
+                  envelope.encounterId !==
+                    job.payload.command.encounterReference.slice(
+                      "Encounter/".length,
+                    )
+                )
+                  return {
+                    allowed: false,
+                    reason: "acceptance-envelope-invalid",
+                  };
+                try {
+                  const currentActor = service.user(String(envelope.actorId));
+                  if (currentActor.role !== envelope.actorRole)
+                    return { allowed: false, reason: "actor-role-revoked" };
+                  if (envelope.policyVersion !== runtimeSitePack.packDigest)
+                    return { allowed: false, reason: "policy-version-revoked" };
+                  const patient = service
+                    .snapshot(
+                      currentActor.id,
+                      String(envelope.purpose) as Purpose,
+                    )
+                    .patients.find(
+                      (candidate) => candidate.id === envelope.patientId,
+                    );
+                  if (!patient)
+                    return {
+                      allowed: false,
+                      reason: "care-relationship-revoked",
+                    };
+                  const actionByOperation: Record<string, Action> = {
+                    "Observation.write": "observation:approve",
+                    "NursingNote.write": "note:approve",
+                    "Task.write": "task:update",
+                    "Communication.write": "communication:create",
+                  };
+                  const action = actionByOperation[job.operation];
+                  if (
+                    !action ||
+                    !decide(
+                      currentActor,
+                      action,
+                      String(envelope.purpose) as Purpose,
+                      patient,
+                    ).allow
+                  )
+                    return { allowed: false, reason: "permission-revoked" };
+                } catch {
+                  return { allowed: false, reason: "actor-revoked" };
+                }
+                return { allowed: true };
+              },
+            },
+          )
+        : null;
+    const clinicalProjectionWorker =
+      runtime.profile !== "memory-demo"
+        ? new ClinicalProjectionWorker(operationalStore, workspace, {
+            workerId: `api-medplum-${process.pid}`,
+          })
+        : null;
     const providerWorkerTimer = setInterval(() => {
-      if (providerWorkerRunning || !service.hasPendingProviderWork()) return;
+      if (providerWorkerRunning) return;
       providerWorkerRunning = true;
-      void persist(() => service.flushOutbox("u-it"), undefined, 200, true)
+      const work = relationalProviderWorker
+        ? Promise.all([
+            clinicalProjectionWorker!.runOnce(),
+            relationalProviderWorker.runOnce(),
+          ])
+        : service.hasPendingProviderWork()
+          ? persist(() => service.flushOutbox("u-it"), undefined, 200, true)
+          : Promise.resolve();
+      void work
         .catch((error: unknown) => {
           app.log.error(
             {
@@ -785,7 +914,7 @@ export function buildApp(
                   ? error.constructor.name
                   : "UnknownError",
             },
-            "provider worker sweep failed",
+            "delivery worker sweep failed",
           );
         })
         .finally(() => {
@@ -794,7 +923,7 @@ export function buildApp(
     }, providerWorkerInterval);
     providerWorkerTimer.unref();
     app.addHook("onClose", (_instance, done) => {
-      clearInterval(escalationTimer);
+      if (escalationTimer) clearInterval(escalationTimer);
       clearInterval(providerWorkerTimer);
       done();
     });
@@ -860,6 +989,9 @@ export function buildApp(
     request.log.error(
       {
         errorType: error instanceof Error ? error.name : typeof error,
+        ...(demoMode && error instanceof Error
+          ? { syntheticDemoError: error.message.slice(0, 240) }
+          : {}),
         requestId: request.id,
       },
       "unhandled request error",
@@ -886,8 +1018,9 @@ export function buildApp(
         "Mutierende Aufrufe benötigen eine eindeutige Befehls-ID.",
         400,
       );
-    const actor = request.headers["x-demo-user"] ?? "production-identity";
-    const key = `${String(actor)}:${request.method}:${request.url}:${commandId}`;
+    const actorId = userId(request);
+    service.user(actorId);
+    const key = `${actorId}:${request.method}:${route}:${commandId}`;
     const requestHash = createHash("sha256")
       .update(JSON.stringify(request.body ?? null))
       .digest("hex");
@@ -905,6 +1038,11 @@ export function buildApp(
         .code(cached.statusCode)
         .type("application/json; charset=utf-8")
         .send(cached.payload);
+    const accepted = await operationalStore.loadAcceptedCommandReceipt(
+      key,
+      requestHash,
+    );
+    if (accepted) return reply.code(accepted.statusCode).send(accepted.payload);
     requestCommandKeys.set(request, { key, requestHash });
   });
 
@@ -916,41 +1054,120 @@ export function buildApp(
   app.get("/ready", async (_request, reply) => {
     await Promise.all([persistenceQueue, assistantAuditQueue]);
     const auditValid = service.audit.verify();
-    const [workspaceStatus, operationalReady] = await Promise.all([
+    const [workspaceStatus, operationalReady, providers] = await Promise.all([
       workspace.status(),
       operationalStore.health(),
+      service.providerRegistry.status(service.providerProfile),
     ]);
+    const actualProfileMatches =
+      workspace.mode === runtime.storageMode &&
+      operationalStore.mode === runtime.persistenceMode;
+    if (!actualProfileMatches)
+      return reply.code(503).send({
+        status: "not-ready",
+        reason: "runtime-profile-mismatch",
+        profile: runtime.profile,
+      });
     if (!demoMode)
       return reply.code(503).send({
         status: "not-ready",
         reason: "production-identity-adapter-not-configured",
-        aiRequired: false,
-        providersRequired: false,
         auditValid,
       });
     if (!workspaceStatus.ready)
       return reply.code(503).send({
         status: "not-ready",
         reason: "clinical-workspace-unavailable",
-        aiRequired: false,
-        providersRequired: false,
         auditValid,
-        workspace: workspaceStatus,
       });
     if (!operationalReady)
       return reply.code(503).send({
         status: "not-ready",
         reason: "operational-store-unavailable",
-        aiRequired: false,
-        providersRequired: false,
+        auditValid,
+      });
+    if (
+      runtime.profile === "integrated-demo" &&
+      (providers.length === 0 ||
+        providers.some(
+          (provider) =>
+            provider.operationalStatus !== "SIMULATED" ||
+            provider.health?.status !== "available",
+        ))
+    )
+      return reply.code(503).send({
+        status: "not-ready",
+        reason: "provider-simulator-unavailable",
+        auditValid,
+      });
+    if (!auditValid)
+      return reply.code(503).send({
+        status: "not-ready",
+        reason: "audit-chain-invalid",
         auditValid,
       });
     return {
-      status: auditValid ? "ready" : "not-ready",
-      aiRequired: false,
-      providersRequired: false,
+      status: "ready",
+      profile: runtime.profile,
+      durability:
+        runtime.profile === "memory-demo" ? "memory-only" : "persistent",
       auditValid,
-      workspace: workspaceStatus,
+    };
+  });
+
+  app.get("/api/v1/diagnostics", async (request) => {
+    await Promise.all([persistenceQueue, assistantAuditQueue]);
+    const actor = service.user(userId(request));
+    if (!["it", "quality-safety"].includes(actor.role))
+      throw new DomainError(
+        "AUTH_DENIED",
+        "Komponentendiagnostik ist nur für IT oder Qualität freigegeben.",
+        403,
+      );
+    const [medplum, postgresqlReady, providers, llm, delivery] =
+      await Promise.all([
+        workspace.status(),
+        operationalStore.health(),
+        service.providerRegistry.status(service.providerProfile),
+        models.status(),
+        operationalStore.deliveryDiagnostics(),
+      ]);
+    return {
+      profile: runtime.profile,
+      profileMatchesRuntime:
+        workspace.mode === runtime.storageMode &&
+        operationalStore.mode === runtime.persistenceMode,
+      components: {
+        postgresql: {
+          mode: operationalStore.mode,
+          ready: postgresqlReady,
+        },
+        medplum,
+        providerWorker: {
+          mode:
+            runtime.profile === "integrated-demo"
+              ? "relational-leased"
+              : "memory-demo-checkpoint",
+          ready:
+            runtime.profile === "integrated-demo"
+              ? postgresqlReady && medplum.ready
+              : runtime.profile === "memory-demo",
+          message:
+            runtime.profile === "integrated-demo"
+              ? "Atomare lokale Annahme mit getrennten Medplum- und Provider-Leases."
+              : "Expliziter Memory-Demo-Pfad; keine persistente Zustellung.",
+          queues: delivery,
+        },
+        providers: providers.map((provider) => ({
+          provider: provider.provider,
+          profile: provider.profile,
+          status: provider.operationalStatus,
+          health: provider.health?.status ?? null,
+        })),
+        model: llm,
+        asr: asr.status(),
+        tts: tts.status(),
+      },
     };
   });
 
@@ -1307,9 +1524,15 @@ export function buildApp(
         403,
       );
     const workday = await boundClinicalWorkday(actorId);
+    const providerState =
+      runtime.profile === "integrated-demo"
+        ? await operationalStore.providerDeliveryState(
+            workday.handover.patientIds,
+          )
+        : service.providerSyncState(workday.handover.patientIds);
     return {
       ...workday,
-      providerState: service.providerSyncState(workday.handover.patientIds),
+      providerState,
     };
   });
 
@@ -1521,7 +1744,12 @@ export function buildApp(
         publishInvalidation();
         return {
           ...result,
-          providerState: service.providerSyncState(result.handover.patientIds),
+          providerState:
+            runtime.profile === "integrated-demo"
+              ? await operationalStore.providerDeliveryState(
+                  result.handover.patientIds,
+                )
+              : service.providerSyncState(result.handover.patientIds),
         };
       } catch (error) {
         throw new DomainError(
@@ -1718,15 +1946,10 @@ export function buildApp(
     };
     const abortInference = () => void revokeAfterDisconnect();
     const finishResponse = () => {
-      if (
-        request.raw.aborted ||
-        request.raw.destroyed ||
-        reply.raw.destroyed ||
-        reply.raw.socket?.destroyed === true
-      ) {
-        void revokeAfterDisconnect();
-        return;
-      }
+      // Node's `finish` event is the positive proof that the response was
+      // handed to the transport. A short-lived client may already have a
+      // destroyed socket at this point; treating that as an abort revokes a
+      // valid review immediately after a normal HTTP response.
       completed = true;
       request.raw.removeListener("aborted", abortInference);
       reply.raw.removeListener("close", abortInference);
@@ -1756,13 +1979,25 @@ export function buildApp(
       body,
       session,
     );
+    const previousCarePlan =
+      session.patientId && session.encounterId
+        ? await operationalStore.loadPendingCarePlan(
+            actorId,
+            session.patientId,
+            session.encounterId,
+            session.threadId,
+          )
+        : null;
     assistant.revokeActorIntents(actorId);
     await operationalStore.revokeActorAuthorities(actorId);
     session = await operationalStore.advanceAssistantRevision(
       actorId,
       actor.role,
     );
-    const workingContext = await assistantWorkingContext(actorId);
+    const workingContext = await assistantWorkingContext(
+      actorId,
+      previousCarePlan,
+    );
     const response = await runAssistantQuery(() =>
       assistant.query(userId(request), {
         prompt: body.prompt,
@@ -1841,15 +2076,6 @@ export function buildApp(
     };
     const abortInference = () => void revokeAfterDisconnect();
     const finishResponse = () => {
-      if (
-        request.raw.aborted ||
-        request.raw.destroyed ||
-        reply.raw.destroyed ||
-        reply.raw.socket?.destroyed === true
-      ) {
-        void revokeAfterDisconnect();
-        return;
-      }
       completed = true;
       request.raw.removeListener("aborted", abortInference);
       reply.raw.removeListener("close", abortInference);
@@ -1880,13 +2106,25 @@ export function buildApp(
       session,
     );
 
+    const previousCarePlan =
+      session.patientId && session.encounterId
+        ? await operationalStore.loadPendingCarePlan(
+            actorId,
+            session.patientId,
+            session.encounterId,
+            session.threadId,
+          )
+        : null;
     assistant.revokeActorIntents(actorId);
     await operationalStore.revokeActorAuthorities(actorId);
     session = await operationalStore.advanceAssistantRevision(
       actorId,
       actor.role,
     );
-    const workingContext = await assistantWorkingContext(actorId);
+    const workingContext = await assistantWorkingContext(
+      actorId,
+      previousCarePlan,
+    );
     const response = await runAssistantQuery(() =>
       assistant.query(actorId, {
         prompt: body.prompt,
@@ -2016,7 +2254,10 @@ export function buildApp(
         "Assistenzaktion ist ungültig, abgelaufen oder bereits verwendet.",
         403,
       );
-    if (!(await operationalStore.consumeIntentAuthority(tokenHash)))
+    if (
+      runtime.profile !== "integrated-demo" &&
+      !(await operationalStore.consumeIntentAuthority(tokenHash))
+    )
       throw new DomainError(
         "AUTH_DENIED",
         "Assistenzaktion wurde bereits verwendet.",
@@ -2024,101 +2265,237 @@ export function buildApp(
       );
     assistant.restoreDurableIntent(token, durableIntent);
     let executedResult: unknown;
-    try {
-      executedResult = await persist(async () => {
-        const result = assistant.executeIntent(actorId, token, {
-          patientId: execution.patientId,
-          encounterId: execution.encounterId,
-          purpose: execution.purpose,
-          resourceVersion: execution.resourceVersion,
-          explicitlyConfirmed: execution.explicitlyConfirmed,
-          ...(execution.reviewedActionIds
-            ? { reviewedActionIds: execution.reviewedActionIds }
-            : {}),
-        });
-        if (
-          !result ||
-          typeof result !== "object" ||
-          !("workflowActions" in result)
-        )
-          return result;
-        const workflowActions = (
-          result as {
-            workflowActions: Array<{
-              operation: "pause-current-and-start-room";
-              targetRoom: string;
-              reason: string;
-            }>;
-          }
-        ).workflowActions;
-        const workflowAction = workflowActions[0];
-        if (
-          workflowActions.length !== 1 ||
-          !workflowAction ||
-          workflowAction.operation !== "pause-current-and-start-room"
-        )
-          throw new DomainError(
-            "VALIDATION",
-            "Der Ablaufwechsel ist nicht eindeutig.",
-            400,
-          );
-        const workday = await operationalStore.getWorkday(actorId, actor.role);
-        const active = workday.activeEpisode;
-        if (
-          !active ||
-          active.patientId !== execution.patientId ||
-          active.encounterId !== execution.encounterId
-        )
-          throw new DomainError(
-            "VERSION_CONFLICT",
-            "Die aktive Arbeit hat sich geändert. Bitte den Wechsel neu formulieren.",
-            409,
-          );
-        const target = service
-          .snapshot(actorId, execution.purpose)
-          .patients.find(
-            (patient) => patient.room === workflowAction.targetRoom,
-          );
-        if (!target || target.id === active.patientId)
-          throw new DomainError(
-            "VALIDATION",
-            `Zimmer ${workflowAction.targetRoom} ist im freigegebenen Arbeitskontext nicht eindeutig verfügbar.`,
-            400,
-          );
-        const next = await operationalStore.applyWorkdayCommand(
-          actorId,
-          actor.role,
-          {
-            type: "interrupt-and-start",
-            episodeId: active.id,
-            patientId: target.id,
-            encounterId: target.encounterId,
-            title: `Spontaner Besuch · Zimmer ${target.room}`,
-          },
+    const executeAuthorizedIntent = async () => {
+      const result = assistant.executeIntent(actorId, token, {
+        patientId: execution.patientId,
+        encounterId: execution.encounterId,
+        purpose: execution.purpose,
+        resourceVersion: execution.resourceVersion,
+        explicitlyConfirmed: execution.explicitlyConfirmed,
+        ...(execution.reviewedActionIds
+          ? { reviewedActionIds: execution.reviewedActionIds }
+          : {}),
+      });
+      if (
+        !result ||
+        typeof result !== "object" ||
+        !("workflowActions" in result)
+      )
+        return result;
+      const workflowActions = (
+        result as {
+          workflowActions: Array<{
+            operation: "pause-current-and-start-room";
+            targetRoom: string;
+            reason: string;
+          }>;
+        }
+      ).workflowActions;
+      const workflowAction = workflowActions[0];
+      if (
+        workflowActions.length !== 1 ||
+        !workflowAction ||
+        workflowAction.operation !== "pause-current-and-start-room"
+      )
+        throw new DomainError(
+          "VALIDATION",
+          "Der Ablaufwechsel ist nicht eindeutig.",
+          400,
         );
-        service.audit.append({
-          actor,
-          action: "assistant:workflow-interrupted",
+      const workday = await operationalStore.getWorkday(actorId, actor.role);
+      const active = workday.activeEpisode;
+      if (
+        !active ||
+        active.patientId !== execution.patientId ||
+        active.encounterId !== execution.encounterId
+      )
+        throw new DomainError(
+          "VERSION_CONFLICT",
+          "Die aktive Arbeit hat sich geändert. Bitte den Wechsel neu formulieren.",
+          409,
+        );
+      const target = service
+        .snapshot(actorId, execution.purpose)
+        .patients.find((patient) => patient.room === workflowAction.targetRoom);
+      if (!target || target.id === active.patientId)
+        throw new DomainError(
+          "VALIDATION",
+          `Zimmer ${workflowAction.targetRoom} ist im freigegebenen Arbeitskontext nicht eindeutig verfügbar.`,
+          400,
+        );
+      if (runtime.profile === "integrated-demo")
+        throw new DomainError(
+          "INVALID_STATE",
+          "Der Ablaufwechsel benötigt atomare Arbeitsplan-Unterstützung und wurde nicht übernommen.",
+          409,
+        );
+      const next = await operationalStore.applyWorkdayCommand(
+        actorId,
+        actor.role,
+        {
+          type: "interrupt-and-start",
+          episodeId: active.id,
           patientId: target.id,
-          purpose: execution.purpose,
-          outcome: "success",
-          detail: {
-            pausedEpisodeId: active.id,
-            targetRoom: target.room,
-            requestedByUser: true,
-          },
+          encounterId: target.encounterId,
+          title: `Spontaner Besuch · Zimmer ${target.room}`,
+        },
+      );
+      service.audit.append({
+        actor,
+        action: "assistant:workflow-interrupted",
+        patientId: target.id,
+        purpose: execution.purpose,
+        outcome: "success",
+        detail: {
+          pausedEpisodeId: active.id,
+          targetRoom: target.room,
+          requestedByUser: true,
+        },
+      });
+      return { workday: next, workflowChanged: true };
+    };
+    try {
+      if (runtime.profile === "integrated-demo") {
+        executedResult = await runSerializedMutation(async () => {
+          const command = requestCommandKeys.get(request);
+          if (!command)
+            throw new DomainError(
+              "VALIDATION",
+              "Lokale Annahme benötigt eine eindeutige Befehls-ID.",
+              400,
+            );
+          const beforeCheckpoint = service.checkpoint();
+          const beforeResources = service.fhirResources();
+          const beforeAuditLength = service.audit.length;
+          const priorProviderKeys = new Set(
+            service
+              .pendingProviderCommands()
+              .map((pending) => pending.command.idempotencyKey),
+          );
+          try {
+            const result = await executeAuthorizedIntent();
+            const nextResources = service.fhirResources();
+            const previousByReference = new Map(
+              beforeResources.map((resource) => [
+                `${resource.resourceType}/${resource.id}`,
+                JSON.stringify(resource),
+              ]),
+            );
+            const nextReferences = new Set(
+              nextResources.map(
+                (resource) => `${resource.resourceType}/${resource.id}`,
+              ),
+            );
+            const changedResources = nextResources.filter(
+              (resource) =>
+                previousByReference.get(
+                  `${resource.resourceType}/${resource.id}`,
+                ) !== JSON.stringify(resource),
+            );
+            const removedReferences = [...previousByReference.keys()].filter(
+              (reference) =>
+                !reference.startsWith("Provenance/") &&
+                !nextReferences.has(reference),
+            );
+            if (!workspace.loadResourceVersions)
+              throw new Error("CLINICAL_VERSION_READ_NOT_AVAILABLE");
+            const clinicalReferences = [
+              ...changedResources.map(
+                (resource) => `${resource.resourceType}/${resource.id}`,
+              ),
+              ...removedReferences,
+            ];
+            const clinicalExpectedVersions =
+              await workspace.loadResourceVersions(clinicalReferences);
+            const providerCommands = service
+              .pendingProviderCommands()
+              .filter(
+                (pending) =>
+                  !priorProviderKeys.has(pending.command.idempotencyKey),
+              );
+            const acceptedCheckpoint = service.checkpoint();
+            acceptedCheckpoint.state.outbox =
+              acceptedCheckpoint.state.outbox.filter(
+                (pending) =>
+                  !providerCommands.some(
+                    (accepted) =>
+                      accepted.command.idempotencyKey ===
+                      pending.idempotencyKey,
+                  ),
+              );
+            const receipt = await operationalStore.acceptIntentCommand({
+              tokenHash,
+              actorId,
+              actorRole: actor.role,
+              purpose: execution.purpose,
+              patientId: execution.patientId,
+              encounterId: execution.encounterId,
+              sessionId: session.id,
+              threadId: session.threadId,
+              contextRevision: session.contextRevision,
+              resourceVersion: execution.resourceVersion,
+              commandKey: command.key,
+              requestHash: command.requestHash,
+              statusCode: 200,
+              resultPayload: result,
+              selectedActionIds: execution.reviewedActionIds ?? [],
+              policyVersion: runtimeSitePack.packDigest,
+              sourceReadSet: [
+                {
+                  reference: `Patient/${fhirResourceId("Patient", execution.patientId)}`,
+                  version: execution.resourceVersion,
+                },
+                {
+                  reference: `Encounter/${fhirResourceId("Encounter", execution.encounterId)}`,
+                  version: execution.resourceVersion,
+                },
+              ],
+              auditEntries: service.audit.slice(beforeAuditLength),
+              clinicalResources: changedResources,
+              removedReferences,
+              clinicalExpectedVersions,
+              checkpoint: acceptedCheckpoint,
+              ...(result &&
+              typeof result === "object" &&
+              "episodeEvidence" in result &&
+              typeof result.episodeEvidence === "string"
+                ? { episodeEvidence: result.episodeEvidence }
+                : {}),
+              providerCommands,
+            });
+            committedCommandKeys.add(command.key);
+            service.recordCommandReceipt({
+              key: command.key,
+              requestHash: command.requestHash,
+              statusCode: receipt.statusCode,
+              payload: JSON.stringify(receipt.payload),
+            });
+            service.retireAcceptedProviderCommands(
+              providerCommands.map((pending) => pending.command.idempotencyKey),
+            );
+            durableResources = nextResources;
+            publishInvalidation();
+            return receipt.payload;
+          } catch (error) {
+            service.restoreCheckpoint(beforeCheckpoint);
+            assistant.restoreDurableIntent(token, durableIntent);
+            throw error;
+          }
         });
-        return { workday: next, workflowChanged: true };
-      }, request);
+      } else {
+        executedResult = await persist(executeAuthorizedIntent, request);
+      }
     } catch (error) {
-      await operationalStore.releaseIntentAuthority(tokenHash);
+      if (runtime.profile !== "integrated-demo")
+        await operationalStore.releaseIntentAuthority(tokenHash);
       assistant.restoreDurableIntent(token, durableIntent);
       throw error;
     }
-    // Episode drafts are an operational convenience derived from an accepted
-    // clinical write. Persist them only after Medplum/checkpoint acceptance so
-    // a rejected clinical transaction can never leave executable evidence.
+    // The integrated profile stores episode evidence in the same PostgreSQL
+    // acceptance transaction. This fallback exists only for the explicit
+    // memory demo path.
     if (
+      runtime.profile !== "integrated-demo" &&
       executedResult &&
       typeof executedResult === "object" &&
       "episodeEvidence" in executedResult &&
@@ -2157,6 +2534,7 @@ export function buildApp(
   });
 
   app.post("/api/v1/tasks", async (request, reply) => {
+    requireMigratedClinicalMutation();
     const result = await persist(
       () =>
         service.createTask(userId(request), taskCreateBody.parse(request.body)),
@@ -2166,6 +2544,7 @@ export function buildApp(
     return reply.code(201).send(result);
   });
   app.post("/api/v1/tasks/:id/:transition", async (request) => {
+    requireMigratedClinicalMutation();
     const params = z
       .object({
         id: z.string(),
@@ -2184,7 +2563,7 @@ export function buildApp(
     );
   });
   app.post("/api/v1/observations/drafts", async (request, reply) =>
-    reply
+    (requireMigratedClinicalMutation(), reply)
       .code(201)
       .send(
         await persist(
@@ -2199,7 +2578,7 @@ export function buildApp(
       ),
   );
   app.post("/api/v1/notes/drafts", async (request, reply) =>
-    reply
+    (requireMigratedClinicalMutation(), reply)
       .code(201)
       .send(
         await persist(
@@ -2214,6 +2593,7 @@ export function buildApp(
       ),
   );
   app.post("/api/v1/:type/:id/approve", async (request) => {
+    requireMigratedClinicalMutation();
     const params = z
       .object({ type: z.enum(["observation", "note"]), id: z.string() })
       .parse(request.params);
@@ -2258,7 +2638,7 @@ export function buildApp(
     );
   });
   app.post("/api/v1/communications", async (request, reply) =>
-    reply
+    (requireMigratedClinicalMutation(), reply)
       .code(201)
       .send(
         await persist(
@@ -2273,6 +2653,7 @@ export function buildApp(
       ),
   );
   app.post("/api/v1/communications/:id/:transition", async (request) => {
+    requireMigratedClinicalMutation();
     const params = z
       .object({
         id: z.string(),
@@ -2291,6 +2672,7 @@ export function buildApp(
     );
   });
   app.post("/api/v1/intake/:id/review", async (request) => {
+    requireMigratedClinicalMutation();
     const params = z.object({ id: z.string() }).parse(request.params);
     const body = intakeReviewBody.parse(request.body);
     return persist(
@@ -2305,7 +2687,7 @@ export function buildApp(
     );
   });
   app.post("/api/v1/round-actions", async (request, reply) =>
-    reply
+    (requireMigratedClinicalMutation(), reply)
       .code(201)
       .send(
         await persist(
@@ -2400,8 +2782,8 @@ export function buildApp(
           message: "Nur der Demo-IT-Operator darf zurücksetzen.",
           requestId: request.id,
         });
-      const result = await persist(() => {
-        service.reset({
+      const result = await persist(async () => {
+        await service.reset({
           resetAudit: workspace.mode === "in-memory",
           actor: operator,
         });
@@ -2415,10 +2797,22 @@ export function buildApp(
       return result;
     });
   }
-  app.post("/api/v1/outbox/process", async (request) =>
-    persist(() => service.flushOutbox(userId(request)), request),
-  );
+  app.post("/api/v1/outbox/process", async (request) => {
+    if (runtime.profile === "integrated-demo")
+      throw new DomainError(
+        "INVALID_STATE",
+        "Die integrierte Zustellung läuft automatisch über die relationale Warteschlange.",
+        409,
+      );
+    return persist(() => service.flushOutbox(userId(request)), request);
+  });
   app.post("/api/v1/outbox/:outboxId/reconcile", async (request) => {
+    if (runtime.profile === "integrated-demo")
+      throw new DomainError(
+        "INVALID_STATE",
+        "Der frühere Checkpoint-Abgleich ist im integrierten Profil deaktiviert.",
+        409,
+      );
     const { outboxId } = z
       .object({ outboxId: z.string() })
       .parse(request.params);

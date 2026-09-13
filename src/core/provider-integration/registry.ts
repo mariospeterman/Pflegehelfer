@@ -15,6 +15,7 @@ import {
   ProviderContractSimulator,
   type ProviderSimulatorMode,
 } from "./simulator.js";
+import { HttpProviderSimulatorAdapter } from "./http-simulator.js";
 
 export type ProviderOperationalStatus =
   | "SIMULATED"
@@ -123,24 +124,34 @@ export class ProviderRegistry {
     return registration ? clone(registration.manifest) : null;
   }
 
-  setSimulatorMode(
+  async setSimulatorMode(
     provider: ProviderId,
     mode: ProviderSimulatorMode,
-  ): ProviderHealth {
+  ): Promise<ProviderHealth> {
     const registration = this.registrations.get(
       key(provider, "synthetic-simulator"),
     );
     const adapter = registration?.adapter ?? null;
-    if (!(adapter instanceof ProviderContractSimulator))
+    if (
+      !(adapter instanceof ProviderContractSimulator) &&
+      !(adapter instanceof HttpProviderSimulatorAdapter)
+    )
       throw new Error("SYNTHETIC_PROVIDER_SIMULATOR_NOT_CONFIGURED");
-    adapter.setMode(mode);
-    return adapter.healthSnapshot();
+    if (adapter instanceof ProviderContractSimulator) {
+      adapter.setMode(mode);
+      return adapter.healthSnapshot();
+    }
+    return adapter.setMode(mode);
   }
 
-  resetSimulators(): void {
+  async resetSimulators(): Promise<void> {
+    const resets: Promise<void>[] = [];
     for (const registration of this.registrations.values())
       if (registration.adapter instanceof ProviderContractSimulator)
         registration.adapter.reset();
+      else if (registration.adapter instanceof HttpProviderSimulatorAdapter)
+        resets.push(registration.adapter.reset());
+    await Promise.all(resets);
   }
 
   async status(profile?: ProviderProfile): Promise<ProviderRegistryStatus[]> {
@@ -460,6 +471,29 @@ export function createSyntheticProviderRegistry(): ProviderRegistry {
       },
       manifest,
       new ProviderContractSimulator(manifest),
+    );
+  }
+  return registry;
+}
+
+export function createExternalSyntheticProviderRegistry(
+  baseUrl: string,
+  token: string,
+): ProviderRegistry {
+  const registry = createProductionProviderRegistry();
+  for (const provider of providerIds) {
+    const manifest = simulatorManifest(provider);
+    registry.register(
+      {
+        schemaVersion: "1.0.0",
+        provider,
+        profile: "synthetic-simulator",
+        adapterVersion: manifest.adapterVersion,
+        enabled: true,
+        connection: { kind: "simulator" },
+      },
+      manifest,
+      new HttpProviderSimulatorAdapter(manifest, baseUrl, token),
     );
   }
   return registry;

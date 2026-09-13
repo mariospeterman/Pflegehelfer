@@ -210,7 +210,7 @@ describe("runtime-guided assistant agent", () => {
     });
 
     expect(response.runtime).toMatchObject({
-      route: "deterministic",
+      route: "safe-fallback",
       degraded: true,
       agent: { status: "failed", toolCalls: 0 },
     });

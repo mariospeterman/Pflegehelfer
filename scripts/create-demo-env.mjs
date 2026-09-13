@@ -29,6 +29,9 @@ try {
       "# Set PFH_AI_MODE/PFH_DEEP_LLM_MODE/PFH_ASR_MODE/PFH_TTS_MODE to hosted-test when wanted.",
       "# Recommended economical router: gpt-5.6-terra; deeper knowledge selector: gpt-5.6-sol.",
       "# PFH_LLM_MODEL=gpt-5.6-terra",
+      "# PFH_HOSTED_AI_MAX_CALLS_PER_HOUR=60",
+      "# PFH_HOSTED_ASR_MAX_CALLS_PER_HOUR=20",
+      "# PFH_HOSTED_TTS_MAX_CALLS_PER_HOUR=30",
       "# PFH_DEEP_LLM_MODEL=gpt-5.6-sol",
       "# PFH_ASR_MODEL=gpt-4o-transcribe",
       "# PFH_TTS_MODEL=gpt-4o-mini-tts",
@@ -39,6 +42,12 @@ try {
       "",
       "# Browser speech output is synthetic-demo only. Use hosted-test or local-openai for a server adapter.",
       "PFH_TTS_MODE=browser-demo",
+    );
+  if (!/^PFH_PROVIDER_SIMULATOR_TOKEN=/m.test(existing))
+    additions.push(
+      "",
+      "# Authenticates the local independent synthetic provider process.",
+      `PFH_PROVIDER_SIMULATOR_TOKEN=${secret()}`,
     );
   if (additions.length)
     await appendFile(target, `${additions.join("\n")}\n`, {
@@ -56,6 +65,7 @@ const content = [
   `MEDPLUM_DEMO_POSTGRES_PASSWORD=${secret()}`,
   `PFH_DEMO_POSTGRES_PASSWORD=${operationalPassword}`,
   `PFH_OPERATIONAL_DATABASE_URL=postgresql://pflegehelfer:${operationalPassword}@127.0.0.1:5434/pflegehelfer`,
+  `PFH_PROVIDER_SIMULATOR_TOKEN=${secret()}`,
   `MEDPLUM_DEMO_REDIS_PASSWORD=${secret()}`,
   "MEDPLUM_DEFAULT_SUPER_ADMIN_EMAIL=admin@pflegehelfer.demo.invalid",
   `MEDPLUM_DEFAULT_SUPER_ADMIN_PASSWORD=${secret()}`,

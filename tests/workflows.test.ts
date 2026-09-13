@@ -180,7 +180,7 @@ describe("deterministic clinical workflows", () => {
     });
     const documentationProvider =
       siteConfiguration.providerRoutes.careDocumentation;
-    service.setProviderMode("u-it", documentationProvider, "down");
+    await service.setProviderMode("u-it", documentationProvider, "down");
     expect((await service.flushOutbox("u-it"))[0]).toMatchObject({
       state: "pending",
       attempts: 1,
@@ -190,7 +190,7 @@ describe("deterministic clinical workflows", () => {
       service.snapshot("u-nurse").notes.find((note) => note.id === draft.id)
         ?.status,
     ).toBe("pending-provider");
-    service.setProviderMode("u-it", documentationProvider, "normal");
+    await service.setProviderMode("u-it", documentationProvider, "normal");
     const final = (await service.flushOutbox("u-it"))[0];
     expect(final).toMatchObject({ state: "acknowledged", attempts: 2 });
     expect(
@@ -274,7 +274,7 @@ describe("deterministic clinical workflows", () => {
       patientBirthDate: "1937-11-02",
       reviewedDiff: true,
     });
-    service.setProviderMode("u-it", "device-gateway", "conflict");
+    await service.setProviderMode("u-it", "device-gateway", "conflict");
     const outbox = await service.flushOutbox("u-it");
     expect(outbox[0]).toMatchObject({
       state: "conflict",
@@ -317,7 +317,7 @@ describe("deterministic clinical workflows", () => {
       providerVersion: "sim-v1",
       localVersion: 2,
     });
-    service.setProviderMode("u-it", "device-gateway", "normal");
+    await service.setProviderMode("u-it", "device-gateway", "normal");
     expect((await service.flushOutbox("u-it"))[0]).toMatchObject({
       state: "acknowledged",
       providerVersion: "sim-v2",
@@ -339,7 +339,7 @@ describe("deterministic clinical workflows", () => {
       patientBirthDate: "1937-11-02",
       reviewedDiff: true,
     });
-    service.setProviderMode("u-it", "device-gateway", "reject");
+    await service.setProviderMode("u-it", "device-gateway", "reject");
     const rejected = (await service.flushOutbox("u-it"))[0]!;
     expect(rejected).toMatchObject({
       state: "rejected",

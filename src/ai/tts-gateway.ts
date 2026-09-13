@@ -31,6 +31,8 @@ export class TtsGateway {
   readonly voice: string;
   private readonly baseUrl: string | null;
   private readonly apiKey: string | null;
+  private readonly hostedMaxCallsPerHour: number;
+  private readonly hostedCallTimes: number[] = [];
   private verifiedAt: number | null = null;
 
   constructor(env: NodeJS.ProcessEnv = process.env) {
@@ -48,6 +50,10 @@ export class TtsGateway {
         : (env.PFH_TTS_BASE_URL ??
           (this.mode === "hosted-test" ? "https://api.openai.com/v1" : null));
     this.apiKey = env.PFH_TTS_API_KEY ?? env.OPENAI_API_KEY ?? null;
+    const hostedCallLimit = Number(env.PFH_HOSTED_TTS_MAX_CALLS_PER_HOUR ?? 30);
+    this.hostedMaxCallsPerHour = Number.isFinite(hostedCallLimit)
+      ? Math.min(300, Math.max(1, Math.floor(hostedCallLimit)))
+      : 30;
     if (
       this.mode === "local-openai" &&
       env.PFH_DEMO_MODE !== "true" &&
@@ -67,6 +73,23 @@ export class TtsGateway {
       throw new Error(
         "Hosted TTS requires explicit external-AI consent and synthetic demo data.",
       );
+  }
+
+  private claimHostedCall(): void {
+    if (this.mode !== "hosted-test") return;
+    const cutoff = Date.now() - 60 * 60_000;
+    while (
+      this.hostedCallTimes.length > 0 &&
+      this.hostedCallTimes[0]! <= cutoff
+    )
+      this.hostedCallTimes.shift();
+    if (this.hostedCallTimes.length >= this.hostedMaxCallsPerHour)
+      throw new DomainError(
+        "PROVIDER_UNAVAILABLE",
+        "Das Stundenbudget der synthetischen Sprachausgabe ist ausgeschöpft.",
+        429,
+      );
+    this.hostedCallTimes.push(Date.now());
   }
 
   status(): TtsRuntimeStatus {
@@ -148,6 +171,7 @@ export class TtsGateway {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 60_000);
     try {
+      this.claimHostedCall();
       const response = await fetch(
         `${this.baseUrl.replace(/\/$/, "")}/audio/speech`,
         {

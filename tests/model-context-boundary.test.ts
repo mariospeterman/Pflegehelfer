@@ -116,6 +116,38 @@ describe("authorized model context boundary", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it("enforces the hosted-demo hourly call ceiling before transport", async () => {
+    const fetchSpy = vi.fn(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ output_text: '{"intent":"unknown"}' }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+    const gateway = new ModelGateway({
+      PFH_AI_MODE: "hosted-test",
+      PFH_DEMO_MODE: "true",
+      PFH_LLM_DATA_CLASSIFICATION: "synthetic-only",
+      PFH_ALLOW_EXTERNAL_AI: "true",
+      PFH_LLM_API_KEY: "x",
+      PFH_LLM_BASE_URL: "https://synthetic-model.example.invalid/v1",
+      PFH_HOSTED_AI_MAX_CALLS_PER_HOUR: "1",
+    });
+
+    await expect(
+      gateway.classify("Das von gestern bitte nochmals.", syntheticContext),
+    ).resolves.toMatchObject({ degraded: false });
+    await expect(
+      gateway.classify("Danach gleich weiter.", syntheticContext),
+    ).resolves.toMatchObject({
+      degraded: true,
+      failure: { code: "rate-limited" },
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
   it("cancels an in-flight configured model request when the caller disconnects", async () => {
     let sawModelAbort = false;
     vi.stubGlobal(

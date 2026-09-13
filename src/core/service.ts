@@ -236,7 +236,9 @@ export class PflegehelferService {
     return this.clinicalData.read();
   }
 
-  reset(options: { resetAudit?: boolean; actor?: DemoUser } = {}): void {
+  async reset(
+    options: { resetAudit?: boolean; actor?: DemoUser } = {},
+  ): Promise<void> {
     this.clinicalData.replace(initialState());
     this.commandReceipts.clear();
     this.currentDataClass =
@@ -257,7 +259,7 @@ export class PflegehelferService {
         detail: { auditEpochReset: options.resetAudit === true },
       });
     if (this.providerProfile !== "synthetic-simulator") return;
-    this.providerRegistry.resetSimulators();
+    await this.providerRegistry.resetSimulators();
   }
 
   checkpoint(): ServiceCheckpoint {
@@ -1069,7 +1071,7 @@ export class PflegehelferService {
       recipientRole: Role;
       recipientId?: string | null | undefined;
       priority: Communication["priority"];
-      dueAt: string;
+      dueAt: string | null;
       purpose?: Purpose | undefined;
     },
   ): Communication {
@@ -1223,7 +1225,13 @@ export class PflegehelferService {
       item.acknowledgedBy = responseOwner;
       item.answeredBy = user.id;
       item.response = input.response.trim();
-      if (input.createTask)
+      if (input.createTask) {
+        if (!item.dueAt)
+          throw new DomainError(
+            "VALIDATION",
+            "Aus einer Nachricht ohne Antwortfrist kann keine terminierte Folgeaufgabe abgeleitet werden.",
+            400,
+          );
         item.resultingTaskId = this.createTask(user.id, {
           patientId: patient.id,
           encounterId: patient.encounterId,
@@ -1234,6 +1242,7 @@ export class PflegehelferService {
           dueAt: item.dueAt,
           purpose,
         }).id;
+      }
     }
     if (next === "close") {
       if (item.state !== "answered")
@@ -1533,7 +1542,12 @@ export class PflegehelferService {
       throw new DomainError("VALIDATION", "Ungültiger Prüfzeitpunkt.", 400);
     const escalated: Communication[] = [];
     for (const item of this.state.communications) {
-      if (item.state !== "sent" || Date.parse(item.dueAt) > deadline) continue;
+      if (
+        item.state !== "sent" ||
+        item.dueAt === null ||
+        Date.parse(item.dueAt) > deadline
+      )
+        continue;
       item.state = "escalated";
       item.priority = "urgent";
       item.escalationRecipientRole = item.recipientRole;
@@ -1559,14 +1573,14 @@ export class PflegehelferService {
     return escalated;
   }
 
-  setProviderMode(
+  async setProviderMode(
     userId: string,
     provider: ProviderId,
     mode: ProviderSimulatorMode,
-  ): ProviderHealth {
+  ): Promise<ProviderHealth> {
     const user = this.user(userId);
     this.authorize(user, "provider:operate", user.defaultPurpose);
-    const registryHealth = this.providerRegistry.setSimulatorMode(
+    const registryHealth = await this.providerRegistry.setSimulatorMode(
       provider,
       mode,
     );
@@ -1686,6 +1700,22 @@ export class PflegehelferService {
             ? ("idempotent-provider" as const)
             : ("reconcile-before-retry" as const),
       }));
+  }
+
+  /**
+   * Remove only the legacy in-process queue copies that were atomically
+   * accepted into the relational outbox. This never marks a delivery as
+   * acknowledged and is intentionally separate from provider execution.
+   */
+  retireAcceptedProviderCommands(idempotencyKeys: readonly string[]): number {
+    const accepted = new Set(idempotencyKeys);
+    const before = this.state.outbox.length;
+    this.state.outbox = this.state.outbox.filter(
+      (item) =>
+        !accepted.has(item.idempotencyKey) ||
+        !["pending", "processing"].includes(item.state),
+    );
+    return before - this.state.outbox.length;
   }
 
   hasPendingProviderWork(): boolean {

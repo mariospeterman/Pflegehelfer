@@ -514,6 +514,51 @@ describe("durable workflow checkpoint", () => {
     expect(entries[1]?.request?.ifMatch).toBeUndefined();
   });
 
+  it("applies accepted FHIR versions to updates, creates and deletes", async () => {
+    const workspace = new MedplumClinicalWorkspace(
+      "http://127.0.0.1:8103/",
+      "test-client",
+      "test-secret",
+      "http://127.0.0.1:3001/",
+    );
+    let captured: Bundle | null = null;
+    const internals = workspace as unknown as {
+      client: {
+        startClientLogin: () => Promise<void>;
+        executeBatch: (bundle: Bundle) => Promise<Bundle>;
+      };
+    };
+    internals.client.startClientLogin = () => Promise.resolve();
+    internals.client.executeBatch = (bundle) => {
+      captured = bundle;
+      return Promise.resolve({
+        resourceType: "Bundle",
+        type: "transaction-response",
+        entry: (bundle.entry ?? []).map(() => ({
+          response: { status: "200 OK" },
+        })),
+      });
+    };
+    await workspace.synchronize(
+      [
+        { resourceType: "Patient", id: "existing" },
+        { resourceType: "Patient", id: "new" },
+      ],
+      undefined,
+      ["Task/removed"],
+      undefined,
+      {
+        "Patient/existing": "7",
+        "Patient/new": null,
+        "Task/removed": "3",
+      },
+    );
+    const entries = (captured as Bundle | null)?.entry ?? [];
+    expect(entries[0]?.request?.ifMatch).toBe('W/"7"');
+    expect(entries[1]?.request?.ifMatch).toBeUndefined();
+    expect(entries[2]?.request?.ifMatch).toBe('W/"3"');
+  });
+
   it("restores workflow state and the verified audit chain", () => {
     const first = new PflegehelferService();
     first.updateTask("u-assistant", "t-bp-anna", "accept", {});

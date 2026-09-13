@@ -10,6 +10,7 @@ FROM node:24.19.0-alpine
 ENV NODE_ENV=production PORT=4173 HOST=0.0.0.0
 WORKDIR /app
 RUN addgroup -S pfh && adduser -S -G pfh -u 10001 pfh
+RUN mkdir -p /var/lib/pfh-provider && chown pfh:pfh /var/lib/pfh-provider
 COPY --from=build --chown=pfh:pfh /app/dist ./dist
 COPY --from=build --chown=pfh:pfh /app/node_modules ./node_modules
 COPY --from=build --chown=pfh:pfh /app/package.json ./package.json

@@ -33,6 +33,8 @@ export interface ProviderOutboxJob {
   attempts: number;
   recoveredExpiredLease: boolean;
   latestReceiptId: string | null;
+  acceptedCommandId?: string | null;
+  authorityEnvelope?: Readonly<Record<string, unknown>> | null;
 }
 
 export interface ProviderDeliveryStore {
@@ -117,6 +119,38 @@ function technicalFailure(error: unknown): boolean {
     (error.name === "ProviderTransportError" ||
       error.message === "PROVIDER_UNAVAILABLE")
   );
+}
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value))
+    return `[${value.map((item) => canonicalJson(item)).join(",")}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
+    .join(",")}}`;
+}
+
+async function verifyProviderReadBack(
+  adapter: NonNullable<ReturnType<ProviderRegistry["adapterForOperation"]>>,
+  command: CanonicalClinicalCommand,
+): Promise<boolean> {
+  const record = await adapter.read({
+    resourceType: command.resource.resourceType,
+    externalId: command.resource.id,
+  });
+  const mapped = await adapter.mapInbound(record);
+  const resource = mapped.find(
+    (candidate) =>
+      candidate.resourceType === command.resource.resourceType &&
+      candidate.id === command.resource.id,
+  );
+  if (!resource) return false;
+  const body = { ...resource.body };
+  delete body.resourceType;
+  delete body.id;
+  return canonicalJson(body) === canonicalJson(command.resource.body);
 }
 
 /**
@@ -205,6 +239,24 @@ export class ProviderDeliveryWorker {
           : await adapter.executeCommand(
               await adapter.prepareCommand(job.payload.command),
             );
+        if (
+          acknowledgement.status === "acknowledged" &&
+          !(await verifyProviderReadBack(adapter, job.payload.command))
+        ) {
+          await this.store.finishProviderDelivery({
+            jobId: job.id,
+            workerId: this.options.workerId,
+            acknowledgement: {
+              ...acknowledgement,
+              status: "conflict",
+              errorCode: "PROVIDER_READBACK_MISMATCH",
+              errorClassification: "version-conflict",
+            },
+            retryAt: null,
+          });
+          result.manual += 1;
+          continue;
+        }
         await this.store.finishProviderDelivery({
           jobId: job.id,
           workerId: this.options.workerId,
