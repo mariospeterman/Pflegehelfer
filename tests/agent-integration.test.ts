@@ -28,6 +28,7 @@ describe("runtime-guided assistant agent", () => {
             input: { skillId: "nursing-early" },
             text: null,
             draftReferenceId: null,
+            sourceReferenceIds: [],
           },
           {
             kind: "tool-call",
@@ -35,6 +36,7 @@ describe("runtime-guided assistant agent", () => {
             input: {},
             text: null,
             draftReferenceId: null,
+            sourceReferenceIds: [],
           },
           {
             kind: "tool-call",
@@ -42,6 +44,7 @@ describe("runtime-guided assistant agent", () => {
             input: {},
             text: null,
             draftReferenceId: null,
+            sourceReferenceIds: [],
           },
           {
             kind: "answer",
@@ -49,6 +52,10 @@ describe("runtime-guided assistant agent", () => {
             input: null,
             text: "Deine Übergabe ist bereit; zwei Punkte sind noch offen.",
             draftReferenceId: null,
+            sourceReferenceIds: [
+              `RuntimeInstruction/nursing-early/${runtimeSitePack.instructions["nursing-early"]!.sha256}`,
+              "WorkdayHandover/2026-09-13:early",
+            ],
           },
         ];
         const output =
@@ -123,10 +130,7 @@ describe("runtime-guided assistant agent", () => {
     expect(lead?.type).toBe("AssistantText");
     if (lead?.type !== "AssistantText")
       throw new Error("Missing grounded lead");
-    expect(lead.message).toContain("operationaler Übergabe");
-    expect(JSON.stringify(response.components)).not.toContain(
-      "zwei Punkte sind noch offen",
-    );
+    expect(lead.message).toContain("zwei Punkte sind noch offen");
     expect(response.components).toContainEqual(
       expect.objectContaining({ type: "HandoverChecklist", openCount: 2 }),
     );

@@ -98,7 +98,11 @@ describe("bounded agent runtime", () => {
     const model = fixtureModel([
       { kind: "tool-call", toolName: "get_open_questions", input: {} },
       { kind: "tool-call", toolName: "get_handover", input: {} },
-      { kind: "answer", text: "Die Übergabe ist bereit." },
+      {
+        kind: "answer",
+        text: "Die Übergabe ist bereit.",
+        sourceReferenceIds: ["handover:v2"],
+      },
     ]);
     const runtime = new BoundedAgentRuntime(model, registry());
 
@@ -110,6 +114,7 @@ describe("bounded agent runtime", () => {
 
     expect(result.status).toBe("answer");
     expect(result.toolCalls).toBe(2);
+    expect(result.sourceReferenceIds).toEqual(["handover:v2"]);
     expect(result.trace.filter((event) => event.kind === "tool")).toMatchObject(
       [
         { tool: "get_open_questions", resultReferenceId: "questions:v4" },
@@ -189,6 +194,29 @@ describe("bounded agent runtime", () => {
       status: "safe-handoff",
       toolCalls: 0,
     });
+  });
+
+  it("rejects tool-backed prose with missing or invented source references", async () => {
+    for (const sourceReferenceIds of [[], ["Patient/invented"]]) {
+      const runtime = new BoundedAgentRuntime(
+        fixtureModel([
+          { kind: "tool-call", toolName: "get_handover", input: {} },
+          {
+            kind: "answer",
+            text: "Die Übergabe ist bereit.",
+            sourceReferenceIds,
+          },
+        ]),
+        registry(),
+      );
+      await expect(
+        runtime.run({
+          request: "Ist die Übergabe bereit?",
+          context,
+          allowedTools: ["get_handover"],
+        }),
+      ).resolves.toMatchObject({ status: "safe-handoff", toolCalls: 1 });
+    }
   });
 
   it("stops repeated identical calls and enforces the call budget", async () => {
