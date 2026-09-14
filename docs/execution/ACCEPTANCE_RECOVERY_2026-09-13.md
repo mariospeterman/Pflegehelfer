@@ -63,15 +63,16 @@ Current real-store regression command:
 ```sh
 PFH_DEMO_MODE=true node --env-file=.env.demo node_modules/vitest/vitest.mjs run \
   tests/postgres-atomic-acceptance.test.ts \
+  tests/postgres-clinical-projection-order.regression-1.test.ts \
+  tests/postgres-natural-coworker-continuity.regression-1.test.ts \
   tests/postgres-provider-worker.test.ts \
   tests/postgres-operational-store.test.ts \
-  tests/migrations.test.ts \
-  tests/provider-worker.test.ts \
+  tests/postgres-sync-summary.regression-1.test.ts \
   --no-file-parallelism --reporter=dot
 ```
 
-Latest focused result: 5 files and 24 tests passed against operational
-PostgreSQL. The migration ledger verified versions 1–8; migration 008 adds
+Latest focused result: 6 files and 21 tests passed against operational
+PostgreSQL on 2026-09-14. The migration ledger verified versions 1–8; migration 008 adds
 provider-version, adapter-version, mapping-version and read-back-hash evidence
 to durable provider receipts.
 
@@ -94,6 +95,11 @@ the whole note. A direct source-record validator passes before authority is
 issued. Unrecognized natural corrections now ask one concise clarification
 instead of silently presenting stale meaning as corrected.
 
+Switching to another patient now suspends an unapproved review instead of
+deleting it. Returning to the same patient and encounter revalidates the same
+durable proposal revision and issues a fresh one-use token; the old token stays
+invalid. This was proved in both the memory profile and PostgreSQL.
+
 The bounded agent now permits natural terminal prose only when tool-backed
 answers cite exact result references emitted during that run. Missing or
 invented references, authority claims, URLs/tokens and unsupported numbers are
@@ -109,6 +115,14 @@ checkpoint. Provider acknowledgement is accepted as delivered only after exact
 mapped read-back and matching provider version; the receipt retains the
 provider, adapter and mapping versions plus read-back hash. This is simulator
 and generic-kernel evidence, not a real WiCare/careCoach/SAP acceptance claim.
+
+If a provider acknowledges a write but the verification read fails, the
+acknowledgement is persisted as pending verification before retry. A technical
+transport failure is classified as retryable, while a delivered PostgreSQL row
+is rejected unless complete read-back evidence and matching versions exist.
+Assistant execution idempotency is bound to the concrete one-use intent token
+and canonical body while the legacy hash remains valid for older non-assistant
+command receipts.
 
 A live Medplum optimistic-concurrency test created a synthetic resource,
 captured its version, wrote a newer version and proved that the stale accepted
@@ -133,7 +147,23 @@ connectivity/error-handling evidence only:
 
 - model acceptance: **not passed**;
 - ASR acceptance: **not passed**;
-- TTS acceptance: **not run / not passed**.
+- TTS acceptance: **attempted; HTTP 503 / not passed**.
+
+## Browser acceptance evidence
+
+The integrated PWA (not the memory profile) was inspected at 390×844,
+768×1024 and 1280×800 in light and dark themes. The handover shows a compact
+roster with exactly one selected-patient expansion, human-facing recipient and
+encounter labels, reachable review actions and no horizontal overflow. At
+390×844 the fixed composer measured 73.5 px high with its lower edge at 801 px;
+at 768×1024 its lower edge was 994 px. A 150% root-font-size plus reduced
+560-px keyboard viewport regression is part of the Playwright suite.
+
+Visual evidence:
+
+- `.gstack/qa-reports/screenshots/integrated-mobile-390-after.png`
+- `.gstack/qa-reports/screenshots/integrated-tablet-768.png`
+- `.gstack/qa-reports/screenshots/integrated-desktop-1280-dark.png`
 
 Fixture endpoints prove schema/orchestration behavior only. Browser speech is
 not counted as governed TTS acceptance. Keys remain only in the ignored,

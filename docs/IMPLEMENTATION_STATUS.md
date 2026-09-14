@@ -2,6 +2,33 @@
 
 Last updated: 2026-09-13
 
+## Acceptance recovery update — 2026-09-14
+
+- The integrated profile is running against separate operational PostgreSQL,
+  Medplum 5.1.37 and the bearer-protected stateful provider simulator; it has no
+  memory-store fallback.
+- The current real-store regression is 6 PostgreSQL files/21 tests plus the
+  live Medplum optimistic-concurrency test (1/1). Security, operational restore
+  checksum and air-gap/preflight checks pass.
+- Provider acknowledgement now survives a temporary read-back failure, and a
+  terminal delivered row requires complete read-back evidence with matching
+  provider versions. Technical transport failures retry; mapping/authentication
+  failures remain terminal/manual.
+- Model prose is checked against the cited result type and exact supported
+  clinical facts/counts. No-model casual conversation does not manufacture a
+  clinical write review. Future/modal medication statements are not mistaken
+  for completed historical reports.
+- Pending work is suspended across a deliberate patient switch and restored
+  only in the same patient/encounter/thread with a fresh one-use token.
+- Integrated browser evidence covers 390 px, tablet and desktop/dark layouts;
+  a 150% text and reduced virtual-keyboard viewport case is automated.
+- The configured real model and ASR calls still fail with HTTP 429 because the
+  supplied API project has no available credit; TTS returned 503. These are
+  unpassed gates, not fallback success.
+
+G1–G7 remain governed by the completion matrix. This update does not declare
+synthetic product completion or clinical production readiness.
+
 `DONE (SYNTHETIC)` means implemented and tested only with fictional data. `PARTIAL` is an internally achievable gap. `EXTERNAL_VENDOR_GATE` is reserved for evidence that cannot be invented in this repository.
 
 | Area                            | Status               | Evidence / remaining limit                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
