@@ -20,6 +20,7 @@ import { DomainError, isTerminalOutboxState, type Purpose } from "./types.js";
 import {
   actionReviewLabel,
   assistantProposalSchema,
+  bindVoiceTranscriptProvenance,
   explicitlyRefusesDocumentation,
   isDoubtfulObservation,
   reviseAssistantProposal,
@@ -27,6 +28,10 @@ import {
   verifyProposalSourceRecords,
   type ExecutableAssistantAction,
 } from "../ai/assistant-proposal.js";
+import {
+  parseVoiceTranscriptProvenance,
+  type VoiceTranscriptProvenance,
+} from "./voice-provenance.js";
 import {
   AuthorizedToolRegistry,
   BoundedAgentRuntime,
@@ -44,6 +49,7 @@ export interface AssistantRequest {
   purpose?: Purpose;
   inputModality?: "typed" | "voice";
   voiceTranscriptConfirmed?: boolean;
+  voiceTranscriptProvenance?: VoiceTranscriptProvenance;
   signal?: AbortSignal;
   workingContext?: {
     organizationId: string;
@@ -353,6 +359,17 @@ function explicitlyRequestsTask(prompt: string): boolean {
   );
 }
 
+function intentVoiceProvenance(
+  payload: Record<string, string>,
+): VoiceTranscriptProvenance[] {
+  if (!payload.voiceTranscriptProvenance) return [];
+  const parsed = z
+    .array(z.unknown())
+    .max(20)
+    .parse(JSON.parse(payload.voiceTranscriptProvenance));
+  return parsed.map(parseVoiceTranscriptProvenance);
+}
+
 function explicitlyRequestsPhysicianMessage(prompt: string): boolean {
   const requested =
     /\bfrage\s+an\s+(?:arzt|ärztin|ärztlichen?\s+dienst)\b|\b(?:arzt|ärztin|ärztlichen?\s+dienst)\b[^.;]{0,60}\b(?:informieren|benachrichtigen|fragen)\b|\b(?:informiere|benachrichtige|frage)\b[^.;]{0,60}\b(?:arzt|ärztin|ärztlichen?\s+dienst)\b|\b(?:frage|nachricht|informiere|benachrichtige|schreibe|sende)\b\s+@\p{L}[\p{L}-]*/iu.test(
@@ -529,6 +546,18 @@ export class AssistantService {
       throw new DomainError(
         "VALIDATION",
         "Das Sprachtranskript muss vor der Verarbeitung sichtbar bestätigt werden.",
+        400,
+      );
+    if (request.inputModality === "voice" && !request.voiceTranscriptProvenance)
+      throw new DomainError(
+        "VALIDATION",
+        "Die bestätigte Sprachherkunft fehlt.",
+        400,
+      );
+    if (request.inputModality !== "voice" && request.voiceTranscriptProvenance)
+      throw new DomainError(
+        "VALIDATION",
+        "Sprachherkunft darf nicht als Texteingabe übernommen werden.",
         400,
       );
     const snapshot = this.clinical.snapshot(userId, purpose);
@@ -1061,7 +1090,18 @@ export class AssistantService {
         encounterId: current.encounterId,
         purpose,
         resourceVersion: current.source.version,
-        payload,
+        payload: {
+          ...payload,
+          ...(request.voiceTranscriptProvenance
+            ? {
+                voiceTranscriptProvenance: JSON.stringify([
+                  parseVoiceTranscriptProvenance(
+                    request.voiceTranscriptProvenance,
+                  ),
+                ]),
+              }
+            : {}),
+        },
       });
     };
 
@@ -1796,7 +1836,17 @@ export class AssistantService {
               },
             )
           : null;
-        const planned = { ...modelPlan, plan: revisedPlan ?? modelPlan.plan };
+        const unboundPlan = revisedPlan ?? modelPlan.plan;
+        const planned = {
+          ...modelPlan,
+          plan:
+            unboundPlan && request.voiceTranscriptProvenance
+              ? bindVoiceTranscriptProvenance(
+                  unboundPlan,
+                  request.voiceTranscriptProvenance,
+                )
+              : unboundPlan,
+        };
         if (!planned.plan) {
           components.push({
             type: "UnknownState",
@@ -2129,13 +2179,24 @@ export class AssistantService {
     }
     switch (intent.command) {
       case "note:draft": {
+        const voiceTranscriptProvenance = intentVoiceProvenance(intent.payload);
+        if (
+          intent.payload.inputModality === "voice" &&
+          voiceTranscriptProvenance.length === 0
+        )
+          throw new DomainError(
+            "VALIDATION",
+            "Die Sprachherkunft des Entwurfs fehlt.",
+            400,
+          );
         const draft = this.clinical.createNoteDraft(userId, {
           patientId: intent.patientId,
           encounterId: intent.encounterId,
           transcript:
-            intent.payload.inputModality === "voice"
-              ? (intent.payload.structuredText ?? "")
-              : null,
+            voiceTranscriptProvenance.at(-1)?.original.transcript ?? null,
+          ...(voiceTranscriptProvenance.length > 0
+            ? { voiceTranscriptProvenance }
+            : {}),
           structuredText: intent.payload.structuredText ?? "",
           purpose: intent.purpose,
         });
@@ -2206,6 +2267,18 @@ export class AssistantService {
         const plan = assistantProposalSchema.parse(
           JSON.parse(intent.payload.plan ?? "null"),
         );
+        const voiceTranscriptProvenance = (
+          plan.voiceTranscriptProvenance ?? []
+        ).map(parseVoiceTranscriptProvenance);
+        if (
+          intent.payload.inputModality === "voice" &&
+          voiceTranscriptProvenance.length === 0
+        )
+          throw new DomainError(
+            "VALIDATION",
+            "Die Sprachherkunft des Pflegeentwurfs fehlt.",
+            400,
+          );
         const reviewed = new Set(context.reviewedActionIds ?? []);
         const linkedTaskActionId = intent.payload.linkedTaskActionId;
         const allowedActionIds = new Set([
@@ -2292,9 +2365,11 @@ export class AssistantService {
                   patientId: intent.patientId,
                   encounterId: intent.encounterId,
                   transcript:
-                    intent.payload.inputModality === "voice"
-                      ? action.structuredText
-                      : null,
+                    voiceTranscriptProvenance.at(-1)?.original.transcript ??
+                    null,
+                  ...(voiceTranscriptProvenance.length > 0
+                    ? { voiceTranscriptProvenance }
+                    : {}),
                   structuredText: action.structuredText,
                   purpose: intent.purpose,
                 });

@@ -71,10 +71,11 @@ PFH_DEMO_MODE=true node --env-file=.env.demo node_modules/vitest/vitest.mjs run 
   --no-file-parallelism --reporter=dot
 ```
 
-Latest focused result: 6 files and 21 tests passed against operational
-PostgreSQL on 2026-09-14. The migration ledger verified versions 1–8; migration 008 adds
-provider-version, adapter-version, mapping-version and read-back-hash evidence
-to durable provider receipts.
+Latest focused result: 6 files and 22 tests passed against operational
+PostgreSQL on 2026-09-14. The migration ledger verified versions 1–10;
+migration 008 adds provider-version, adapter-version, mapping-version and
+read-back-hash evidence to durable provider receipts, while migrations 009–010
+add site-scoped browser-tab context bindings and their authority constraint.
 
 The live scenario accepted the following three turns in one Luca conversation:
 
@@ -100,6 +101,21 @@ deleting it. Returning to the same patient and encounter revalidates the same
 durable proposal revision and issues a fresh one-use token; the old token stays
 invalid. This was proved in both the memory profile and PostgreSQL.
 
+Each browser document now generates an independent UUID. Selection, history,
+pending review, ASR authority, query, stream, execution and clear operations all
+resolve that binding server-side. A patient switch invalidates the old authority
+in that tab, while a second authorized tab retains its own patient/encounter
+thread and can still execute its own reviewed intent.
+
+Voice review stores two explicit records: the immutable ASR transcript with
+hash, capture time, model/mode/language/confidence and `audioRetained:false`, and
+the separately hashed human-reviewed transcript with a correction flag. Edited
+text remains voice input; critical-entity offsets are recalculated against the
+reviewed text. Stale original offsets fail without consuming the receipt, while
+the corrected offsets can be retried. Lineage is retained in the proposal,
+accepted note, conversation and Medplum `DocumentReference` attachment; audio
+bytes are never persisted.
+
 The bounded agent now permits natural terminal prose only when tool-backed
 answers cite exact result references emitted during that run. Missing or
 invented references, authority claims, URLs/tokens and unsupported numbers are
@@ -123,6 +139,11 @@ is rejected unless complete read-back evidence and matching versions exist.
 Assistant execution idempotency is bound to the concrete one-use intent token
 and canonical body while the legacy hash remains valid for older non-assistant
 command receipts.
+
+A projection that reaches manual hold no longer requires an unsafe database
+edit. IT can inspect the current queue head and requeue only that exact job plus
+its unchanged error code. The command is idempotent, permission-checked and
+audited; it cannot skip an earlier job or claim delivery.
 
 A live Medplum optimistic-concurrency test created a synthetic resource,
 captured its version, wrote a newer version and proved that the stale accepted

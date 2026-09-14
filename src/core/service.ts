@@ -58,6 +58,10 @@ import type {
   Role,
   SyncState,
 } from "./types.js";
+import {
+  parseVoiceTranscriptProvenance,
+  type VoiceTranscriptProvenance,
+} from "./voice-provenance.js";
 import { DomainError } from "./types.js";
 import { auditEventToFhirR4, toFhirResourceSet } from "./fhir-resource-set.js";
 import { siteConfiguration } from "./site-config.js";
@@ -868,6 +872,7 @@ export class PflegehelferService {
       patientId: string;
       encounterId: string;
       transcript?: string | null | undefined;
+      voiceTranscriptProvenance?: VoiceTranscriptProvenance[] | undefined;
       structuredText: string;
       approvalPolicy?: ApprovalPolicy | undefined;
       provider?: ProviderId | undefined;
@@ -891,11 +896,27 @@ export class PflegehelferService {
         /\b(?:\d+(?:[.,]\d+)?\s?(?:mg|ml|mmHg|%|°C|m|kg)|kein(?:e|en)?|links|rechts)\b/gi,
       ) ?? []
     ).map((value) => value.trim());
+    const voiceTranscriptProvenance = input.voiceTranscriptProvenance?.map(
+      parseVoiceTranscriptProvenance,
+    );
+    if (
+      voiceTranscriptProvenance?.length &&
+      input.transcript?.trim() !==
+        voiceTranscriptProvenance.at(-1)!.original.transcript
+    )
+      throw new DomainError(
+        "VALIDATION",
+        "Originaltranskript und Sprachherkunft stimmen nicht überein.",
+        400,
+      );
     const note: ClinicalNote = {
       id: `n-${randomUUID()}`,
       patientId: patient.id,
       encounterId: patient.encounterId,
       transcript: input.transcript?.trim() || null,
+      ...(voiceTranscriptProvenance?.length
+        ? { voiceTranscriptProvenance }
+        : {}),
       structuredText: input.structuredText.trim(),
       criticalEntities,
       authorId: user.id,

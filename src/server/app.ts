@@ -28,6 +28,13 @@ import { siteConfiguration } from "../core/site-config.js";
 import { decide, type Action } from "../core/policy.js";
 import { runtimeSitePack } from "../core/runtime-instructions.js";
 import { InMemoryReferenceStatePort } from "../core/clinical-data-port.js";
+import { extractCriticalEntities } from "../core/critical-entities.js";
+import {
+  createVoiceTranscriptProvenance,
+  transcriptHash,
+  voiceTranscriptOriginalSchema,
+  type VoiceTranscriptProvenance,
+} from "../core/voice-provenance.js";
 import { DomainError, type Purpose } from "../core/types.js";
 import type { AssistantComponent } from "../core/assistant.js";
 import {
@@ -44,6 +51,7 @@ import {
 } from "../infrastructure/medplum-workspace.js";
 import {
   InMemoryOperationalStore,
+  type AssistantContextBinding,
   type DurableVoiceAuthority,
   type OperationalStore,
 } from "../infrastructure/operational-store.js";
@@ -79,6 +87,16 @@ const purposeSchema = z.enum([
   "quality-review",
 ]);
 const prioritySchema = z.enum(["routine", "elevated", "urgent"]);
+const clinicalProjectionRetryBody = z
+  .object({
+    expectedErrorCode: z
+      .string()
+      .trim()
+      .min(1)
+      .max(160)
+      .regex(/^[A-Za-z0-9_.:-]+$/),
+  })
+  .strict();
 
 function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
@@ -290,6 +308,7 @@ export function buildApp(
       : ("institution-local" as const);
   const assistantWorkingContext = async (
     actorId: string,
+    assistantContext: AssistantContextBinding,
     previousCarePlan: string | null = null,
   ) => {
     const actor = service.user(actorId);
@@ -309,7 +328,8 @@ export function buildApp(
       await operationalStore.loadConversation(
         actorId,
         actor.role,
-        session.patientId,
+        assistantContext.patientId,
+        assistantContext,
       )
     ).slice(-4);
     const recentPrompts = recentTurns.map((turn) => turn.prompt);
@@ -335,9 +355,9 @@ export function buildApp(
       : null;
     return {
       organizationId: siteConfiguration.institutionId,
-      sessionId: session.id,
-      threadId: session.threadId,
-      contextRevision: session.contextRevision,
+      sessionId: assistantContext.sessionId,
+      threadId: assistantContext.threadId,
+      contextRevision: assistantContext.contextRevision,
       departmentId: siteConfiguration.department.id,
       stationId: staffAssignment?.stationId ?? null,
       roleProfileId: runtimeRole?.id ?? null,
@@ -394,16 +414,22 @@ export function buildApp(
     for (const [receiptId, receipt] of voiceReceipts)
       if (receipt.actorId === actorId) voiceReceipts.delete(receiptId);
   };
+  const revokeClientVoiceReceipts = (
+    actorId: string,
+    clientContextId: string,
+  ) => {
+    for (const [receiptId, receipt] of voiceReceipts)
+      if (
+        receipt.actorId === actorId &&
+        receipt.clientContextId === clientContextId
+      )
+        voiceReceipts.delete(receiptId);
+  };
   const authorityHash = (token: string) =>
     createHash("sha256").update(token).digest("hex");
   const persistResponseAuthorities = async (
     response: AssistantResponse,
-    session: {
-      id: string;
-      threadId: string;
-      contextRevision: number;
-      encounterId: string | null;
-    },
+    context: AssistantContextBinding,
   ) => {
     for (const component of response.components) {
       if (component.type !== "DraftAction") continue;
@@ -417,24 +443,20 @@ export function buildApp(
       await operationalStore.storeIntentAuthority({
         tokenHash: authorityHash(component.intentToken),
         record,
-        sessionId: session.id,
-        threadId: session.threadId,
-        contextRevision: session.contextRevision,
+        sessionId: context.sessionId,
+        threadId: context.threadId,
+        contextRevision: context.contextRevision,
         responseId: response.id,
         reviewItems: component.reviewItems ?? [],
+        clientContextId: context.clientContextId,
       });
     }
   };
   const consumeValidatedVoiceReceipt = async (
     actorId: string,
     body: AssistantQueryBody,
-    session: {
-      id: string;
-      threadId: string;
-      contextRevision: number;
-      encounterId: string | null;
-    },
-  ): Promise<string | null> => {
+    context: AssistantContextBinding,
+  ): Promise<VoiceTranscriptProvenance | null> => {
     if (body.inputModality !== "voice") return null;
     const receiptId = body.voiceReceiptId ?? "";
     const tokenHash = authorityHash(receiptId);
@@ -442,20 +464,23 @@ export function buildApp(
       voiceReceipts.get(receiptId) ??
       (await operationalStore.loadVoiceAuthority(tokenHash));
     const purpose = body.purpose ?? "direct-care";
-    const textHash = createHash("sha256").update(body.prompt).digest("hex");
     const confirmed = [...(body.voiceConfirmedEntityIds ?? [])].sort();
-    const expected = [...(receipt?.entityIds ?? [])].sort();
+    const original = voiceTranscriptOriginalSchema.safeParse(receipt?.original);
+    const expected = extractCriticalEntities(body.prompt)
+      .map((entity) => `${entity.kind}:${entity.start}:${entity.end}`)
+      .sort();
     if (
       !receipt ||
+      !original.success ||
       receipt.expiresAt < Date.now() ||
       receipt.actorId !== actorId ||
       receipt.patientId !== body.patientId ||
-      receipt.encounterId !== session.encounterId ||
+      receipt.encounterId !== context.encounterId ||
       receipt.purpose !== purpose ||
-      receipt.sessionId !== session.id ||
-      receipt.threadId !== session.threadId ||
-      receipt.contextRevision !== session.contextRevision ||
-      receipt.textHash !== textHash ||
+      receipt.clientContextId !== context.clientContextId ||
+      receipt.sessionId !== context.sessionId ||
+      receipt.threadId !== context.threadId ||
+      receipt.contextRevision !== context.contextRevision ||
       JSON.stringify(confirmed) !== JSON.stringify(expected)
     )
       throw new DomainError(
@@ -470,7 +495,10 @@ export function buildApp(
         403,
       );
     voiceReceipts.delete(receiptId);
-    return receiptId;
+    return createVoiceTranscriptProvenance({
+      original: original.data,
+      reviewedTranscript: body.prompt,
+    });
   };
   const eventSubscribers = new Set<(revision: number) => void>();
   const contextTransitions = new Map<string, Promise<unknown>>();
@@ -671,6 +699,48 @@ export function buildApp(
     const value = request.headers["x-demo-user"];
     if (typeof value !== "string" || value.length > 80) return "u-assistant";
     return value;
+  };
+  const assistantClientContextId = (request: FastifyRequest): string => {
+    const explicit = request.headers["x-pfh-client-context"];
+    if (explicit !== undefined) return z.uuid().parse(explicit);
+    // Backward-compatible single-client binding for non-browser API callers.
+    // The PWA always supplies an independently generated per-document UUID.
+    const digest = createHash("sha256")
+      .update(`implicit-assistant-context:${userId(request)}`)
+      .digest("hex");
+    return `${digest.slice(0, 8)}-${digest.slice(8, 12)}-4${digest.slice(13, 16)}-8${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
+  };
+  const requireAssistantContext = async (
+    request: FastifyRequest,
+  ): Promise<AssistantContextBinding> => {
+    const actorId = userId(request);
+    const actor = service.user(actorId);
+    const clientContextId = assistantClientContextId(request);
+    let context = await operationalStore.resolveAssistantContext(
+      actorId,
+      actor.role,
+      clientContextId,
+    );
+    if (!context && request.headers["x-pfh-client-context"] === undefined) {
+      const session = await operationalStore.getOrStartSession(
+        actorId,
+        actor.role,
+      );
+      context = await operationalStore.bindAssistantContext(
+        actorId,
+        actor.role,
+        clientContextId,
+        session.patientId,
+        session.encounterId,
+      );
+    }
+    if (!context)
+      throw new DomainError(
+        "AUTH_DENIED",
+        "Browserkontext ist ungültig oder abgelaufen. Bitte Patientenkontext erneut öffnen.",
+        403,
+      );
+    return context;
   };
   const requireMigratedClinicalMutation = (): void => {
     if (runtime.profile === "integrated-demo")
@@ -1196,6 +1266,82 @@ export function buildApp(
     };
   });
 
+  app.get(
+    "/api/v1/operations/clinical-projections/manual-head",
+    async (request) => {
+      await persistenceQueue;
+      const actor = service.user(userId(request));
+      if (actor.role !== "it")
+        throw new DomainError(
+          "AUTH_DENIED",
+          "Nur IT darf manuelle klinische Projektionen einsehen.",
+          403,
+        );
+      return { hold: await operationalStore.manualClinicalProjectionHead() };
+    },
+  );
+
+  app.post(
+    "/api/v1/operations/clinical-projections/:jobId/retry",
+    async (request) => {
+      const actor = service.user(userId(request));
+      if (actor.role !== "it")
+        throw new DomainError(
+          "AUTH_DENIED",
+          "Nur IT darf eine klinische Projektion erneut einreihen.",
+          403,
+        );
+      const { jobId } = z
+        .object({ jobId: z.uuid() })
+        .strict()
+        .parse(request.params);
+      const { expectedErrorCode } = clinicalProjectionRetryBody.parse(
+        request.body,
+      );
+      const command = requestCommandKeys.get(request);
+      if (!command)
+        throw new DomainError(
+          "INVALID_STATE",
+          "Für die Betriebsfreigabe fehlt die Befehlsbindung.",
+          409,
+        );
+      const pending = persistenceQueue.then(async () => {
+        const auditLength = service.audit.length;
+        const auditEntry = service.audit.append({
+          actor,
+          action: "clinical-projection:retry",
+          patientId: null,
+          purpose: "operations",
+          outcome: "success",
+          detail: { jobId, errorCode: expectedErrorCode },
+        });
+        try {
+          const receipt =
+            await operationalStore.recoverManualClinicalProjection({
+              actorId: actor.id,
+              actorRole: actor.role,
+              jobId,
+              expectedErrorCode,
+              commandKey: command.key,
+              requestHash: command.requestHash,
+              auditEntry,
+            });
+          if (receipt.replayed) service.audit.truncate(auditLength);
+          publishInvalidation();
+          return receipt;
+        } catch (error) {
+          service.audit.truncate(auditLength);
+          throw error;
+        }
+      });
+      persistenceQueue = pending.then(
+        () => undefined,
+        () => undefined,
+      );
+      return pending;
+    },
+  );
+
   app.get("/api/v1/snapshot", async (request) => {
     await persistenceQueue;
     const query = z
@@ -1384,24 +1530,21 @@ export function buildApp(
     await persistenceQueue;
     const actorId = userId(request);
     const actor = service.user(actorId);
-    const session = await operationalStore.getOrStartSession(
-      actorId,
-      actor.role,
-    );
-    if (!session.patientId || !session.encounterId) return { pending: null };
+    const context = await requireAssistantContext(request);
+    if (!context.patientId || !context.encounterId) return { pending: null };
     const patient = service
       .snapshot(actorId, actor.defaultPurpose)
       .patients.find(
         (candidate) =>
-          candidate.id === session.patientId &&
-          candidate.encounterId === session.encounterId,
+          candidate.id === context.patientId &&
+          candidate.encounterId === context.encounterId,
       );
     if (!patient) return { pending: null };
     const pending = await operationalStore.loadPendingIntentReview(
       actorId,
       patient.id,
       patient.encounterId,
-      session.threadId,
+      context.threadId,
     );
     if (!pending) return { pending: null };
     const intentToken = assistant.reissueDurableIntent(actorId, pending.record);
@@ -1469,14 +1612,20 @@ export function buildApp(
     await operationalStore.storeIntentAuthority({
       tokenHash: authorityHash(intentToken),
       record: freshRecord,
-      sessionId: session.id,
-      threadId: session.threadId,
-      contextRevision: session.contextRevision,
+      sessionId: context.sessionId,
+      threadId: context.threadId,
+      contextRevision: context.contextRevision,
       responseId: pending.responseId,
       reviewItems,
+      clientContextId: context.clientContextId,
     });
     const sourceTurn = (
-      await operationalStore.loadConversation(actorId, actor.role, patient.id)
+      await operationalStore.loadConversation(
+        actorId,
+        actor.role,
+        patient.id,
+        context,
+      )
     ).find((turn) => turn.id === pending.responseId);
     const archived = sourceTurn?.response as AssistantResponse | undefined;
     if (!archived) return { pending: null };
@@ -1507,41 +1656,46 @@ export function buildApp(
     await persistenceQueue;
     const actorId = userId(request);
     const actor = service.user(actorId);
-    let session = await operationalStore.getOrStartSession(actorId, actor.role);
+    const context = await requireAssistantContext(request);
     const authorizedPatients = new Map(
       service
         .snapshot(actorId, actor.defaultPurpose)
         .patients.map((patient) => [patient.id, patient.encounterId]),
     );
     if (
-      session.patientId &&
-      authorizedPatients.get(session.patientId) !== session.encounterId
-    ) {
-      assistant.revokeActorIntents(actorId);
-      revokeVoiceReceipts(actorId);
-      await operationalStore.revokeActorAuthorities(actorId);
-      session = await operationalStore.changePatientContext(
-        actorId,
-        actor.role,
-        null,
-        null,
+      context.patientId &&
+      authorizedPatients.get(context.patientId) !== context.encounterId
+    )
+      throw new DomainError(
+        "AUTH_DENIED",
+        "Browserkontext ist für diese Rolle nicht mehr freigegeben.",
+        403,
       );
-    }
     const conversations = (
       await operationalStore.listConversations(actorId, actor.role)
-    ).filter(
-      (conversation) =>
-        conversation.patientId === null ||
-        authorizedPatients.get(conversation.patientId) ===
-          conversation.encounterId,
-    );
+    )
+      .filter(
+        (conversation) =>
+          conversation.patientId === null ||
+          authorizedPatients.get(conversation.patientId) ===
+            conversation.encounterId,
+      )
+      .map((conversation) => ({
+        ...conversation,
+        active: conversation.id === context.threadId,
+      }));
     return {
-      turns: await operationalStore.loadConversation(actorId, actor.role),
+      turns: await operationalStore.loadConversation(
+        actorId,
+        actor.role,
+        context.patientId,
+        context,
+      ),
       conversations,
       expiresAt: new Date(
         Date.now() + siteConfiguration.sessionTtlHours * 60 * 60_000,
       ).toISOString(),
-      session,
+      context,
     };
   });
 
@@ -1965,6 +2119,7 @@ export function buildApp(
   app.post("/api/v1/assistant/context", async (request) => {
     const actorId = userId(request);
     const actor = service.user(actorId);
+    const clientContextId = assistantClientContextId(request);
     const body = z
       .object({ patientId: z.string().nullable() })
       .strict()
@@ -1982,27 +2137,32 @@ export function buildApp(
           403,
         );
     }
-    assistant.revokeActorIntents(actorId);
-    revokeVoiceReceipts(actorId);
-    await operationalStore.suspendActorAuthorities(actorId);
-    const transition = operationalStore.changePatientContext(
+    revokeClientVoiceReceipts(actorId, clientContextId);
+    await operationalStore.suspendAssistantContextAuthorities(
+      actorId,
+      clientContextId,
+    );
+    const transition = operationalStore.bindAssistantContext(
       actorId,
       actor.role,
+      clientContextId,
       body.patientId,
       selectedPatient?.encounterId ?? null,
     );
-    contextTransitions.set(actorId, transition);
+    const transitionKey = `${actorId}:${clientContextId}`;
+    contextTransitions.set(transitionKey, transition);
     try {
       return await transition;
     } finally {
-      if (contextTransitions.get(actorId) === transition)
-        contextTransitions.delete(actorId);
+      if (contextTransitions.get(transitionKey) === transition)
+        contextTransitions.delete(transitionKey);
     }
   });
 
   app.post("/api/v1/assistant/conversation/clear", async (request) => {
     const actorId = userId(request);
     const actor = service.user(actorId);
+    const context = await requireAssistantContext(request);
     await persist(
       () =>
         service.audit.append({
@@ -2015,38 +2175,32 @@ export function buildApp(
         }),
       request,
     );
-    await operationalStore.clearConversation(actorId, actor.role);
+    await operationalStore.clearConversation(actorId, actor.role, context);
     return { cleared: true, expiresAt: null };
   });
 
   app.post("/api/v1/assistant/transcribe", async (request) => {
     await persistenceQueue;
+    const assistantContext = await requireAssistantContext(request);
     const context = z
       .object({
         patientId: z.string().nullable(),
         purpose: purposeSchema.default("direct-care"),
       })
       .parse({
-        patientId:
-          typeof request.headers["x-pfh-patient-context"] === "string"
-            ? request.headers["x-pfh-patient-context"]
-            : null,
+        patientId: assistantContext.patientId,
         purpose: request.headers["x-pfh-purpose"],
       });
     const actorId = userId(request);
     const actor = service.user(actorId);
-    const session = await operationalStore.getOrStartSession(
-      actorId,
-      actor.role,
-    );
     const selectedPatient = context.patientId
       ? service
           .snapshot(actorId, context.purpose)
           .patients.find((patient) => patient.id === context.patientId)
       : null;
     if (
-      session.patientId !== context.patientId ||
-      session.encounterId !== (selectedPatient?.encounterId ?? null)
+      assistantContext.patientId !== context.patientId ||
+      assistantContext.encounterId !== (selectedPatient?.encounterId ?? null)
     )
       throw new DomainError(
         "AUTH_DENIED",
@@ -2088,19 +2242,31 @@ export function buildApp(
         effectiveDataClass(),
       );
       const receiptId = randomUUID();
+      const capturedAt = new Date().toISOString();
+      const original = voiceTranscriptOriginalSchema.parse({
+        transcript: transcription.text,
+        transcriptHash: transcriptHash(transcription.text),
+        capturedAt,
+        source: {
+          kind: "asr",
+          mode: asr.mode,
+          model: transcription.model,
+          language: transcription.language,
+          confidence: transcription.confidence,
+          confidenceState: transcription.confidenceState,
+          audioRetained: false,
+        },
+      });
       const voiceAuthority: DurableVoiceAuthority = {
+        clientContextId: assistantContext.clientContextId,
         actorId,
         patientId: context.patientId,
-        encounterId: session.encounterId,
+        encounterId: assistantContext.encounterId,
         purpose: context.purpose,
-        textHash: createHash("sha256").update(transcription.text).digest("hex"),
-        model: transcription.model,
-        entityIds: transcription.criticalEntities.map(
-          (entity) => `${entity.kind}:${entity.start}:${entity.end}`,
-        ),
-        sessionId: session.id,
-        threadId: session.threadId,
-        contextRevision: session.contextRevision,
+        original,
+        sessionId: assistantContext.sessionId,
+        threadId: assistantContext.threadId,
+        contextRevision: assistantContext.contextRevision,
         expiresAt: Date.now() + 5 * 60_000,
       };
       voiceReceipts.set(receiptId, voiceAuthority);
@@ -2159,41 +2325,40 @@ export function buildApp(
     reply.raw.once("close", abortInference);
     reply.raw.once("finish", finishResponse);
     const actor = service.user(actorId);
-    await contextTransitions.get(actorId);
-    const session = await operationalStore.getOrStartSession(
-      actorId,
-      actor.role,
-    );
+    const clientContextId = assistantClientContextId(request);
+    await contextTransitions.get(`${actorId}:${clientContextId}`);
+    const context = await requireAssistantContext(request);
     const selectedPatient = body.patientId
       ? service
           .snapshot(actorId, body.purpose ?? actor.defaultPurpose)
           .patients.find((patient) => patient.id === body.patientId)
       : null;
     if (
-      session.patientId !== body.patientId ||
-      session.encounterId !== (selectedPatient?.encounterId ?? null)
+      context.patientId !== body.patientId ||
+      context.encounterId !== (selectedPatient?.encounterId ?? null)
     )
       throw new DomainError(
         "AUTH_DENIED",
         "Assistenzanfrage stimmt nicht mit dem bewusst gewählten Patientenkontext überein.",
         403,
       );
-    const voiceReceiptId = await consumeValidatedVoiceReceipt(
+    const voiceTranscriptProvenance = await consumeValidatedVoiceReceipt(
       actorId,
       body,
-      session,
+      context,
     );
     const previousCarePlan =
-      session.patientId && session.encounterId
+      context.patientId && context.encounterId
         ? await operationalStore.loadPendingCarePlan(
             actorId,
-            session.patientId,
-            session.encounterId,
-            session.threadId,
+            context.patientId,
+            context.encounterId,
+            context.threadId,
           )
         : null;
     const workingContext = await assistantWorkingContext(
       actorId,
+      context,
       previousCarePlan,
     );
     const response = await runAssistantQuery(() =>
@@ -2202,6 +2367,7 @@ export function buildApp(
         patientId: body.patientId,
         inputModality: body.inputModality,
         voiceTranscriptConfirmed: body.voiceTranscriptConfirmed ?? false,
+        ...(voiceTranscriptProvenance ? { voiceTranscriptProvenance } : {}),
         signal: inferenceController.signal,
         workingContext,
         ...(body.purpose ? { purpose: body.purpose } : {}),
@@ -2216,7 +2382,7 @@ export function buildApp(
         499,
       );
     }
-    await persistResponseAuthorities(response, session);
+    await persistResponseAuthorities(response, context);
     if (inferenceController.signal.aborted) {
       await revokeAfterDisconnect();
       throw new DomainError(
@@ -2226,17 +2392,25 @@ export function buildApp(
       );
     }
     try {
-      await operationalStore.appendConversationTurn(actorId, actor.role, {
-        id: response.id,
-        prompt: body.prompt,
-        response: archiveAssistantResponse(response),
-        createdAt: new Date().toISOString(),
-        inputModality: body.inputModality,
-        originPatientId: body.patientId,
-        originEncounterId: session.encounterId,
-        originThreadId: session.threadId,
-        originContextRevision: session.contextRevision,
-      });
+      await operationalStore.appendConversationTurn(
+        actorId,
+        actor.role,
+        {
+          id: response.id,
+          prompt: body.prompt,
+          response: archiveAssistantResponse(response),
+          createdAt: new Date().toISOString(),
+          inputModality: body.inputModality,
+          ...(voiceTranscriptProvenance
+            ? { voiceTranscriptProvenance: [voiceTranscriptProvenance] }
+            : {}),
+          originPatientId: body.patientId,
+          originEncounterId: context.encounterId,
+          originThreadId: context.threadId,
+          originContextRevision: context.contextRevision,
+        },
+        context,
+      );
     } catch (error) {
       await revokeAuthorities();
       throw error;
@@ -2249,7 +2423,6 @@ export function buildApp(
         499,
       );
     }
-    void voiceReceiptId;
     return response;
   });
 
@@ -2284,42 +2457,41 @@ export function buildApp(
     reply.raw.once("close", abortInference);
     reply.raw.once("finish", finishResponse);
     const actor = service.user(actorId);
-    await contextTransitions.get(actorId);
-    const session = await operationalStore.getOrStartSession(
-      actorId,
-      actor.role,
-    );
+    const clientContextId = assistantClientContextId(request);
+    await contextTransitions.get(`${actorId}:${clientContextId}`);
+    const context = await requireAssistantContext(request);
     const selectedPatient = body.patientId
       ? service
           .snapshot(actorId, body.purpose ?? actor.defaultPurpose)
           .patients.find((patient) => patient.id === body.patientId)
       : null;
     if (
-      session.patientId !== body.patientId ||
-      session.encounterId !== (selectedPatient?.encounterId ?? null)
+      context.patientId !== body.patientId ||
+      context.encounterId !== (selectedPatient?.encounterId ?? null)
     )
       throw new DomainError(
         "AUTH_DENIED",
         "Assistenzanfrage stimmt nicht mit dem bewusst gewählten Patientenkontext überein.",
         403,
       );
-    const voiceReceiptId = await consumeValidatedVoiceReceipt(
+    const voiceTranscriptProvenance = await consumeValidatedVoiceReceipt(
       actorId,
       body,
-      session,
+      context,
     );
 
     const previousCarePlan =
-      session.patientId && session.encounterId
+      context.patientId && context.encounterId
         ? await operationalStore.loadPendingCarePlan(
             actorId,
-            session.patientId,
-            session.encounterId,
-            session.threadId,
+            context.patientId,
+            context.encounterId,
+            context.threadId,
           )
         : null;
     const workingContext = await assistantWorkingContext(
       actorId,
+      context,
       previousCarePlan,
     );
     const response = await runAssistantQuery(() =>
@@ -2328,6 +2500,7 @@ export function buildApp(
         patientId: body.patientId,
         inputModality: body.inputModality,
         voiceTranscriptConfirmed: body.voiceTranscriptConfirmed ?? false,
+        ...(voiceTranscriptProvenance ? { voiceTranscriptProvenance } : {}),
         signal: inferenceController.signal,
         workingContext,
         ...(body.purpose ? { purpose: body.purpose } : {}),
@@ -2342,7 +2515,7 @@ export function buildApp(
         requestId: request.id,
       });
     }
-    await persistResponseAuthorities(response, session);
+    await persistResponseAuthorities(response, context);
     if (inferenceController.signal.aborted) {
       await revokeAfterDisconnect();
       return reply.code(499).send({
@@ -2372,17 +2545,25 @@ export function buildApp(
       });
     }
     try {
-      await operationalStore.appendConversationTurn(actorId, actor.role, {
-        id: response.id,
-        prompt: body.prompt,
-        response: archiveAssistantResponse(response),
-        createdAt: new Date().toISOString(),
-        inputModality: body.inputModality,
-        originPatientId: body.patientId,
-        originEncounterId: session.encounterId,
-        originThreadId: session.threadId,
-        originContextRevision: session.contextRevision,
-      });
+      await operationalStore.appendConversationTurn(
+        actorId,
+        actor.role,
+        {
+          id: response.id,
+          prompt: body.prompt,
+          response: archiveAssistantResponse(response),
+          createdAt: new Date().toISOString(),
+          inputModality: body.inputModality,
+          ...(voiceTranscriptProvenance
+            ? { voiceTranscriptProvenance: [voiceTranscriptProvenance] }
+            : {}),
+          originPatientId: body.patientId,
+          originEncounterId: context.encounterId,
+          originThreadId: context.threadId,
+          originContextRevision: context.contextRevision,
+        },
+        context,
+      );
     } catch {
       await revokeAuthorities();
       write({
@@ -2398,7 +2579,6 @@ export function buildApp(
       reply.raw.end();
       return;
     }
-    void voiceReceiptId;
     write({ type: "complete", response });
     reply.raw.end();
   });
@@ -2407,13 +2587,10 @@ export function buildApp(
     const execution = assistantIntentBody.parse(request.body);
     const actorId = userId(request);
     const actor = service.user(actorId);
-    const session = await operationalStore.getOrStartSession(
-      actorId,
-      actor.role,
-    );
+    const context = await requireAssistantContext(request);
     if (
-      session.patientId !== execution.patientId ||
-      session.encounterId !== execution.encounterId
+      context.patientId !== execution.patientId ||
+      context.encounterId !== execution.encounterId
     )
       return persist(() => {
         service.audit.append({
@@ -2434,11 +2611,12 @@ export function buildApp(
     const durableIntent = await operationalStore.loadIntentAuthority({
       tokenHash,
       actorId,
-      sessionId: session.id,
-      threadId: session.threadId,
-      contextRevision: session.contextRevision,
+      sessionId: context.sessionId,
+      threadId: context.threadId,
+      contextRevision: context.contextRevision,
       patientId: execution.patientId,
       encounterId: execution.encounterId,
+      clientContextId: context.clientContextId,
     });
     if (
       !durableIntent ||
@@ -2627,9 +2805,10 @@ export function buildApp(
               purpose: execution.purpose,
               patientId: execution.patientId,
               encounterId: execution.encounterId,
-              sessionId: session.id,
-              threadId: session.threadId,
-              contextRevision: session.contextRevision,
+              clientContextId: context.clientContextId,
+              sessionId: context.sessionId,
+              threadId: context.threadId,
+              contextRevision: context.contextRevision,
               resourceVersion: execution.resourceVersion,
               commandKey: command.key,
               requestHash: command.requestHash,

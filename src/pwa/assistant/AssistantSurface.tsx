@@ -17,6 +17,7 @@ import {
   type CriticalEntity,
 } from "../../core/critical-entities";
 import { clinicalAssistantLibrary } from "./clinical-library";
+import { assistantClientContextHeaders } from "../assistant-context";
 
 interface AssistantResponse {
   id: string;
@@ -181,6 +182,7 @@ async function post<T>(
     headers: {
       "content-type": "application/json",
       "x-demo-user": userId,
+      ...assistantClientContextHeaders(),
       "x-command-id": crypto.randomUUID(),
     },
     body: JSON.stringify(body),
@@ -815,6 +817,7 @@ export function AssistantSurface({
   const [workflowBusy, setWorkflowBusy] = useState(false);
   const [recording, setRecording] = useState(false);
   const [voiceReview, setVoiceReview] = useState<{
+    originalTranscript: string;
     confidence: number | null;
     entities: CriticalEntity[];
     confirmed: boolean;
@@ -968,7 +971,7 @@ export function AssistantSurface({
   useEffect(() => {
     const controller = new AbortController();
     void fetch("/api/v1/assistant/conversation", {
-      headers: { "x-demo-user": userId },
+      headers: { "x-demo-user": userId, ...assistantClientContextHeaders() },
       signal: controller.signal,
     })
       .then(async (response) => {
@@ -991,6 +994,7 @@ export function AssistantSurface({
             headers: {
               "content-type": "application/json",
               "x-demo-user": userId,
+              ...assistantClientContextHeaders(),
               "x-command-id": crypto.randomUUID(),
             },
             body: "{}",
@@ -1187,6 +1191,7 @@ export function AssistantSurface({
         headers: {
           "content-type": "application/json",
           "x-demo-user": userId,
+          ...assistantClientContextHeaders(),
           "x-command-id": crypto.randomUUID(),
         },
         body: JSON.stringify({
@@ -1331,6 +1336,7 @@ export function AssistantSurface({
         return;
       }
       setVoiceReview({
+        originalTranscript: transcript,
         confidence,
         entities: extractCriticalEntities(transcript, confidence),
         confirmed: false,
@@ -1388,6 +1394,7 @@ export function AssistantSurface({
             method: "POST",
             headers: {
               "x-demo-user": userId,
+              ...assistantClientContextHeaders(),
               "x-command-id": crypto.randomUUID(),
               "x-pfh-purpose": "direct-care",
               ...(recordedPatientId
@@ -1415,6 +1422,7 @@ export function AssistantSurface({
             return;
           setPrompt(body.transcription.text);
           setVoiceReview({
+            originalTranscript: body.transcription.text,
             confidence: body.transcription.confidence,
             entities: body.transcription.criticalEntities,
             confirmed: false,
@@ -1950,6 +1958,9 @@ export function AssistantSurface({
                 }
               />
               Transkript, Patient und kritische Angaben sind geprüft
+              {voiceReview.originalTranscript !== prompt
+                ? " · Korrektur bleibt als geprüfte Sprachrevision nachvollziehbar"
+                : ""}
             </label>
           </div>
         )}
@@ -2009,10 +2020,11 @@ export function AssistantSurface({
                         ...current,
                         confirmed: false,
                         confirmedEntityIds: [],
-                        receiptId: null,
                         entities: extractCriticalEntities(
                           value,
-                          current.confidence,
+                          value === current.originalTranscript
+                            ? current.confidence
+                            : null,
                         ),
                       }
                     : null,

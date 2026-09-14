@@ -18,6 +18,12 @@ A `WorkingSession` preserves shift/workflow continuity and points to the current
 
 Every message, draft, attachment, model call, proposal revision and executable authority retains its origin organization/site, thread, patient/encounter where applicable and context revision. A scope switch revokes executable authority from the old revision but does not reinterpret or copy its content. Private content enters a shared audience only through an explicit reviewed publish action.
 
+Every browser document also owns a random client-context identifier. The server
+resolves that identifier to its actor/role/session/thread/patient/encounter and
+revision for every assistant route; a client-supplied patient ID never replaces
+this binding. Switching one tab advances only that tab's binding and authority,
+so another authorized tab retains its independent thread.
+
 The PWA keeps one conversation engine, composer, component catalog, policy gateway and command pipeline. Contact-style patient tabs are read/query lenses over the same records; they do not own workflow state and do not create a second clinical application.
 
 ## Consequences

@@ -5,9 +5,12 @@ import { PostgresOperationalStore } from "../src/infrastructure/operational-stor
 import { buildApp } from "../src/server/app.js";
 
 const databaseUrl = process.env.PFH_OPERATIONAL_DATABASE_URL;
-const commandHeaders = (user: string) => ({
+const commandHeaders = (user: string, clientContextId?: string) => ({
   "x-demo-user": user,
   "x-command-id": crypto.randomUUID(),
+  ...(clientContextId
+    ? { "x-pfh-client-context": clientContextId }
+    : undefined),
 });
 
 describe.runIf(Boolean(databaseUrl))(
@@ -17,6 +20,7 @@ describe.runIf(Boolean(databaseUrl))(
     // Found by /qa on 2026-09-13
     // Report: .gstack/qa-reports/qa-report-127-0-0-1-2026-09-13.md
     it("keeps the durable proposal pending across a read-only question", async () => {
+      const clientContextId = crypto.randomUUID();
       const store = new PostgresOperationalStore(databaseUrl!);
       await store.initialize();
       await store.resetDemoState();
@@ -29,13 +33,13 @@ describe.runIf(Boolean(databaseUrl))(
         await app.inject({
           method: "POST",
           url: "/api/v1/assistant/context",
-          headers: commandHeaders("u-nurse"),
+          headers: commandHeaders("u-nurse", clientContextId),
           payload: { patientId: "p-anna" },
         });
         const drafted = await app.inject({
           method: "POST",
           url: "/api/v1/assistant/query",
-          headers: commandHeaders("u-nurse"),
+          headers: commandHeaders("u-nurse", clientContextId),
           payload: {
             patientId: "p-anna",
             prompt: "Puls 82.",
@@ -54,7 +58,7 @@ describe.runIf(Boolean(databaseUrl))(
         const question = await app.inject({
           method: "POST",
           url: "/api/v1/assistant/query",
-          headers: commandHeaders("u-nurse"),
+          headers: commandHeaders("u-nurse", clientContextId),
           payload: {
             patientId: "p-anna",
             prompt: "Was ist noch offen?",
@@ -63,17 +67,19 @@ describe.runIf(Boolean(databaseUrl))(
         });
         expect(question.statusCode).toBe(200);
 
-        const session = await store.getOrStartSession(
+        const context = await store.resolveAssistantContext(
           "u-nurse",
           "registered-nurse",
+          clientContextId,
         );
+        expect(context).not.toBeNull();
         await expect(
           store.loadIntentAuthority({
             tokenHash: createHash("sha256").update(token!).digest("hex"),
             actorId: "u-nurse",
-            sessionId: session.id,
-            threadId: session.threadId,
-            contextRevision: session.contextRevision,
+            sessionId: context!.sessionId,
+            threadId: context!.threadId,
+            contextRevision: context!.contextRevision,
             patientId: "p-anna",
             encounterId: "enc-anna-2026",
           }),
@@ -83,7 +89,7 @@ describe.runIf(Boolean(databaseUrl))(
             "u-nurse",
             "p-anna",
             "enc-anna-2026",
-            session.threadId,
+            context!.threadId,
           ),
         ).resolves.toMatchObject({ responseId: draftBody.id });
       } finally {
@@ -92,6 +98,7 @@ describe.runIf(Boolean(databaseUrl))(
     });
 
     it("restores a suspended patient proposal after leaving and returning", async () => {
+      const clientContextId = crypto.randomUUID();
       const store = new PostgresOperationalStore(databaseUrl!);
       await store.initialize();
       await store.resetDemoState();
@@ -105,14 +112,14 @@ describe.runIf(Boolean(databaseUrl))(
           app.inject({
             method: "POST",
             url: "/api/v1/assistant/context",
-            headers: commandHeaders("u-nurse"),
+            headers: commandHeaders("u-nurse", clientContextId),
             payload: { patientId },
           });
         await switchTo("p-anna");
         const drafted = await app.inject({
           method: "POST",
           url: "/api/v1/assistant/query",
-          headers: commandHeaders("u-nurse"),
+          headers: commandHeaders("u-nurse", clientContextId),
           payload: {
             patientId: "p-anna",
             prompt: "Puls 82.",
@@ -131,7 +138,7 @@ describe.runIf(Boolean(databaseUrl))(
         const restored = await app.inject({
           method: "POST",
           url: "/api/v1/assistant/pending-review",
-          headers: commandHeaders("u-nurse"),
+          headers: commandHeaders("u-nurse", clientContextId),
           payload: {},
         });
         expect(restored.statusCode).toBe(200);
@@ -147,17 +154,19 @@ describe.runIf(Boolean(databaseUrl))(
             (component) => component.type === "DraftAction",
           )!.intentToken!;
         expect(newToken).not.toBe(originalToken);
-        const session = await store.getOrStartSession(
+        const context = await store.resolveAssistantContext(
           "u-nurse",
           "registered-nurse",
+          clientContextId,
         );
+        expect(context).not.toBeNull();
         await expect(
           store.loadIntentAuthority({
             tokenHash: createHash("sha256").update(originalToken).digest("hex"),
             actorId: "u-nurse",
-            sessionId: session.id,
-            threadId: session.threadId,
-            contextRevision: session.contextRevision,
+            sessionId: context!.sessionId,
+            threadId: context!.threadId,
+            contextRevision: context!.contextRevision,
             patientId: "p-anna",
             encounterId: "enc-anna-2026",
           }),
@@ -166,9 +175,9 @@ describe.runIf(Boolean(databaseUrl))(
           store.loadIntentAuthority({
             tokenHash: createHash("sha256").update(newToken).digest("hex"),
             actorId: "u-nurse",
-            sessionId: session.id,
-            threadId: session.threadId,
-            contextRevision: session.contextRevision,
+            sessionId: context!.sessionId,
+            threadId: context!.threadId,
+            contextRevision: context!.contextRevision,
             patientId: "p-anna",
             encounterId: "enc-anna-2026",
           }),

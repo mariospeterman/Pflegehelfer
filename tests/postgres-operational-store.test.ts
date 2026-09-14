@@ -123,6 +123,87 @@ describe.runIf(Boolean(databaseUrl))("PostgreSQL operational store", () => {
     }
   });
 
+  it("keeps two browser client contexts on separate threads", async () => {
+    const store = new PostgresOperationalStore(databaseUrl!);
+    const actorId = "u-nurse";
+    try {
+      await store.initialize();
+      await store.resetDemoState();
+      const anna = await store.bindAssistantContext(
+        actorId,
+        "registered-nurse",
+        crypto.randomUUID(),
+        "p-anna",
+        "enc-anna-2026",
+      );
+      const luca = await store.bindAssistantContext(
+        actorId,
+        "registered-nurse",
+        crypto.randomUUID(),
+        "p-luca",
+        "enc-luca-2026",
+      );
+      await store.appendConversationTurn(
+        actorId,
+        "registered-nurse",
+        {
+          id: crypto.randomUUID(),
+          prompt: "Anna-Tab",
+          response: {},
+          createdAt: new Date().toISOString(),
+          inputModality: "typed",
+          originPatientId: anna.patientId,
+          originEncounterId: anna.encounterId,
+          originThreadId: anna.threadId,
+          originContextRevision: anna.contextRevision,
+        },
+        anna,
+      );
+      await store.appendConversationTurn(
+        actorId,
+        "registered-nurse",
+        {
+          id: crypto.randomUUID(),
+          prompt: "Luca-Tab",
+          response: {},
+          createdAt: new Date().toISOString(),
+          inputModality: "typed",
+          originPatientId: luca.patientId,
+          originEncounterId: luca.encounterId,
+          originThreadId: luca.threadId,
+          originContextRevision: luca.contextRevision,
+        },
+        luca,
+      );
+
+      expect(
+        await store.loadConversation(
+          actorId,
+          "registered-nurse",
+          anna.patientId,
+          anna,
+        ),
+      ).toMatchObject([{ prompt: "Anna-Tab" }]);
+      expect(
+        await store.loadConversation(
+          actorId,
+          "registered-nurse",
+          luca.patientId,
+          luca,
+        ),
+      ).toMatchObject([{ prompt: "Luca-Tab" }]);
+      expect(
+        await store.resolveAssistantContext(
+          actorId,
+          "registered-nurse",
+          anna.clientContextId,
+        ),
+      ).toMatchObject({ patientId: "p-anna", threadId: anna.threadId });
+    } finally {
+      await store.close();
+    }
+  });
+
   it("pauses an expired session before starting its replacement", async () => {
     const store = new PostgresOperationalStore(databaseUrl!);
     const inspectionPool = new Pool({ connectionString: databaseUrl });

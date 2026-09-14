@@ -102,7 +102,31 @@ else if (group === "migrations" && action === "status") {
       2,
     ),
   );
-else if (group === "demo" && action === "reset")
+else if (group === "clinical-projection" && action === "manual-head")
+  console.log(
+    JSON.stringify(
+      await request("/api/v1/operations/clinical-projections/manual-head"),
+      null,
+      2,
+    ),
+  );
+else if (group === "clinical-projection" && action === "retry") {
+  const [jobId, expectedErrorCode] = arguments_;
+  if (!jobId || !expectedErrorCode)
+    throw new Error(
+      "Usage: pfhctl clinical-projection retry <job-id> <expected-error-code>",
+    );
+  console.log(
+    JSON.stringify(
+      await request(`/api/v1/operations/clinical-projections/${jobId}/retry`, {
+        method: "POST",
+        body: JSON.stringify({ expectedErrorCode }),
+      }),
+      null,
+      2,
+    ),
+  );
+} else if (group === "demo" && action === "reset")
   console.log(
     JSON.stringify(
       await request("/api/v1/demo/reset", { method: "POST", body: "{}" }),
@@ -203,7 +227,7 @@ else if (group === "model" && action === "test") {
   );
 else {
   console.log(
-    "Usage: pfhctl preflight | status | migrations status | provider list|test | demo reset | fhir import|verify|validate | model list|test | asr test | tts test | site validate [pack-path ...] | backup restore-test",
+    "Usage: pfhctl preflight | status | migrations status | provider list|test | clinical-projection manual-head|retry <job-id> <expected-error-code> | demo reset | fhir import|verify|validate | model list|test | asr test | tts test | site validate [pack-path ...] | backup restore-test",
   );
   if (group !== "help") process.exitCode = 2;
 }

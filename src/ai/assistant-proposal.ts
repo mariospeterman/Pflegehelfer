@@ -1,5 +1,10 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import {
+  parseVoiceTranscriptProvenance,
+  voiceTranscriptProvenanceSchema,
+  type VoiceTranscriptProvenance,
+} from "../core/voice-provenance.js";
 
 const sourceSpanSchema = z
   .object({
@@ -16,8 +21,13 @@ const proposalSourceRecordSchema = z
     contentHash: z.string().regex(/^[a-f0-9]{64}$/),
     capturedAt: z.string().datetime(),
     modality: z.enum(["typed", "voice"]),
-    origin: z.enum(["current-input", "legacy-span"]),
-    text: z.string().min(1).max(1200),
+    origin: z.enum([
+      "current-input",
+      "legacy-span",
+      "asr-original",
+      "voice-review",
+    ]),
+    text: z.string().min(1).max(8000),
   })
   .strict();
 
@@ -257,6 +267,10 @@ export const assistantProposalSchema = z
     inputModality: z.enum(["typed", "voice"]),
     inputTimestamp: z.string().datetime(),
     sourceRecords: z.array(proposalSourceRecordSchema).max(20).optional(),
+    voiceTranscriptProvenance: z
+      .array(voiceTranscriptProvenanceSchema)
+      .max(20)
+      .optional(),
     summary: z.string().trim().min(3).max(500),
     understoodFacts: z.array(proposedFactSchema).max(20),
     workPerformed: z.array(workPerformedSchema).max(12),
@@ -314,7 +328,11 @@ function proposalSourceRecord(
   text: string,
   capturedAt: string,
   modality: "typed" | "voice",
-  origin: "current-input" | "legacy-span" = "current-input",
+  origin:
+    | "current-input"
+    | "legacy-span"
+    | "asr-original"
+    | "voice-review" = "current-input",
 ) {
   const contentHash = createHash("sha256").update(text).digest("hex");
   const recordHash = createHash("sha256")
@@ -336,13 +354,13 @@ export function verifyProposalSourceRecords(input: unknown): AssistantProposal {
   const records = new Map(
     (plan.sourceRecords ?? []).map((record) => [record.id, record]),
   );
-  for (const record of records.values())
+  for (const record of records.values()) {
     if (
       createHash("sha256").update(record.text).digest("hex") !==
       record.contentHash
     )
       throw new Error("CLINICAL_PLAN_SOURCE_RECORD_HASH_MISMATCH");
-    else if (
+    if (
       `source-${createHash("sha256")
         .update(
           JSON.stringify({
@@ -356,6 +374,28 @@ export function verifyProposalSourceRecords(input: unknown): AssistantProposal {
         .slice(0, 16)}` !== record.id
     )
       throw new Error("CLINICAL_PLAN_SOURCE_RECORD_IDENTITY_MISMATCH");
+  }
+  for (const provenance of plan.voiceTranscriptProvenance ?? []) {
+    const voice = parseVoiceTranscriptProvenance(provenance);
+    const original = [...records.values()].find(
+      (record) =>
+        record.origin === "asr-original" &&
+        record.modality === "voice" &&
+        record.text === voice.original.transcript &&
+        record.contentHash === voice.original.transcriptHash &&
+        record.capturedAt === voice.original.capturedAt,
+    );
+    const review = [...records.values()].find(
+      (record) =>
+        record.origin === "voice-review" &&
+        record.modality === "voice" &&
+        record.text === voice.review.transcript &&
+        record.contentHash === voice.review.transcriptHash &&
+        record.capturedAt === voice.review.reviewedAt,
+    );
+    if (!original || !review)
+      throw new Error("CLINICAL_PLAN_VOICE_PROVENANCE_SOURCE_MISSING");
+  }
   const referenced = [
     ...plan.understoodFacts,
     ...plan.workPerformed,
@@ -395,6 +435,77 @@ export function verifyProposalSourceRecords(input: unknown): AssistantProposal {
     )
       throw new Error("CLINICAL_PLAN_REWRITTEN_NOTE_WITHOUT_PROVENANCE");
   return plan;
+}
+
+/**
+ * Adds server-verified speech provenance after model interpretation. The model
+ * never authors ASR identity, hashes, review state or source records.
+ */
+export function bindVoiceTranscriptProvenance(
+  input: AssistantProposal,
+  provenanceInput: VoiceTranscriptProvenance,
+): AssistantProposal {
+  const provenance = parseVoiceTranscriptProvenance(provenanceInput);
+  const plan = structuredClone(input);
+  const originalSource = proposalSourceRecord(
+    provenance.original.transcript,
+    provenance.original.capturedAt,
+    "voice",
+    "asr-original",
+  );
+  const reviewedSource = proposalSourceRecord(
+    provenance.review.transcript,
+    provenance.review.reviewedAt,
+    "voice",
+    "voice-review",
+  );
+  const currentIds = new Set(
+    (plan.sourceRecords ?? [])
+      .filter(
+        (record) =>
+          record.origin === "current-input" &&
+          record.text === provenance.review.transcript,
+      )
+      .map((record) => record.id),
+  );
+  const replaceCurrentSource = <
+    T extends { sourceRecordIds?: string[] | undefined },
+  >(
+    item: T,
+  ) => {
+    if (!item.sourceRecordIds?.some((id) => currentIds.has(id))) return;
+    item.sourceRecordIds = item.sourceRecordIds
+      .map((id) => (currentIds.has(id) ? reviewedSource.id : id))
+      .filter((id, index, values) => values.indexOf(id) === index);
+  };
+  for (const item of [
+    ...plan.understoodFacts,
+    ...plan.workPerformed,
+    ...plan.observations,
+    ...plan.taskChanges,
+    ...plan.communications,
+    ...plan.workflowActions,
+    ...plan.evidence,
+    ...plan.actions,
+    ...plan.corrections,
+  ])
+    replaceCurrentSource(item);
+  plan.inputModality = "voice";
+  plan.sourceRecords = [
+    ...(plan.sourceRecords ?? []).filter(
+      (record) =>
+        !currentIds.has(record.id) &&
+        record.id !== originalSource.id &&
+        record.id !== reviewedSource.id,
+    ),
+    originalSource,
+    reviewedSource,
+  ].slice(-20);
+  plan.voiceTranscriptProvenance = [
+    ...(plan.voiceTranscriptProvenance ?? []),
+    provenance,
+  ].slice(-20);
+  return verifyProposalSourceRecords(plan);
 }
 
 function withLegacySourceRecords(plan: AssistantProposal): AssistantProposal {
@@ -2046,6 +2157,18 @@ export function reviseAssistantProposal(
     const replacement = deterministicAssistantProposal(source, options);
     if (!replacement) return null;
     const replacementSourceId = replacement.sourceRecords?.[0]?.id;
+    replacement.sourceRecords = [
+      ...(previous.data.sourceRecords ?? []),
+      ...(replacement.sourceRecords ?? []),
+    ]
+      .filter(
+        (record, index, values) =>
+          values.findIndex((candidate) => candidate.id === record.id) === index,
+      )
+      .slice(-20);
+    if (previous.data.voiceTranscriptProvenance)
+      replacement.voiceTranscriptProvenance =
+        previous.data.voiceTranscriptProvenance;
     replacement.corrections = [
       ...previous.data.corrections,
       {
@@ -2629,6 +2752,9 @@ export function verifyModelProposalAgainstDeterministicCompiler(
     inputModality: metadata.inputModality,
     inputTimestamp: metadata.inputTimestamp,
     sourceRecords: compiled?.sourceRecords ?? [verifiedSource],
+    ...(compiled?.voiceTranscriptProvenance
+      ? { voiceTranscriptProvenance: compiled.voiceTranscriptProvenance }
+      : { voiceTranscriptProvenance: undefined }),
     actions: candidate.actions.map(bindCurrentSource),
     summary:
       candidate.actions.length > 0

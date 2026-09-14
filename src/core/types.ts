@@ -1,3 +1,5 @@
+import type { VoiceTranscriptProvenance } from "./voice-provenance.js";
+
 export type Role =
   | "care-assistant"
   | "registered-nurse"
@@ -129,6 +131,8 @@ export interface ClinicalNote {
   patientId: string;
   encounterId: string;
   transcript: string | null;
+  /** Immutable ASR capture(s) and the explicit human-reviewed revisions. */
+  voiceTranscriptProvenance?: VoiceTranscriptProvenance[];
   structuredText: string;
   criticalEntities: string[];
   authorId: string;

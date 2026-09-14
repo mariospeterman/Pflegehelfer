@@ -19,6 +19,10 @@ import {
   fhirResourceId,
   legacyFhirResourceId,
 } from "../src/core/fhir-resource-set.js";
+import {
+  createVoiceTranscriptProvenance,
+  transcriptHash,
+} from "../src/core/voice-provenance.js";
 
 class RecordingWorkspace implements ClinicalWorkspace {
   readonly mode = "medplum" as const;
@@ -112,6 +116,57 @@ describe("durable workflow checkpoint", () => {
         (resource) => resource.resourceType === "QuestionnaireResponse",
       ),
     ).toBe(false);
+  });
+
+  it("projects immutable ASR and reviewed transcript lineage without audio", () => {
+    const service = new PflegehelferService();
+    const originalTranscript = "Luca mobilisiert, Puls 82 links.";
+    const provenance = createVoiceTranscriptProvenance({
+      original: {
+        transcript: originalTranscript,
+        transcriptHash: transcriptHash(originalTranscript),
+        capturedAt: "2026-09-05T08:00:00.000Z",
+        source: {
+          kind: "asr",
+          mode: "local-openai",
+          model: "synthetic-asr-contract",
+          language: "de-CH",
+          confidence: null,
+          confidenceState: "unknown",
+          audioRetained: false,
+        },
+      },
+      reviewedTranscript: "Luca vollständig mobilisiert, Puls 88 rechts.",
+      reviewedAt: "2026-09-05T08:01:00.000Z",
+    });
+    const created = service.createNoteDraft("u-assistant", {
+      patientId: "p-luca",
+      encounterId: "enc-luca-2026",
+      transcript: originalTranscript,
+      voiceTranscriptProvenance: [provenance],
+      structuredText: provenance.review.transcript,
+    });
+    const resource = service
+      .fhirResources()
+      .find(
+        (candidate) =>
+          candidate.resourceType === "DocumentReference" &&
+          candidate.id === fhirResourceId("DocumentReference", created.id),
+      );
+    expect(resource?.resourceType).toBe("DocumentReference");
+    const encoded =
+      resource?.resourceType === "DocumentReference"
+        ? resource.content.find(
+            (item) =>
+              item.attachment.contentType ===
+              "application/vnd.pflegehelfer.voice-transcript-provenance+json",
+          )?.attachment.data
+        : undefined;
+    expect(encoded).toBeTruthy();
+    expect(
+      JSON.parse(Buffer.from(encoded!, "base64").toString("utf8")),
+    ).toEqual([provenance]);
+    expect(JSON.stringify(resource)).not.toMatch(/audio(?:Data|Bytes|Base64)/i);
   });
 
   it("verifies an old checkpoint during controlled HMAC rotation", () => {

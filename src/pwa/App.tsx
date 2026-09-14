@@ -6,6 +6,10 @@ import {
   type ConversationOpening,
 } from "./assistant/AssistantSurface";
 import type { WorkdayView } from "../core/workday";
+import {
+  assistantClientContextHeaders,
+  rotateAssistantClientContext,
+} from "./assistant-context";
 
 interface ConversationDescriptor {
   id: string;
@@ -80,6 +84,7 @@ async function api<T>(
     headers: {
       ...(init?.body ? { "content-type": "application/json" } : {}),
       "x-demo-user": userId,
+      ...assistantClientContextHeaders(),
       ...(init?.method === "POST"
         ? { "x-command-id": crypto.randomUUID() }
         : {}),
@@ -721,18 +726,27 @@ export function App() {
     return stored === "light" || stored === "dark" ? stored : "system";
   });
   const generation = useRef(0);
+  const boundAssistantPatientId = useRef<string | null | undefined>(undefined);
 
   const load = useCallback(async () => {
     const current = ++generation.current;
     try {
-      const [data, session, conversationData] = await Promise.all([
-        api<AppSnapshot>("/api/v1/snapshot", userId),
-        api<{ patientId: string | null }>("/api/v1/working-session", userId),
-        api<{ conversations: ConversationDescriptor[] }>(
-          "/api/v1/assistant/conversation",
-          userId,
-        ),
-      ]);
+      const data = await api<AppSnapshot>("/api/v1/snapshot", userId);
+      const preferredPatientId =
+        selectedPatientId &&
+        data.patients.some((item) => item.id === selectedPatientId)
+          ? selectedPatientId
+          : null;
+      if (boundAssistantPatientId.current !== preferredPatientId) {
+        await api("/api/v1/assistant/context", userId, {
+          method: "POST",
+          body: JSON.stringify({ patientId: preferredPatientId }),
+        });
+        boundAssistantPatientId.current = preferredPatientId;
+      }
+      const conversationData = await api<{
+        conversations: ConversationDescriptor[];
+      }>("/api/v1/assistant/conversation", userId);
       const workdayData = ["care-assistant", "registered-nurse"].includes(
         data.currentUser.role,
       )
@@ -743,12 +757,7 @@ export function App() {
       setWorkday(workdayData);
       setConversations(conversationData.conversations);
       setApiReady(true);
-      setSelectedPatientId(
-        session.patientId &&
-          data.patients.some((item) => item.id === session.patientId)
-          ? session.patientId
-          : null,
-      );
+      setSelectedPatientId(preferredPatientId);
     } catch (failure) {
       if (current !== generation.current) return;
       setApiReady(false);
@@ -758,7 +767,7 @@ export function App() {
           : "Verbindung fehlgeschlagen.",
       );
     }
-  }, [userId]);
+  }, [selectedPatientId, userId]);
 
   useEffect(() => {
     void load();
@@ -952,6 +961,7 @@ export function App() {
         method: "POST",
         body: JSON.stringify({ patientId: id }),
       });
+      boundAssistantPatientId.current = id;
       if (requestGeneration !== generation.current || requestUserId !== userId)
         return false;
       setSelectedPatientId(id);
@@ -983,6 +993,8 @@ export function App() {
     setLaunchPrompt({ id: Date.now(), text, autoSubmit });
   const changeUser = (next: string) => {
     generation.current += 1;
+    rotateAssistantClientContext();
+    boundAssistantPatientId.current = undefined;
     setContextBusy(false);
     sessionStorage.setItem("pfh-demo-user", next);
     sessionStorage.removeItem("pfh-patient-context");
@@ -1220,6 +1232,11 @@ export function App() {
             setWorkday(next);
             const activePatientId = next.activeEpisode?.patientId ?? null;
             if (activePatientId) {
+              await api("/api/v1/assistant/context", userId, {
+                method: "POST",
+                body: JSON.stringify({ patientId: activePatientId }),
+              });
+              boundAssistantPatientId.current = activePatientId;
               setSelectedPatientId(activePatientId);
               sessionStorage.setItem("pfh-patient-context", activePatientId);
             }

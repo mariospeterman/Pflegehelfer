@@ -337,6 +337,22 @@ function note(item: ClinicalNote, dataClass: DataClass): DocumentReference {
           data: Buffer.from(item.structuredText, "utf8").toString("base64"),
         },
       },
+      ...(item.voiceTranscriptProvenance?.length
+        ? [
+            {
+              attachment: {
+                contentType:
+                  "application/vnd.pflegehelfer.voice-transcript-provenance+json",
+                title: "Spracherfassungsnachweis",
+                creation: item.source.recordedAt,
+                data: Buffer.from(
+                  JSON.stringify(item.voiceTranscriptProvenance),
+                  "utf8",
+                ).toString("base64"),
+              },
+            },
+          ]
+        : []),
     ],
   };
 }

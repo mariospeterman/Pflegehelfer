@@ -18,6 +18,11 @@ describe("immutable migration ledger", () => {
       { version: 6, name: "006_single_handover_authority.sql" },
       { version: 7, name: "007_atomic_local_acceptance.sql" },
       { version: 8, name: "008_provider_receipt_evidence.sql" },
+      { version: 9, name: "009_assistant_client_contexts.sql" },
+      {
+        version: 10,
+        name: "010_assistant_client_context_constraints.sql",
+      },
     ]);
     expect(
       migrations.every(({ checksum }) => /^[a-f0-9]{64}$/.test(checksum)),

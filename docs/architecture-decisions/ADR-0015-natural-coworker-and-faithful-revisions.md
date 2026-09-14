@@ -14,6 +14,12 @@ Every writable revision retains immutable hashed input records and references th
 
 No-model operation is explicitly degraded. Direct data/work controls and verbatim draft capture remain available with human review, but fallback success is not connected-model acceptance. Pending reviews survive refresh by reissuing a short-lived authority for the same stored proposal; parallel tokens consume the same proposal only once.
 
+Voice correction does not overwrite its source. The immutable ASR transcript,
+hash, capture time, model/mode/language/confidence and the explicit reviewed
+revision remain distinguishable through proposal, acceptance, conversation and
+FHIR projection. Critical offsets are recalculated against reviewed text and
+audio is not retained.
+
 “Deterministic” applies to permission, validation, versioning, acceptance and delivery. It does not require canned dialogue or exact stock sentences. Approval proves what an authorized employee reviewed; it does not prove an event occurred, eliminate hallucination risk or establish compliance.
 
 ## Consequences
@@ -22,4 +28,4 @@ No-model operation is explicitly degraded. Direct data/work controls and verbati
 - Unsupported or uncited generated prose is withheld while server-grounded components remain usable.
 - Original input, source evidence, model interpretation, reviewed revision, accepted record and delivery evidence remain distinguishable.
 - Phrase-specific fallbacks remain temporary degraded-mode aids and cannot be reported as model acceptance.
-- Full per-tab scoped requests, ASR correction lineage, post-approval amendments and a real-model held-out evaluation remain required by the completion matrix.
+- Post-approval amendments and a real-model held-out evaluation remain required by the completion matrix.

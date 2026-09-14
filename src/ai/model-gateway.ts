@@ -290,6 +290,13 @@ function normalizeProposalTransport(input: unknown): unknown {
     if (fact.value === null) delete fact.value;
     if (fact.unit === null) delete fact.unit;
   }
+  if (
+    "voiceTranscriptProvenance" in proposal &&
+    (proposal as { voiceTranscriptProvenance?: unknown })
+      .voiceTranscriptProvenance === null
+  )
+    delete (proposal as { voiceTranscriptProvenance?: unknown })
+      .voiceTranscriptProvenance;
   return proposal;
 }
 

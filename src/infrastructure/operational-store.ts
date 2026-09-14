@@ -30,6 +30,10 @@ import type {
 } from "../core/workday.js";
 import { siteConfiguration } from "../core/site-config.js";
 import { runMigrations } from "./migrations.js";
+import type {
+  VoiceTranscriptOriginal,
+  VoiceTranscriptProvenance,
+} from "../core/voice-provenance.js";
 
 export type {
   WorkdayCommand,
@@ -176,6 +180,7 @@ export interface StoredConversationTurn {
   response: unknown;
   createdAt: string;
   inputModality: "typed" | "voice";
+  voiceTranscriptProvenance?: VoiceTranscriptProvenance[];
   originPatientId?: string | null;
   originEncounterId?: string | null;
   originThreadId?: string;
@@ -210,13 +215,12 @@ function storedTurnPatientId(turn: StoredConversationTurn): string | null {
 }
 
 export interface DurableVoiceAuthority {
+  clientContextId: string;
   actorId: string;
   patientId: string | null;
   encounterId: string | null;
   purpose: Purpose;
-  textHash: string;
-  model: string;
-  entityIds: string[];
+  original: VoiceTranscriptOriginal;
   sessionId: string;
   threadId: string;
   contextRevision: number;
@@ -232,6 +236,7 @@ export interface AcceptedCommandReceipt {
 
 export interface LocalIntentAcceptance {
   tokenHash: string;
+  clientContextId?: string;
   actorId: string;
   actorRole: Role;
   purpose: Purpose;
@@ -273,6 +278,22 @@ export interface ClinicalProjectionJob {
   attempts: number;
 }
 
+export interface ManualClinicalProjectionHold {
+  jobId: string;
+  acceptedCommandId: string;
+  errorCode: string;
+  attempts: number;
+  createdAt: string;
+}
+
+export interface ClinicalProjectionRecoveryReceipt {
+  jobId: string;
+  acceptedCommandId: string;
+  previousErrorCode: string;
+  state: "retry";
+  replayed: boolean;
+}
+
 export interface DeliveryDiagnostics {
   acceptedCommands: Record<string, number>;
   clinicalProjections: Record<string, number>;
@@ -299,6 +320,15 @@ export interface WorkingSessionView {
   startedAt: string;
 }
 
+export interface AssistantContextBinding {
+  clientContextId: string;
+  sessionId: string;
+  threadId: string;
+  contextRevision: number;
+  patientId: string | null;
+  encounterId: string | null;
+}
+
 export interface DurableUiEvent {
   id: number;
   eventType: string;
@@ -322,6 +352,18 @@ export interface OperationalStore {
     patientId: string | null,
     encounterId?: string | null,
   ): Promise<WorkingSessionView>;
+  bindAssistantContext(
+    actorId: string,
+    role: Role,
+    clientContextId: string,
+    patientId: string | null,
+    encounterId?: string | null,
+  ): Promise<AssistantContextBinding>;
+  resolveAssistantContext(
+    actorId: string,
+    role: Role,
+    clientContextId: string,
+  ): Promise<AssistantContextBinding | null>;
   advanceAssistantRevision(
     actorId: string,
     role: Role,
@@ -330,6 +372,7 @@ export interface OperationalStore {
     actorId: string,
     role: Role,
     patientId?: string | null,
+    context?: AssistantContextBinding,
   ): Promise<StoredConversationTurn[]>;
   loadPendingCarePlan(
     actorId: string,
@@ -351,8 +394,13 @@ export interface OperationalStore {
     actorId: string,
     role: Role,
     turn: StoredConversationTurn,
+    context?: AssistantContextBinding,
   ): Promise<void>;
-  clearConversation(actorId: string, role: Role): Promise<void>;
+  clearConversation(
+    actorId: string,
+    role: Role,
+    context?: AssistantContextBinding,
+  ): Promise<void>;
   getWorkday(actorId: string, role: Role): Promise<WorkdayView>;
   bindHandoverClinicalSnapshot(
     actorId: string,
@@ -384,6 +432,7 @@ export interface OperationalStore {
     contextRevision: number;
     responseId: string;
     reviewItems: unknown[];
+    clientContextId?: string;
   }): Promise<void>;
   loadIntentAuthority(input: {
     tokenHash: string;
@@ -393,6 +442,7 @@ export interface OperationalStore {
     contextRevision: number;
     patientId: string;
     encounterId: string;
+    clientContextId?: string;
   }): Promise<DurableIntentRecord | null>;
   consumeIntentAuthority(tokenHash: string): Promise<boolean>;
   acceptIntentCommand(
@@ -418,6 +468,16 @@ export interface OperationalStore {
     errorCode: string;
     retryAt: Date | null;
   }): Promise<void>;
+  manualClinicalProjectionHead(): Promise<ManualClinicalProjectionHold | null>;
+  recoverManualClinicalProjection(input: {
+    actorId: string;
+    actorRole: Role;
+    jobId: string;
+    expectedErrorCode: string;
+    commandKey: string;
+    requestHash: string;
+    auditEntry: AuditEntry;
+  }): Promise<ClinicalProjectionRecoveryReceipt>;
   providerDeliveryState(
     patientIds: readonly string[],
   ): Promise<"pending" | "simulated-acknowledged" | "external-gated">;
@@ -428,6 +488,10 @@ export interface OperationalStore {
   releaseIntentAuthority(tokenHash: string): Promise<void>;
   revokeResponseAuthorities(actorId: string, responseId: string): Promise<void>;
   suspendActorAuthorities(actorId: string): Promise<void>;
+  suspendAssistantContextAuthorities(
+    actorId: string,
+    clientContextId: string,
+  ): Promise<void>;
   revokeActorAuthorities(actorId: string): Promise<void>;
   storeVoiceAuthority(
     tokenHash: string,
@@ -460,6 +524,10 @@ export class InMemoryOperationalStore implements OperationalStore {
       turns: StoredConversationTurn[];
     }
   >();
+  private readonly clientContexts = new Map<
+    string,
+    AssistantContextBinding & { actorId: string; role: Role }
+  >();
   private readonly transfers: ResponsibilityTransferView[] = [];
   private readonly uiEvents: Array<DurableUiEvent & { actorId: string }> = [];
   private readonly handoverClinical = new Map<
@@ -475,6 +543,7 @@ export class InMemoryOperationalStore implements OperationalStore {
       contextRevision: number;
       responseId: string;
       reviewItems: Array<{ id: string; label: string; kind: string }>;
+      clientContextId: string | null;
       consumed: boolean;
     }
   >();
@@ -490,6 +559,8 @@ export class InMemoryOperationalStore implements OperationalStore {
     ClinicalProjectionJob & {
       state: "pending" | "leased" | "delivered" | "retry" | "manual";
       leaseOwner: string | null;
+      lastErrorCode: string | null;
+      createdAt: string;
     }
   > = [];
   initialize(): Promise<void> {
@@ -592,6 +663,63 @@ export class InMemoryOperationalStore implements OperationalStore {
     stored.rowVersion += 1;
     return structuredClone(stored);
   }
+  async bindAssistantContext(
+    actorId: string,
+    role: Role,
+    clientContextId: string,
+    patientId: string | null,
+    encounterId: string | null = null,
+  ): Promise<AssistantContextBinding> {
+    const session = await this.changePatientContext(
+      actorId,
+      role,
+      patientId,
+      encounterId,
+    );
+    const prior = this.clientContexts.get(clientContextId);
+    if (prior && (prior.actorId !== actorId || prior.role !== role))
+      throw new DomainError(
+        "AUTH_DENIED",
+        "Browserkontext gehört nicht zu dieser Mitarbeitenden-Sitzung.",
+        403,
+      );
+    const binding: AssistantContextBinding & { actorId: string; role: Role } = {
+      clientContextId,
+      actorId,
+      role,
+      sessionId: session.id,
+      threadId: session.threadId,
+      contextRevision: (prior?.contextRevision ?? 0) + 1,
+      patientId,
+      encounterId: patientId ? encounterId : null,
+    };
+    this.clientContexts.set(clientContextId, binding);
+    return structuredClone(binding);
+  }
+  resolveAssistantContext(
+    actorId: string,
+    role: Role,
+    clientContextId: string,
+  ): Promise<AssistantContextBinding | null> {
+    const context = this.clientContexts.get(clientContextId);
+    const session = this.sessions.get(actorId);
+    const thread = context
+      ? this.memoryThreads.get(context.threadId)
+      : undefined;
+    if (
+      !context ||
+      !session ||
+      !thread ||
+      context.actorId !== actorId ||
+      context.role !== role ||
+      context.sessionId !== session.id ||
+      thread.actorId !== actorId ||
+      thread.patientId !== context.patientId ||
+      thread.encounterId !== context.encounterId
+    )
+      return Promise.resolve(null);
+    return Promise.resolve(structuredClone(context));
+  }
   async advanceAssistantRevision(
     actorId: string,
     role: Role,
@@ -611,11 +739,23 @@ export class InMemoryOperationalStore implements OperationalStore {
     actorId: string,
     role: Role,
     patientId?: string | null,
+    context?: AssistantContextBinding,
   ): Promise<StoredConversationTurn[]> {
     const session =
       this.sessions.get(actorId) ??
       ((await this.getOrStartSession(actorId, role)) as MemorySession);
-    const turns = this.memoryThreads.get(session.threadId)?.turns ?? [];
+    if (
+      context &&
+      !(await this.resolveAssistantContext(
+        actorId,
+        role,
+        context.clientContextId,
+      ))
+    )
+      throw new Error("ASSISTANT_CONTEXT_STALE");
+    const turns =
+      this.memoryThreads.get(context?.threadId ?? session.threadId)?.turns ??
+      [];
     return structuredClone(
       patientId === undefined
         ? turns
@@ -635,7 +775,7 @@ export class InMemoryOperationalStore implements OperationalStore {
         record.patientId === patientId &&
         record.encounterId === encounterId &&
         record.command === "care-update:draft" &&
-        this.sessions.get(actorId)?.threadId === threadId,
+        this.memoryThreads.get(threadId)?.actorId === actorId,
     );
     return Promise.resolve(candidates.at(-1)?.record.payload.plan ?? null);
   }
@@ -667,11 +807,21 @@ export class InMemoryOperationalStore implements OperationalStore {
     actorId: string,
     role: Role,
     turn: StoredConversationTurn,
+    context?: AssistantContextBinding,
   ): Promise<void> {
     await this.getOrStartSession(actorId, role);
     const session = this.sessions.get(actorId)!;
+    if (
+      context &&
+      !(await this.resolveAssistantContext(
+        actorId,
+        role,
+        context.clientContextId,
+      ))
+    )
+      throw new Error("ASSISTANT_CONTEXT_STALE");
     const thread = this.memoryThreads.get(
-      turn.originThreadId ?? session.threadId,
+      context?.threadId ?? turn.originThreadId ?? session.threadId,
     );
     if (!thread) throw new Error("ASSISTANT_THREAD_NOT_FOUND");
     if (
@@ -680,8 +830,14 @@ export class InMemoryOperationalStore implements OperationalStore {
         thread.patientId !== turn.originPatientId) ||
       (turn.originEncounterId !== undefined &&
         thread.encounterId !== turn.originEncounterId) ||
-      (turn.originContextRevision !== undefined &&
-        thread.contextRevision !== turn.originContextRevision)
+      (!context &&
+        turn.originContextRevision !== undefined &&
+        thread.contextRevision !== turn.originContextRevision) ||
+      (context !== undefined &&
+        (turn.originThreadId !== context.threadId ||
+          turn.originPatientId !== context.patientId ||
+          turn.originEncounterId !== context.encounterId ||
+          turn.originContextRevision !== context.contextRevision))
     )
       throw new Error("ASSISTANT_CONTEXT_STALE");
     thread.turns = [...thread.turns, structuredClone(turn)].slice(-80);
@@ -707,13 +863,36 @@ export class InMemoryOperationalStore implements OperationalStore {
         active: thread.id === session.threadId,
       }));
   }
-  async clearConversation(actorId: string, role: Role): Promise<void> {
+  async clearConversation(
+    actorId: string,
+    role: Role,
+    context?: AssistantContextBinding,
+  ): Promise<void> {
     await this.getOrStartSession(actorId, role);
     const session = this.sessions.get(actorId)!;
-    const thread = this.memoryThreads.get(session.threadId);
+    const thread = this.memoryThreads.get(
+      context?.threadId ?? session.threadId,
+    );
     if (thread) {
-      thread.turns = [];
-      thread.lastActivityAt = new Date().toISOString();
+      if (context) {
+        const nextThreadId = randomUUID();
+        this.memoryThreads.set(nextThreadId, {
+          ...structuredClone(thread),
+          id: nextThreadId,
+          turns: [],
+          contextRevision: 0,
+          lastActivityAt: new Date().toISOString(),
+        });
+        const storedContext = this.clientContexts.get(context.clientContextId);
+        if (storedContext) {
+          storedContext.threadId = nextThreadId;
+          storedContext.contextRevision += 1;
+        }
+        session.threadId = nextThreadId;
+      } else {
+        thread.turns = [];
+        thread.lastActivityAt = new Date().toISOString();
+      }
     }
   }
   async getWorkday(actorId: string, role: Role): Promise<WorkdayView> {
@@ -1091,19 +1270,28 @@ export class InMemoryOperationalStore implements OperationalStore {
     contextRevision: number;
     responseId: string;
     reviewItems: unknown[];
+    clientContextId?: string;
   }): Promise<void> {
     const session = this.sessions.get(input.record.actorId);
     const thread = this.memoryThreads.get(input.threadId);
+    const clientContext = input.clientContextId
+      ? this.clientContexts.get(input.clientContextId)
+      : null;
     if (
       !session ||
       !thread ||
       session.id !== input.sessionId ||
-      session.threadId !== input.threadId ||
       session.status !== "active" ||
       thread.type !== "patient-assistant" ||
       thread.patientId !== input.record.patientId ||
       thread.encounterId !== input.record.encounterId ||
-      thread.contextRevision !== input.contextRevision
+      (clientContext
+        ? clientContext.actorId !== input.record.actorId ||
+          clientContext.sessionId !== input.sessionId ||
+          clientContext.threadId !== input.threadId ||
+          clientContext.contextRevision !== input.contextRevision
+        : session.threadId !== input.threadId ||
+          thread.contextRevision !== input.contextRevision)
     )
       return Promise.reject(new Error("ASSISTANT_CONTEXT_STALE"));
     for (const authority of this.authorities.values())
@@ -1128,6 +1316,7 @@ export class InMemoryOperationalStore implements OperationalStore {
           label: string;
           kind: string;
         }>,
+        clientContextId: input.clientContextId ?? null,
         consumed: false,
       });
     return Promise.resolve();
@@ -1140,6 +1329,7 @@ export class InMemoryOperationalStore implements OperationalStore {
     contextRevision: number;
     patientId: string;
     encounterId: string;
+    clientContextId?: string;
   }): Promise<DurableIntentRecord | null> {
     const authority = this.authorities.get(input.tokenHash);
     if (
@@ -1151,7 +1341,9 @@ export class InMemoryOperationalStore implements OperationalStore {
       authority.record.encounterId !== input.encounterId ||
       authority.sessionId !== input.sessionId ||
       authority.threadId !== input.threadId ||
-      authority.contextRevision !== input.contextRevision
+      authority.contextRevision !== input.contextRevision ||
+      (input.clientContextId !== undefined &&
+        authority.clientContextId !== input.clientContextId)
     )
       return Promise.resolve(null);
     return Promise.resolve(structuredClone(authority.record));
@@ -1190,7 +1382,10 @@ export class InMemoryOperationalStore implements OperationalStore {
       authority.record.encounterId !== input.encounterId ||
       authority.sessionId !== input.sessionId ||
       authority.threadId !== input.threadId ||
-      authority.contextRevision !== input.contextRevision
+      authority.contextRevision !== input.contextRevision ||
+      (input.clientContextId !== undefined
+        ? authority.clientContextId !== input.clientContextId
+        : authority.clientContextId !== null)
     )
       return Promise.reject(new Error("INTENT_AUTHORITY_INVALID"));
     for (const candidate of this.authorities.values())
@@ -1221,6 +1416,8 @@ export class InMemoryOperationalStore implements OperationalStore {
       attempts: 0,
       state: "pending",
       leaseOwner: null,
+      lastErrorCode: null,
+      createdAt: new Date().toISOString(),
     });
     return Promise.resolve(structuredClone(receipt));
   }
@@ -1258,6 +1455,7 @@ export class InMemoryOperationalStore implements OperationalStore {
       return Promise.resolve(null);
     job.state = "leased";
     job.leaseOwner = input.workerId;
+    job.lastErrorCode = null;
     job.attempts += 1;
     return Promise.resolve(structuredClone(job));
   }
@@ -1281,7 +1479,6 @@ export class InMemoryOperationalStore implements OperationalStore {
     errorCode: string;
     retryAt: Date | null;
   }): Promise<void> {
-    void input.errorCode;
     const job = this.clinicalProjectionJobs.find(
       (candidate) =>
         candidate.id === input.jobId && candidate.leaseOwner === input.workerId,
@@ -1290,7 +1487,119 @@ export class InMemoryOperationalStore implements OperationalStore {
       return Promise.reject(new Error("CLINICAL_PROJECTION_LEASE_LOST"));
     job.state = input.retryAt ? "retry" : "manual";
     job.leaseOwner = null;
+    job.lastErrorCode = input.errorCode;
     return Promise.resolve();
+  }
+  manualClinicalProjectionHead(): Promise<ManualClinicalProjectionHold | null> {
+    const head = this.clinicalProjectionJobs.find(
+      (candidate) => candidate.state !== "delivered",
+    );
+    if (head?.state !== "manual" || !head.lastErrorCode)
+      return Promise.resolve(null);
+    return Promise.resolve({
+      jobId: head.id,
+      acceptedCommandId: head.acceptedCommandId,
+      errorCode: head.lastErrorCode,
+      attempts: head.attempts,
+      createdAt: head.createdAt,
+    });
+  }
+  recoverManualClinicalProjection(input: {
+    actorId: string;
+    actorRole: Role;
+    jobId: string;
+    expectedErrorCode: string;
+    commandKey: string;
+    requestHash: string;
+    auditEntry: AuditEntry;
+  }): Promise<ClinicalProjectionRecoveryReceipt> {
+    if (input.actorRole !== "it")
+      return Promise.reject(
+        new DomainError(
+          "AUTH_DENIED",
+          "Nur IT darf eine klinische Projektion erneut einreihen.",
+          403,
+        ),
+      );
+    if (
+      input.auditEntry.actorId !== input.actorId ||
+      input.auditEntry.actorRole !== input.actorRole ||
+      input.auditEntry.action !== "clinical-projection:retry" ||
+      input.auditEntry.purpose !== "operations" ||
+      input.auditEntry.outcome !== "success"
+    )
+      return Promise.reject(
+        new DomainError(
+          "AUTH_DENIED",
+          "Der Betriebsnachweis ist nicht an diese Freigabe gebunden.",
+          403,
+        ),
+      );
+    const prior = this.acceptedCommands.get(input.commandKey);
+    if (prior) {
+      if (prior.requestHash !== input.requestHash)
+        return Promise.reject(
+          new DomainError(
+            "INVALID_STATE",
+            "Befehls-ID wurde bereits mit einem anderen Inhalt verwendet.",
+            409,
+          ),
+        );
+      return Promise.resolve({
+        ...(structuredClone(
+          prior.receipt.payload,
+        ) as ClinicalProjectionRecoveryReceipt),
+        replayed: true,
+      });
+    }
+    const head = this.clinicalProjectionJobs.find(
+      (candidate) => candidate.state !== "delivered",
+    );
+    if (
+      !head ||
+      head.id !== input.jobId ||
+      head.state !== "manual" ||
+      head.lastErrorCode !== input.expectedErrorCode
+    )
+      return Promise.reject(
+        new DomainError(
+          "INVALID_STATE",
+          "Projektionsauftrag oder Fehlerstand hat sich geändert.",
+          409,
+        ),
+      );
+    const result: ClinicalProjectionRecoveryReceipt = {
+      jobId: head.id,
+      acceptedCommandId: head.acceptedCommandId,
+      previousErrorCode: head.lastErrorCode,
+      state: "retry",
+      replayed: false,
+    };
+    head.state = "retry";
+    head.leaseOwner = null;
+    this.acceptedCommands.set(input.commandKey, {
+      requestHash: input.requestHash,
+      receipt: {
+        id: randomUUID(),
+        statusCode: 200,
+        payload: structuredClone(result),
+        replayed: false,
+      },
+    });
+    const id = (this.uiEvents.at(-1)?.id ?? 0) + 1;
+    this.uiEvents.push({
+      id,
+      actorId: input.actorId,
+      eventType: "ClinicalProjectionRetryAuthorized",
+      payload: {
+        jobId: head.id,
+        acceptedCommandId: head.acceptedCommandId,
+        previousErrorCode: head.lastErrorCode,
+        auditEntryHash: input.auditEntry.hash,
+      },
+      occurredAt: new Date().toISOString(),
+    });
+    return Promise.resolve(structuredClone(result));
   }
   providerDeliveryState(): Promise<"external-gated"> {
     return Promise.resolve("external-gated");
@@ -1329,6 +1638,20 @@ export class InMemoryOperationalStore implements OperationalStore {
   suspendActorAuthorities(actorId: string): Promise<void> {
     for (const authority of this.voiceAuthorities.values())
       if (authority.record.actorId === actorId) authority.consumed = true;
+    return Promise.resolve();
+  }
+  suspendAssistantContextAuthorities(
+    actorId: string,
+    clientContextId: string,
+  ): Promise<void> {
+    // Intent payload remains as a suspended draft. The changed client binding
+    // makes its old token unusable; returning to the thread can reissue it.
+    for (const authority of this.voiceAuthorities.values())
+      if (
+        authority.record.actorId === actorId &&
+        authority.record.clientContextId === clientContextId
+      )
+        authority.consumed = true;
     return Promise.resolve();
   }
   revokeActorAuthorities(actorId: string): Promise<void> {
@@ -1373,6 +1696,7 @@ export class InMemoryOperationalStore implements OperationalStore {
   resetDemoState(): Promise<void> {
     this.sessions.clear();
     this.memoryThreads.clear();
+    this.clientContexts.clear();
     this.transfers.splice(0, this.transfers.length);
     this.uiEvents.splice(0, this.uiEvents.length);
     this.handoverClinical.clear();
@@ -1804,6 +2128,111 @@ export class PostgresOperationalStore
       client.release();
     }
   }
+  async bindAssistantContext(
+    actorId: string,
+    role: Role,
+    clientContextId: string,
+    patientId: string | null,
+    encounterId: string | null = null,
+  ): Promise<AssistantContextBinding> {
+    const session = await this.changePatientContext(
+      actorId,
+      role,
+      patientId,
+      encounterId,
+    );
+    const result = await this.pool.query<{
+      context_revision: number;
+    }>(
+      `INSERT INTO assistant_client_contexts
+         (organization_id,id,actor_id,effective_role,session_id,thread_id,context_revision,patient_id,encounter_id,expires_at)
+       VALUES ($1,$2,$3,$4,$5,$6,1,$7,$8,$9)
+       ON CONFLICT (organization_id,id) DO UPDATE
+       SET session_id=EXCLUDED.session_id,
+           thread_id=EXCLUDED.thread_id,
+           context_revision=assistant_client_contexts.context_revision+1,
+           patient_id=EXCLUDED.patient_id,
+           encounter_id=EXCLUDED.encounter_id,
+           expires_at=EXCLUDED.expires_at,
+           updated_at=now()
+       WHERE assistant_client_contexts.actor_id=EXCLUDED.actor_id
+         AND assistant_client_contexts.effective_role=EXCLUDED.effective_role
+       RETURNING context_revision`,
+      [
+        organizationId,
+        clientContextId,
+        actorId,
+        role,
+        session.id,
+        session.threadId,
+        patientId,
+        patientId ? encounterId : null,
+        new Date(Date.now() + sessionTtlMs),
+      ],
+    );
+    const contextRevision = result.rows[0]?.context_revision;
+    if (contextRevision === undefined)
+      throw new DomainError(
+        "AUTH_DENIED",
+        "Browserkontext gehört nicht zu dieser Mitarbeitenden-Sitzung.",
+        403,
+      );
+    return {
+      clientContextId,
+      sessionId: session.id,
+      threadId: session.threadId,
+      contextRevision,
+      patientId,
+      encounterId: patientId ? encounterId : null,
+    };
+  }
+  async resolveAssistantContext(
+    actorId: string,
+    role: Role,
+    clientContextId: string,
+  ): Promise<AssistantContextBinding | null> {
+    const result = await this.pool.query<{
+      session_id: string;
+      thread_id: string;
+      context_revision: number;
+      patient_id: string | null;
+      encounter_id: string | null;
+    }>(
+      `SELECT c.session_id::text,c.thread_id::text,c.context_revision,
+              c.patient_id,c.encounter_id
+       FROM assistant_client_contexts c
+       JOIN working_sessions s
+         ON s.organization_id=c.organization_id AND s.id=c.session_id
+       JOIN assistant_threads t
+         ON t.organization_id=c.organization_id AND t.id=c.thread_id
+       WHERE c.organization_id=$1 AND c.id=$2 AND c.actor_id=$3
+         AND c.effective_role=$4 AND c.expires_at > now()
+         AND s.actor_id=$3 AND s.effective_role=$4 AND s.status='active'
+         AND t.actor_id=$3 AND t.effective_role=$4
+         AND t.site_id=$5 AND t.department_id=$6 AND t.expires_at > now()
+         AND t.patient_id IS NOT DISTINCT FROM c.patient_id
+         AND t.subject_encounter_id IS NOT DISTINCT FROM c.encounter_id`,
+      [
+        organizationId,
+        clientContextId,
+        actorId,
+        role,
+        siteConfiguration.siteId,
+        departmentId,
+      ],
+    );
+    const row = result.rows[0];
+    return row
+      ? {
+          clientContextId,
+          sessionId: row.session_id,
+          threadId: row.thread_id,
+          contextRevision: Number(row.context_revision),
+          patientId: row.patient_id,
+          encounterId: row.encounter_id,
+        }
+      : null;
+  }
   async advanceAssistantRevision(
     actorId: string,
     role: Role,
@@ -1825,8 +2254,18 @@ export class PostgresOperationalStore
     actorId: string,
     role: Role,
     patientId?: string | null,
+    context?: AssistantContextBinding,
   ): Promise<StoredConversationTurn[]> {
     const session = await this.getOrStartSession(actorId, role);
+    if (
+      context &&
+      !(await this.resolveAssistantContext(
+        actorId,
+        role,
+        context.clientContextId,
+      ))
+    )
+      throw new Error("ASSISTANT_CONTEXT_STALE");
     const result = await this.pool.query<{
       content: StoredConversationTurn;
       created_at: Date;
@@ -1839,7 +2278,7 @@ export class PostgresOperationalStore
        ) recent ORDER BY sequence ASC`,
       [
         organizationId,
-        session.threadId,
+        context?.threadId ?? session.threadId,
         patientId !== undefined,
         patientId ?? null,
       ],
@@ -1954,12 +2393,35 @@ export class PostgresOperationalStore
     actorId: string,
     role: Role,
     turn: StoredConversationTurn,
+    context?: AssistantContextBinding,
   ): Promise<void> {
     const session = await this.getOrStartSession(actorId, role);
-    const targetThreadId = turn.originThreadId ?? session.threadId;
+    const targetThreadId =
+      context?.threadId ?? turn.originThreadId ?? session.threadId;
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      if (context) {
+        const bound = await client.query(
+          `SELECT 1 FROM assistant_client_contexts
+           WHERE organization_id=$1 AND id=$2 AND actor_id=$3
+             AND effective_role=$4 AND session_id=$5 AND thread_id=$6
+             AND context_revision=$7 AND patient_id IS NOT DISTINCT FROM $8
+             AND encounter_id IS NOT DISTINCT FROM $9 AND expires_at > now()`,
+          [
+            organizationId,
+            context.clientContextId,
+            actorId,
+            role,
+            context.sessionId,
+            context.threadId,
+            context.contextRevision,
+            context.patientId,
+            context.encounterId,
+          ],
+        );
+        if (bound.rowCount !== 1) throw new Error("ASSISTANT_CONTEXT_STALE");
+      }
       const thread = await client.query(
         `SELECT next_sequence,context_revision,patient_id,subject_encounter_id
          FROM assistant_threads
@@ -1990,8 +2452,14 @@ export class PostgresOperationalStore
           row.patient_id !== turn.originPatientId) ||
         (turn.originEncounterId !== undefined &&
           row.subject_encounter_id !== turn.originEncounterId) ||
-        (turn.originContextRevision !== undefined &&
-          row.context_revision !== turn.originContextRevision)
+        (!context &&
+          turn.originContextRevision !== undefined &&
+          row.context_revision !== turn.originContextRevision) ||
+        (context !== undefined &&
+          (turn.originThreadId !== context.threadId ||
+            turn.originPatientId !== context.patientId ||
+            turn.originEncounterId !== context.encounterId ||
+            turn.originContextRevision !== context.contextRevision))
       )
         throw new Error("ASSISTANT_CONTEXT_STALE");
       await client.query(
@@ -2024,8 +2492,13 @@ export class PostgresOperationalStore
       client.release();
     }
   }
-  async clearConversation(actorId: string, role: Role): Promise<void> {
+  async clearConversation(
+    actorId: string,
+    role: Role,
+    context?: AssistantContextBinding,
+  ): Promise<void> {
     const session = await this.getOrStartSession(actorId, role);
+    const sourceThreadId = context?.threadId ?? session.threadId;
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
@@ -2043,7 +2516,7 @@ export class PostgresOperationalStore
           departmentId,
           siteConfiguration.siteId,
           new Date(Date.now() + sessionTtlMs),
-          session.threadId,
+          sourceThreadId,
         ],
       );
       await client.query(
@@ -2052,6 +2525,23 @@ export class PostgresOperationalStore
          WHERE organization_id=$1 AND id=$2`,
         [organizationId, session.id, nextThreadId],
       );
+      if (context) {
+        const rebound = await client.query(
+          `UPDATE assistant_client_contexts
+           SET thread_id=$4,context_revision=context_revision+1,updated_at=now()
+           WHERE organization_id=$1 AND id=$2 AND actor_id=$3
+             AND thread_id=$5 AND context_revision=$6`,
+          [
+            organizationId,
+            context.clientContextId,
+            actorId,
+            nextThreadId,
+            context.threadId,
+            context.contextRevision,
+          ],
+        );
+        if (rebound.rowCount !== 1) throw new Error("ASSISTANT_CONTEXT_STALE");
+      }
       await client.query(
         `INSERT INTO domain_events
            (organization_id,aggregate_type,aggregate_id,event_type,audience,payload)
@@ -2060,7 +2550,7 @@ export class PostgresOperationalStore
           organizationId,
           session.id,
           { actorId },
-          { previousThreadId: session.threadId, nextThreadId },
+          { previousThreadId: sourceThreadId, nextThreadId },
         ],
       );
       await client.query("COMMIT");
@@ -2905,6 +3395,7 @@ export class PostgresOperationalStore
     contextRevision: number;
     responseId: string;
     reviewItems: unknown[];
+    clientContextId?: string;
   }): Promise<void> {
     const client = await this.pool.connect();
     try {
@@ -2920,6 +3411,7 @@ export class PostgresOperationalStore
         resourceVersion: input.record.resourceVersion,
         purpose: input.record.purpose,
         reviewItems: input.reviewItems,
+        clientContextId: input.clientContextId ?? null,
       };
       const proposalHash = createHash("sha256")
         .update(JSON.stringify(proposalPayload))
@@ -2934,27 +3426,54 @@ export class PostgresOperationalStore
           `${organizationId}:${input.record.actorId}:proposal:${input.threadId}:${input.record.patientId}:${input.record.encounterId}`,
         ],
       );
-      const boundContext = await client.query(
-        `SELECT 1
-         FROM working_sessions s
-         JOIN assistant_threads t
-           ON t.organization_id=s.organization_id AND t.id=s.assistant_thread_id
-         WHERE s.organization_id=$1 AND s.id=$2 AND s.actor_id=$3
-           AND s.assistant_thread_id=$4 AND s.status='active'
-           AND t.site_id=$5 AND t.thread_type='patient-assistant'
-           AND t.context_revision=$6 AND t.patient_id=$7
-           AND t.subject_encounter_id=$8 AND t.expires_at > now()`,
-        [
-          organizationId,
-          input.sessionId,
-          input.record.actorId,
-          input.threadId,
-          siteConfiguration.siteId,
-          input.contextRevision,
-          input.record.patientId,
-          input.record.encounterId,
-        ],
-      );
+      const boundContext = input.clientContextId
+        ? await client.query(
+            `SELECT 1
+             FROM assistant_client_contexts c
+             JOIN working_sessions s
+               ON s.organization_id=c.organization_id AND s.id=c.session_id
+             JOIN assistant_threads t
+               ON t.organization_id=c.organization_id AND t.id=c.thread_id
+             WHERE c.organization_id=$1 AND c.id=$2 AND c.actor_id=$3
+               AND c.effective_role=$4 AND c.session_id=$5 AND c.thread_id=$6
+               AND c.context_revision=$7 AND c.patient_id=$8
+               AND c.encounter_id=$9 AND c.expires_at > now()
+               AND s.status='active' AND t.site_id=$10
+               AND t.thread_type='patient-assistant' AND t.expires_at > now()`,
+            [
+              organizationId,
+              input.clientContextId,
+              input.record.actorId,
+              input.record.actorRole,
+              input.sessionId,
+              input.threadId,
+              input.contextRevision,
+              input.record.patientId,
+              input.record.encounterId,
+              siteConfiguration.siteId,
+            ],
+          )
+        : await client.query(
+            `SELECT 1
+             FROM working_sessions s
+             JOIN assistant_threads t
+               ON t.organization_id=s.organization_id AND t.id=s.assistant_thread_id
+             WHERE s.organization_id=$1 AND s.id=$2 AND s.actor_id=$3
+               AND s.assistant_thread_id=$4 AND s.status='active'
+               AND t.site_id=$5 AND t.thread_type='patient-assistant'
+               AND t.context_revision=$6 AND t.patient_id=$7
+               AND t.subject_encounter_id=$8 AND t.expires_at > now()`,
+            [
+              organizationId,
+              input.sessionId,
+              input.record.actorId,
+              input.threadId,
+              siteConfiguration.siteId,
+              input.contextRevision,
+              input.record.patientId,
+              input.record.encounterId,
+            ],
+          );
       if (boundContext.rowCount !== 1)
         throw new Error("ASSISTANT_CONTEXT_STALE");
       const existingAuthority = await client.query<{
@@ -3022,8 +3541,8 @@ export class PostgresOperationalStore
         );
       await client.query(
         `INSERT INTO safety_authority
-           (organization_id,token_hash,authority_type,actor_id,session_id,thread_id,context_revision,patient_id,binding,proposal_revision_id,proposal_hash,expires_at)
-         VALUES ($1,$2,'intent',$3,$4,$5,$6,$7,$8,$9,$10,$11)
+           (organization_id,token_hash,authority_type,actor_id,session_id,thread_id,context_revision,patient_id,binding,proposal_revision_id,proposal_hash,expires_at,client_context_id)
+         VALUES ($1,$2,'intent',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
          `,
         [
           organizationId,
@@ -3037,6 +3556,7 @@ export class PostgresOperationalStore
           proposalId,
           proposalHash,
           new Date(input.record.expiresAt),
+          input.clientContextId ?? null,
         ],
       );
       await client.query("COMMIT");
@@ -3055,6 +3575,7 @@ export class PostgresOperationalStore
     contextRevision: number;
     patientId: string;
     encounterId: string;
+    clientContextId?: string;
   }): Promise<DurableIntentRecord | null> {
     const result = await this.pool.query<{ binding: DurableIntentRecord }>(
       `SELECT a.binding FROM safety_authority a
@@ -3064,6 +3585,15 @@ export class PostgresOperationalStore
          AND a.actor_id=$3 AND a.session_id=$4 AND a.thread_id=$5
          AND a.context_revision=$6 AND a.patient_id=$7
          AND a.binding->>'encounterId'=$8
+         AND ($9::uuid IS NULL OR (
+           a.client_context_id=$9 AND EXISTS (
+             SELECT 1 FROM assistant_client_contexts c
+             WHERE c.organization_id=a.organization_id AND c.id=$9
+               AND c.actor_id=$3 AND c.session_id=$4 AND c.thread_id=$5
+               AND c.context_revision=$6 AND c.patient_id=$7
+               AND c.encounter_id=$8 AND c.expires_at > now()
+           )
+         ))
          AND a.consumed_at IS NULL AND a.expires_at > now()
          AND p.status='pending' AND p.proposal_hash=a.proposal_hash`,
       [
@@ -3075,6 +3605,7 @@ export class PostgresOperationalStore
         input.contextRevision,
         input.patientId,
         input.encounterId,
+        input.clientContextId ?? null,
       ],
     );
     return result.rows[0]?.binding
@@ -3135,6 +3666,33 @@ export class PostgresOperationalStore
           replayed: true,
         };
       }
+      if (input.clientContextId) {
+        const lockedContext = await client.query(
+          `SELECT 1 FROM assistant_client_contexts
+           WHERE organization_id=$1 AND id=$2 AND actor_id=$3
+             AND effective_role=$4 AND session_id=$5 AND thread_id=$6
+             AND context_revision=$7 AND patient_id=$8 AND encounter_id=$9
+             AND expires_at > now()
+           FOR UPDATE`,
+          [
+            organizationId,
+            input.clientContextId,
+            input.actorId,
+            input.actorRole,
+            input.sessionId,
+            input.threadId,
+            input.contextRevision,
+            input.patientId,
+            input.encounterId,
+          ],
+        );
+        if (lockedContext.rowCount !== 1)
+          throw new DomainError(
+            "AUTH_DENIED",
+            "Browserkontext ist abgelaufen oder wurde gewechselt.",
+            403,
+          );
+      }
       const authority = await client.query<{
         binding: DurableIntentRecord;
         proposal_revision_id: string;
@@ -3152,6 +3710,8 @@ export class PostgresOperationalStore
            ON s.organization_id=a.organization_id AND s.id=a.session_id
          JOIN assistant_threads t
            ON t.organization_id=a.organization_id AND t.id=a.thread_id
+         LEFT JOIN assistant_client_contexts c
+           ON c.organization_id=a.organization_id AND c.id=a.client_context_id
          WHERE a.organization_id=$1 AND a.token_hash=$2
            AND a.authority_type='intent' AND a.actor_id=$3
            AND a.session_id=$4 AND a.thread_id=$5
@@ -3160,9 +3720,18 @@ export class PostgresOperationalStore
            AND a.consumed_at IS NULL AND a.expires_at > now()
            AND p.status='pending' AND p.proposal_hash=a.proposal_hash
            AND s.status='active' AND s.actor_id=$3
-           AND s.assistant_thread_id=$5
-           AND t.site_id=$9 AND t.department_id=$10
-           AND t.context_revision=$6 AND t.patient_id=$7
+           AND (
+             ($9::uuid IS NOT NULL AND a.client_context_id=$9
+               AND c.actor_id=$3 AND c.effective_role=$10
+               AND c.session_id=$4 AND c.thread_id=$5
+               AND c.context_revision=$6 AND c.patient_id=$7
+               AND c.encounter_id=$8 AND c.expires_at > now())
+             OR
+             ($9::uuid IS NULL AND a.client_context_id IS NULL
+               AND s.assistant_thread_id=$5 AND t.context_revision=$6)
+           )
+           AND t.site_id=$11 AND t.department_id=$12
+           AND t.patient_id=$7
            AND t.subject_encounter_id=$8
          FOR UPDATE OF a,p,s,t`,
         [
@@ -3174,6 +3743,8 @@ export class PostgresOperationalStore
           input.contextRevision,
           input.patientId,
           input.encounterId,
+          input.clientContextId ?? null,
+          input.actorRole,
           siteConfiguration.siteId,
           departmentId,
         ],
@@ -3432,7 +4003,35 @@ export class PostgresOperationalStore
       [organizationId, commandKey],
     );
     const row = result.rows[0];
-    if (!row) return null;
+    if (!row) {
+      const operational = await this.pool.query<{
+        request_hash: string;
+        status_code: number;
+        result_ref: { acceptedCommandId?: unknown; payload?: unknown };
+      }>(
+        `SELECT request_hash,status_code,result_ref
+         FROM command_receipts
+         WHERE organization_id=$1 AND command_key=$2 AND expires_at > now()`,
+        [organizationId, commandKey],
+      );
+      const receipt = operational.rows[0];
+      if (!receipt) return null;
+      if (receipt.request_hash !== requestHash)
+        throw new DomainError(
+          "INVALID_STATE",
+          "Befehls-ID wurde bereits mit einem anderen Inhalt verwendet.",
+          409,
+        );
+      return {
+        id:
+          typeof receipt.result_ref?.acceptedCommandId === "string"
+            ? receipt.result_ref.acceptedCommandId
+            : commandKey,
+        statusCode: receipt.status_code,
+        payload: structuredClone(receipt.result_ref?.payload),
+        replayed: true,
+      };
+    }
     if (row.request_hash !== requestHash)
       throw new DomainError(
         "INVALID_STATE",
@@ -3616,6 +4215,213 @@ export class PostgresOperationalStore
     if (result.rowCount !== 1)
       throw new Error("CLINICAL_PROJECTION_LEASE_LOST");
   }
+  async manualClinicalProjectionHead(): Promise<ManualClinicalProjectionHold | null> {
+    const result = await this.pool.query<{
+      id: string;
+      accepted_command_id: string;
+      last_error_class: string | null;
+      attempts: number;
+      created_at: Date | string;
+    }>(
+      `SELECT id::text,accepted_command_id::text,last_error_class,attempts,created_at
+       FROM clinical_projection_outbox
+       WHERE organization_id=$1 AND state <> 'delivered'
+       ORDER BY created_at,id LIMIT 1`,
+      [organizationId],
+    );
+    const row = result.rows[0];
+    if (!row || !row.last_error_class) return null;
+    const state = await this.pool.query<{ state: string }>(
+      `SELECT state FROM clinical_projection_outbox
+       WHERE organization_id=$1 AND id=$2`,
+      [organizationId, row.id],
+    );
+    if (state.rows[0]?.state !== "manual") return null;
+    return {
+      jobId: row.id,
+      acceptedCommandId: row.accepted_command_id,
+      errorCode: row.last_error_class,
+      attempts: Number(row.attempts),
+      createdAt:
+        row.created_at instanceof Date
+          ? row.created_at.toISOString()
+          : String(row.created_at),
+    };
+  }
+  async recoverManualClinicalProjection(input: {
+    actorId: string;
+    actorRole: Role;
+    jobId: string;
+    expectedErrorCode: string;
+    commandKey: string;
+    requestHash: string;
+    auditEntry: AuditEntry;
+  }): Promise<ClinicalProjectionRecoveryReceipt> {
+    if (input.actorRole !== "it")
+      throw new DomainError(
+        "AUTH_DENIED",
+        "Nur IT darf eine klinische Projektion erneut einreihen.",
+        403,
+      );
+    if (
+      input.auditEntry.actorId !== input.actorId ||
+      input.auditEntry.actorRole !== input.actorRole ||
+      input.auditEntry.action !== "clinical-projection:retry" ||
+      input.auditEntry.purpose !== "operations" ||
+      input.auditEntry.outcome !== "success"
+    )
+      throw new DomainError(
+        "AUTH_DENIED",
+        "Der Betriebsnachweis ist nicht an diese Freigabe gebunden.",
+        403,
+      );
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+        [`${organizationId}:operator-command:${input.commandKey}`],
+      );
+      const prior = await client.query<{
+        request_hash: string;
+        status_code: number;
+        result_ref: { payload?: ClinicalProjectionRecoveryReceipt };
+      }>(
+        `SELECT request_hash,status_code,result_ref
+         FROM command_receipts
+         WHERE organization_id=$1 AND command_key=$2 AND expires_at > now()
+         FOR UPDATE`,
+        [organizationId, input.commandKey],
+      );
+      const priorReceipt = prior.rows[0];
+      if (priorReceipt) {
+        if (priorReceipt.request_hash !== input.requestHash)
+          throw new DomainError(
+            "INVALID_STATE",
+            "Befehls-ID wurde bereits mit einem anderen Inhalt verwendet.",
+            409,
+          );
+        if (!priorReceipt.result_ref?.payload)
+          throw new DomainError(
+            "INVALID_STATE",
+            "Der gespeicherte Betriebsbeleg ist unvollständig.",
+            409,
+          );
+        await client.query("COMMIT");
+        return {
+          ...structuredClone(priorReceipt.result_ref.payload),
+          replayed: true,
+        };
+      }
+      const head = await client.query<{
+        id: string;
+        accepted_command_id: string;
+        state: string;
+        last_error_class: string | null;
+      }>(
+        `SELECT id::text,accepted_command_id::text,state,last_error_class
+         FROM clinical_projection_outbox
+         WHERE organization_id=$1 AND state <> 'delivered'
+         ORDER BY created_at,id LIMIT 1 FOR UPDATE`,
+        [organizationId],
+      );
+      const row = head.rows[0];
+      if (
+        !row ||
+        row.id !== input.jobId ||
+        row.state !== "manual" ||
+        row.last_error_class !== input.expectedErrorCode
+      )
+        throw new DomainError(
+          "INVALID_STATE",
+          "Projektionsauftrag oder Fehlerstand hat sich geändert.",
+          409,
+        );
+      await client.query(
+        `UPDATE clinical_projection_outbox
+         SET state='retry',next_attempt_at=now(),lease_owner=NULL,
+             lease_expires_at=NULL
+         WHERE organization_id=$1 AND id=$2 AND state='manual'
+           AND last_error_class=$3`,
+        [organizationId, input.jobId, input.expectedErrorCode],
+      );
+      await client.query(
+        `UPDATE accepted_commands a SET state=CASE
+           WHEN EXISTS (
+             SELECT 1 FROM clinical_projection_outbox c
+             WHERE c.organization_id=a.organization_id
+               AND c.accepted_command_id=a.id AND c.state='manual'
+           ) OR EXISTS (
+             SELECT 1 FROM provider_outbox p
+             WHERE p.organization_id=a.organization_id
+               AND p.accepted_command_id=a.id AND p.state='manual'
+           ) THEN 'manual-review' ELSE 'delivery-pending' END
+         WHERE a.organization_id=$1 AND a.id=$2`,
+        [organizationId, row.accepted_command_id],
+      );
+      const receipt: ClinicalProjectionRecoveryReceipt = {
+        jobId: row.id,
+        acceptedCommandId: row.accepted_command_id,
+        previousErrorCode: input.expectedErrorCode,
+        state: "retry",
+        replayed: false,
+      };
+      await client.query(
+        `INSERT INTO command_receipts
+           (organization_id,command_key,request_hash,status_code,result_ref,expires_at)
+         VALUES ($1,$2,$3,200,$4,now()+interval '30 days')`,
+        [
+          organizationId,
+          input.commandKey,
+          input.requestHash,
+          JSON.stringify({ payload: receipt }),
+        ],
+      );
+      await client.query(
+        `INSERT INTO audit_entries
+           (organization_id,actor_id,actor_role,action,outcome,patient_id,purpose,
+            detail,previous_hash,entry_hash,occurred_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+         ON CONFLICT (organization_id,entry_hash) DO NOTHING`,
+        [
+          organizationId,
+          input.auditEntry.actorId,
+          input.auditEntry.actorRole,
+          input.auditEntry.action,
+          input.auditEntry.outcome,
+          input.auditEntry.patientId,
+          input.auditEntry.purpose,
+          input.auditEntry.detail,
+          input.auditEntry.previousHash,
+          input.auditEntry.hash,
+          input.auditEntry.occurredAt,
+        ],
+      );
+      await client.query(
+        `INSERT INTO domain_events
+           (organization_id,aggregate_type,aggregate_id,event_type,audience,payload)
+         VALUES ($1,'clinical-projection',$2,'ClinicalProjectionRetryAuthorized',$3,$4)`,
+        [
+          organizationId,
+          row.id,
+          JSON.stringify({ actorIds: [input.actorId] }),
+          JSON.stringify({
+            jobId: row.id,
+            acceptedCommandId: row.accepted_command_id,
+            previousErrorCode: input.expectedErrorCode,
+            auditEntryHash: input.auditEntry.hash,
+          }),
+        ],
+      );
+      await client.query("COMMIT");
+      return receipt;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
   async providerDeliveryState(
     patientIds: readonly string[],
   ): Promise<"pending" | "simulated-acknowledged" | "external-gated"> {
@@ -3754,14 +4560,25 @@ export class PostgresOperationalStore
       [organizationId, actorId],
     );
   }
+  async suspendAssistantContextAuthorities(
+    actorId: string,
+    clientContextId: string,
+  ): Promise<void> {
+    await this.pool.query(
+      `UPDATE safety_authority SET consumed_at=now()
+       WHERE organization_id=$1 AND actor_id=$2 AND client_context_id=$3
+         AND consumed_at IS NULL`,
+      [organizationId, actorId, clientContextId],
+    );
+  }
   async storeVoiceAuthority(
     tokenHash: string,
     record: DurableVoiceAuthority,
   ): Promise<void> {
     await this.pool.query(
       `INSERT INTO safety_authority
-         (organization_id,token_hash,authority_type,actor_id,session_id,thread_id,context_revision,patient_id,binding,expires_at)
-       VALUES ($1,$2,'voice',$3,$4,$5,$6,$7,$8,$9)
+         (organization_id,token_hash,authority_type,actor_id,session_id,thread_id,context_revision,patient_id,binding,expires_at,client_context_id)
+       VALUES ($1,$2,'voice',$3,$4,$5,$6,$7,$8,$9,$10)
        ON CONFLICT (organization_id,token_hash) DO NOTHING`,
       [
         organizationId,
@@ -3773,6 +4590,7 @@ export class PostgresOperationalStore
         record.patientId,
         record,
         new Date(record.expiresAt),
+        record.clientContextId,
       ],
     );
   }
@@ -4227,6 +5045,10 @@ export class PostgresOperationalStore
       );
       await client.query(
         `DELETE FROM workflow_step_instances WHERE organization_id=$1`,
+        [organizationId],
+      );
+      await client.query(
+        `DELETE FROM assistant_client_contexts WHERE organization_id=$1`,
         [organizationId],
       );
       await client.query(
