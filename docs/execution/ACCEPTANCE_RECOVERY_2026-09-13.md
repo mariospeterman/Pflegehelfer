@@ -2,6 +2,13 @@
 
 Baseline reviewed: `18d485a0e25017a43f601c9870ec9c201e7ed073`
 
+Natural-coworker source-audit baseline:
+`2b1233d575fb8c33b9f5b98f1211171cd4401e2e`. The 14 September completion
+contract adds C1–C16 without replacing G0–G7 or the inherited
+MD/AG/CT/WF/TX/AI/VA/UI acceptance families. Evidence below predating that SHA
+remains historical evidence for its named runtime and is not silently promoted
+to the new probes.
+
 This record distinguishes an interaction-only memory demo from the integrated
 synthetic environment. It is evidence for the current increment, not a claim
 that G0–G7 or a real clinical deployment is complete.

@@ -1,13 +1,17 @@
 # G0–G7 completion matrix
 
 Updated: 2026-09-14
-Rechecked baseline: `18d485a0e25017a43f601c9870ec9c201e7ed073`
-Current implementation: `ca4e0e9` plus documentation/browser audit in progress
+Rechecked baseline: `2b1233d575fb8c33b9f5b98f1211171cd4401e2e`
+Current implementation: contract reconciliation in progress from `2b1233d`
 
 This matrix is the short evidence index for the binding completion contract in
 [`PFLEGEHELFER_COMPLETION.md`](PFLEGEHELFER_COMPLETION.md). `PASS` requires code,
 an acceptance test and runtime evidence. `PARTIAL` is internally achievable
 work. `EXTERNAL` is evidence that this repository cannot invent.
+
+The inherited MD/AG/CT/WF/TX/AI/VA/UI identifiers remain binding and are now
+preserved verbatim in the canonical contract. C1–C16 are cross-cutting closure
+probes over those requirements, not replacement identifiers.
 
 | Gate                            | Current evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | Status  | Required closure                                                                                                                                                                                                                                                                         |
 | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
