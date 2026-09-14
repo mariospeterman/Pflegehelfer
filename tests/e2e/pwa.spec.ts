@@ -472,6 +472,41 @@ test("large text and a reduced keyboard viewport keep the composer usable", asyn
 test("handover readout uses explicit controllable browser speech", async ({
   page,
 }) => {
+  await page.evaluate(() => {
+    const state = { spokenText: "", paused: false, cancelled: false };
+    class TestSpeechSynthesisUtterance {
+      lang = "";
+      onend: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+
+      constructor(readonly text: string) {}
+    }
+    Object.defineProperty(window, "SpeechSynthesisUtterance", {
+      configurable: true,
+      value: TestSpeechSynthesisUtterance,
+    });
+    Object.defineProperty(window, "speechSynthesis", {
+      configurable: true,
+      value: {
+        cancel: () => {
+          state.cancelled = true;
+        },
+        pause: () => {
+          state.paused = true;
+        },
+        resume: () => {
+          state.paused = false;
+        },
+        speak: (utterance: TestSpeechSynthesisUtterance) => {
+          state.spokenText = utterance.text;
+        },
+      },
+    });
+    Object.defineProperty(window, "__pfhSpeechTestState", {
+      configurable: true,
+      value: state,
+    });
+  });
   const readout = page.getByRole("button", {
     name: "Übergabe vorlesen",
     exact: true,
@@ -484,6 +519,20 @@ test("handover readout uses explicit controllable browser speech", async ({
   await expect(
     page.getByText(/Inhalt entspricht exakt dem eingefrorenen/),
   ).toBeVisible();
+  const speechState = await page.evaluate(
+    () =>
+      (
+        window as unknown as {
+          __pfhSpeechTestState: {
+            spokenText: string;
+            cancelled: boolean;
+          };
+        }
+      ).__pfhSpeechTestState,
+  );
+  expect(speechState.spokenText).toContain("Seit letzter Übergabe:");
+  expect(speechState.spokenText).toContain("Heute geplant:");
+  expect(speechState.cancelled).toBe(true);
 });
 
 test("general assistant navigation leaves the patient thread explicitly", async ({
