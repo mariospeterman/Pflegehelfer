@@ -44,6 +44,35 @@ describe("conversational AssistantProposal compiler regressions", () => {
     expect(note?.sourceRecordIds).toHaveLength(2);
   });
 
+  it("keeps identical utterances as distinct immutable capture events", () => {
+    const first = deterministicAssistantProposal("Etwa 200 ml getrunken.", {
+      inputTimestamp: "2026-09-13T08:01:00.000Z",
+      inputModality: "typed",
+    });
+    const second = reviseAssistantProposal(first, "Korrektur: eher 150 ml.", {
+      inputTimestamp: "2026-09-13T08:31:00.000Z",
+      inputModality: "typed",
+    });
+    const third = reviseAssistantProposal(second, "Korrektur: eher 150 ml.", {
+      inputTimestamp: "2026-09-13T09:01:00.000Z",
+      inputModality: "voice",
+    });
+
+    expect(() => verifyProposalSourceRecords(third)).not.toThrow();
+    expect(third?.sourceRecords).toHaveLength(3);
+    expect(new Set(third?.sourceRecords?.map(({ id }) => id)).size).toBe(3);
+    expect(
+      new Set(
+        third?.sourceRecords?.slice(1).map(({ contentHash }) => contentHash),
+      ).size,
+    ).toBe(1);
+    expect(third?.sourceRecords?.map(({ modality }) => modality)).toEqual([
+      "typed",
+      "typed",
+      "voice",
+    ]);
+  });
+
   it("asks instead of claiming an unsupported natural correction was applied", () => {
     const previous = deterministicAssistantProposal(
       "Luca mobilisiert und Morgenpflege erledigt.",
@@ -56,9 +85,14 @@ describe("conversational AssistantProposal compiler regressions", () => {
   });
 
   it("does not misclassify ordinary dressing assistance as treatment", () => {
-    expect(
-      requiresDedicatedClinicalWorkflow("Ich habe ihm beim Anziehen geholfen."),
-    ).toBe(false);
+    for (const prompt of [
+      "Ich habe ihm beim Anziehen geholfen.",
+      "Wasche den Patienten am Lavabo.",
+      "Bring den Patienten ins Bad.",
+      "Mobilisiere den Bewohner zum Stuhl.",
+      "Öffne das Fenster.",
+    ])
+      expect(requiresDedicatedClinicalWorkflow(prompt)).toBe(false);
   });
   it("replaces stale work when a correction says only morning care was done", () => {
     const previous = deterministicAssistantProposal("Luca mobilisiert.");

@@ -95,4 +95,98 @@ describe("pending review continuity", () => {
     });
     expect(executed.statusCode).toBe(200);
   });
+
+  it("suspends a patient review across a context switch and reauthorizes it on return", async () => {
+    const app = buildApp(undefined, { demoMode: true });
+    apps.push(app);
+    const switchTo = (patientId: string) =>
+      app.inject({
+        method: "POST",
+        url: "/api/v1/assistant/context",
+        headers: commandHeaders("u-nurse"),
+        payload: { patientId },
+      });
+    await switchTo("p-anna");
+    const draftResponse = await app.inject({
+      method: "POST",
+      url: "/api/v1/assistant/query",
+      headers: commandHeaders("u-nurse"),
+      payload: {
+        patientId: "p-anna",
+        prompt: "Puls 82.",
+        inputModality: "typed",
+      },
+    });
+    const draftBody = draftResponse.json<{
+      patientContext: {
+        patientId: string;
+        encounterId: string;
+        resourceVersion: number;
+      };
+      components: Array<{
+        type: string;
+        intentToken?: string;
+        reviewItems?: Array<{ id: string }>;
+      }>;
+    }>();
+    const original = draftBody.components.find(
+      (component) => component.type === "DraftAction",
+    )!;
+    await switchTo("p-luca");
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/api/v1/assistant/pending-review",
+          headers: commandHeaders("u-nurse"),
+          payload: {},
+        })
+      ).json(),
+    ).toEqual({ pending: null });
+    await switchTo("p-anna");
+    const restored = (
+      await app.inject({
+        method: "POST",
+        url: "/api/v1/assistant/pending-review",
+        headers: commandHeaders("u-nurse"),
+        payload: {},
+      })
+    ).json<{
+      pending: {
+        response: {
+          components: Array<{
+            type: string;
+            intentToken?: string;
+            reviewItems?: Array<{ id: string }>;
+          }>;
+        };
+      };
+    }>();
+    const reauthorized = restored.pending.response.components.find(
+      (component) => component.type === "DraftAction",
+    )!;
+    expect(reauthorized.intentToken).not.toBe(original.intentToken);
+    const payload = {
+      patientId: draftBody.patientContext.patientId,
+      encounterId: draftBody.patientContext.encounterId,
+      purpose: "direct-care",
+      resourceVersion: draftBody.patientContext.resourceVersion,
+      explicitlyConfirmed: true,
+      reviewedActionIds: reauthorized.reviewItems!.map((item) => item.id),
+    };
+    const stale = await app.inject({
+      method: "POST",
+      url: `/api/v1/assistant/intents/${original.intentToken}/execute`,
+      headers: commandHeaders("u-nurse"),
+      payload,
+    });
+    expect(stale.statusCode).toBe(403);
+    const accepted = await app.inject({
+      method: "POST",
+      url: `/api/v1/assistant/intents/${reauthorized.intentToken}/execute`,
+      headers: commandHeaders("u-nurse"),
+      payload,
+    });
+    expect(accepted.statusCode).toBe(200);
+  });
 });

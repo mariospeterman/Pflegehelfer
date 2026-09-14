@@ -205,12 +205,122 @@ function generatedCoworkerTextIsSafe(
     )
   )
     return false;
-  const groundedView = JSON.stringify(
-    components.filter((component) => component.type !== "AssistantText"),
-  ).replace(/\s+/g, " ");
-  return [...run.text.matchAll(/\b\d+(?:[.,/]\d+)?\b/g)].every((match) =>
-    groundedView.includes(match[0]),
+  const referenceTypes = new Set(
+    (run.sourceReferenceIds ?? []).flatMap((referenceId) => {
+      if (referenceId.startsWith("Patient/")) return ["PatientSummary"];
+      if (referenceId.startsWith("Task/")) return ["TaskList"];
+      if (referenceId.startsWith("Observation/")) return ["VitalTrend"];
+      if (referenceId.startsWith("WorkdayHandover/"))
+        return ["HandoverChecklist"];
+      if (referenceId.startsWith("Communication/")) return ["TeamInbox"];
+      if (referenceId.startsWith("ProviderSync/")) return ["SyncSummary"];
+      return [];
+    }),
   );
+  const groundedComponents = components.filter(
+    (component) =>
+      component.type !== "AssistantText" && referenceTypes.has(component.type),
+  );
+  if (run.toolCalls > 0 && groundedComponents.length === 0) return false;
+  const factualView = groundedComponents.map((component) => {
+    const copy = { ...component } as Record<string, unknown>;
+    delete copy.sourceLabel;
+    delete copy.intentToken;
+    return copy;
+  });
+  const groundedView = JSON.stringify(factualView)
+    .normalize("NFKC")
+    .toLocaleLowerCase("de-CH")
+    .replace(/\s+/g, " ");
+  const normalizedText = run.text
+    .normalize("NFKC")
+    .toLocaleLowerCase("de-CH")
+    .replace(
+      /\b(null|ein(?:e|en|er|es)?|zwei|drei|vier|fünf|sechs|sieben|acht|neun|zehn)\b/g,
+      (word) =>
+        String(
+          {
+            null: 0,
+            ein: 1,
+            eine: 1,
+            einen: 1,
+            einer: 1,
+            eines: 1,
+            zwei: 2,
+            drei: 3,
+            vier: 4,
+            fünf: 5,
+            sechs: 6,
+            sieben: 7,
+            acht: 8,
+            neun: 9,
+            zehn: 10,
+          }[word] ?? word,
+        ),
+    );
+  if (
+    [...normalizedText.matchAll(/\b\d+(?:[.,/]\d+)?\b/g)].some(
+      (match) => !groundedView.includes(match[0]),
+    )
+  )
+    return false;
+  const countClaim =
+    /\b(\d+)\s+(?:\w+\s+){0,2}(?:offen\w*|ausstehend\w*)\s*(aufgaben|fragen|nachrichten|punkte)?/i.exec(
+      normalizedText,
+    );
+  if (countClaim) {
+    const claimed = Number(countClaim[1]);
+    const noun = countClaim[2] ?? "punkte";
+    const countComponent = groundedComponents.find((component) =>
+      /aufgaben/.test(noun)
+        ? component.type === "TaskList"
+        : /fragen|nachrichten/.test(noun)
+          ? component.type === "TeamInbox"
+          : component.type === "HandoverChecklist" ||
+            component.type === "TaskList" ||
+            component.type === "TeamInbox",
+    );
+    const actual =
+      countComponent?.type === "HandoverChecklist"
+        ? countComponent.openCount
+        : countComponent?.type === "TaskList" ||
+            countComponent?.type === "TeamInbox"
+          ? countComponent.count
+          : null;
+    if (actual === null || claimed !== actual) return false;
+  }
+  const unsupportedAbsoluteClaims = [
+    /\bschmerzfrei\b/,
+    /\bkeine(?:n|r|s)?\s+(?:bekannten?\s+)?allergien?\b/,
+    /\bsicher\s+keine\b/,
+    /\bunauffällig\b/,
+    /\bklinisch\s+stabil\b/,
+    /\bwerte?\s+(?:sind|ist)\s+normal\b/,
+  ];
+  if (
+    unsupportedAbsoluteClaims.some(
+      (claim) => claim.test(normalizedText) && !claim.test(groundedView),
+    )
+  )
+    return false;
+  for (const clinicalTerm of [
+    "allerg",
+    "schmerz",
+    "diagnos",
+    "medikament",
+    "blutdruck",
+    "puls",
+    "temperatur",
+    "sättigung",
+    "gewicht",
+    "sturz",
+  ])
+    if (
+      normalizedText.includes(clinicalTerm) &&
+      !groundedView.includes(clinicalTerm)
+    )
+      return false;
+  return true;
 }
 
 function explicitlyRequestsNote(prompt: string): boolean {
@@ -1858,6 +1968,9 @@ export class AssistantService {
           !/\b(?:vielleicht|möglicherweise|eventuell|unklar|wohl|vermutlich|wahrscheinlich|mutmasslich|mutmaßlich|schätzungsweise|angeblich)\b|\b(?:sollte|könnte|dürfte)\s+man\b/i.test(
             prompt,
           ) &&
+          /\b(?:morgenpflege|körperpflege|wasch\w*|dusch\w*|anzieh\w*|auszieh\w*|mobilis\w*|lager\w*|transfer\w*|toilett\w*|inkontinenz\w*|gegessen|getrunken|trinkmenge|nahrung|mundpflege|hautpflege|spaziergang|gehtraining)\b/i.test(
+            prompt,
+          ) &&
           !/^\s*(?:was|wer|wen|wem|wie|wo|wann|warum|wieso|welche|welcher|welches|ist|sind|hat|haben|kann|können|soll|sollen|darf|dürfen)\b/i.test(
             prompt,
           ) &&
@@ -1880,6 +1993,12 @@ export class AssistantService {
             }),
             sourceLabel:
               "Wörtliche Eingabe · keine automatische Bedeutungsinterpretation",
+          });
+        } else if (classification.degraded && patient) {
+          components.push({
+            type: "AssistantText",
+            message:
+              "Das Sprachmodell ist nicht verfügbar. Dein Wortlaut bleibt im privaten Gespräch erhalten; ich erstelle daraus ohne klaren Dokumentationsauftrag keine klinische Änderung.",
           });
         } else if (
           !agentRun ||

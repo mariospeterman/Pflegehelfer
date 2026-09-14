@@ -317,8 +317,11 @@ function proposalSourceRecord(
   origin: "current-input" | "legacy-span" = "current-input",
 ) {
   const contentHash = createHash("sha256").update(text).digest("hex");
+  const recordHash = createHash("sha256")
+    .update(JSON.stringify({ contentHash, capturedAt, modality, origin }))
+    .digest("hex");
   return {
-    id: `source-${contentHash.slice(0, 16)}`,
+    id: `source-${recordHash.slice(0, 16)}`,
     contentHash,
     capturedAt,
     modality,
@@ -339,6 +342,20 @@ export function verifyProposalSourceRecords(input: unknown): AssistantProposal {
       record.contentHash
     )
       throw new Error("CLINICAL_PLAN_SOURCE_RECORD_HASH_MISMATCH");
+    else if (
+      `source-${createHash("sha256")
+        .update(
+          JSON.stringify({
+            contentHash: record.contentHash,
+            capturedAt: record.capturedAt,
+            modality: record.modality,
+            origin: record.origin,
+          }),
+        )
+        .digest("hex")
+        .slice(0, 16)}` !== record.id
+    )
+      throw new Error("CLINICAL_PLAN_SOURCE_RECORD_IDENTITY_MISMATCH");
   const referenced = [
     ...plan.understoodFacts,
     ...plan.workPerformed,
@@ -708,9 +725,10 @@ export function requiresDedicatedClinicalWorkflow(source: string): boolean {
       /\b(?:wurde|war|ist|hat|habe)\b[^.;]{0,80}\b(?:gegeben|verabreicht|abgesetzt|entfernt|gewechselt|gelegt|appliziert|angeordnet|verordnet|verschrieben|behandelt|therapiert|gestoppt|geändert|angepasst|reduziert|erhöht|durchgeführt|gezogen|verbunden|gespült|erneuert|kontrolliert)\b/i.test(
         clause,
       ) ||
-      /\b(?:durchgeführt|erledigt|eingenommen|kontrolliert|verabreicht|gegeben|gewechselt|gespült|erneuert)\b/i.test(
-        clause,
-      );
+      (!/\b(?:soll|muss|darf|sollen|müssen|dürfen)\b/i.test(clause) &&
+        /\b(?:durchgeführt|erledigt|eingenommen|kontrolliert|verabreicht|gegeben|gewechselt|gespült|erneuert)\b/i.test(
+          clause,
+        ));
     const modalCommand =
       /\b(?:soll|muss|darf|sollen|müssen|dürfen)\b[^.;]{0,80}\b(?:gegeben|verabreicht|abgesetzt|entfernt|gewechselt|gelegt|appliziert|angeordnet|verordnet|verschrieben|behandelt|therapiert|gestoppt|geändert|angepasst|reduziert|erhöht|durchgeführt)\b/i.test(
         clause,
@@ -720,41 +738,12 @@ export function requiresDedicatedClinicalWorkflow(source: string): boolean {
         clause,
       ) && !/\b(?:soll|muss|darf|sollen|müssen|dürfen|bitte)\b/i.test(clause);
     const safetySensitiveSubject =
-      /\b(?:medikament\w*|tablette\w*|kapsel\w*|tropfen\w*|tropf|insulin|marcumar|morphin|heparin|antibiotik\w*|spritze\w*|injektion\w*|infusion\w*|\w*katheter\w*|sonde(?:n)?|drainage\w*|\w*kanül\w*|leitung\w*|sauerstoff|o2|beatmung|wund(?:e|en|versorgung)?|verband\w*|kompressionsstrümpf\w*|therapie\w*|behandlung\w*|diagnos\w*)\b/i.test(
+      /\b(?:medikament\w*|tablette\w*|kapsel\w*|tropfen\w*|tropf|insulin|marcumar|morphin|heparin|antibiotik\w*|spritze\w*|injektion\w*|infusion\w*|\w*katheter\w*|sonde(?:n)?|drainage\w*|\w*kanül\w*|leitung\w*|sauerstoff|o2|beatmung|blase|wund(?:e|en|versorgung)?|verband\w*|kompressionsstrümpf\w*|therapie\w*|behandlung\w*|diagnos\w*|blutzucker|inhalation\w*|nüchtern|stoma\w*|umlager\w*|lagerung\w*)\b/i.test(
         clause,
-      );
-    const normalizedClause = clause.replace(
-      /^\s*(?:bitte\s+)?(?:notiz|pflegebericht|dokumentiere)\s*[:,-]?\s*/i,
-      "",
-    );
-    const hasDocumentationPrefix =
-      /^\s*(?:bitte\s+)?(?:notiz|pflegebericht|dokumentiere)\b/i.test(clause);
-    const allowedNonClinicalCommand =
-      !hasDocumentationPrefix &&
-      (/^\s*(?:zeige|öffne|wähle)\p{L}*\s+[^.;]{0,50}(?:profil|übergabe|vitalwerte|aufgaben|teamfragen|synchronisation|patientenkontext)/iu.test(
-        normalizedClause,
-      ) ||
-        /^\s*(?:erstelle|eröffne|lege)\p{L}*\b[^.;]{0,50}\b(?:aufgabe|task)\b/iu.test(
-          normalizedClause,
-        ) ||
-        /^\s*(?:informiere|benachrichtige|frage)\p{L}*\b[^.;]{0,60}\b(?:arzt|ärztin|ärztlichen?\s+dienst)\b/iu.test(
-          normalizedClause,
-        ));
-    const imperativeSentenceShape =
-      /^\s*\p{L}+\s+(?:den|die|das|einen|eine)\b/iu.test(normalizedClause) ||
-      /^\s*\p{L}+(?:en|ern)\s+Sie\s+(?:den|die|das|einen|eine|Herrn|Frau)\b/u.test(
-        normalizedClause,
-      ) ||
-      /^\s*(?:den|die|das|einen|eine)\s+(?:patient(?:en|in)?|bewohner(?:in|n)?)\s+\p{L}+(?:en|ern)\b/iu.test(
-        normalizedClause,
-      ) ||
-      /^\s*(?:patient(?:in)?|bewohner(?:in)?)\s+\p{L}+(?:en|ern)\b/iu.test(
-        normalizedClause,
-      );
-    const targetedInfinitiveInstruction =
-      hasDocumentationPrefix &&
-      /\b(?:patient(?:en|in)?|bewohner(?:in|n)?|Herrn|Frau|Bett|Stuhl)\b[^.;]{0,80}\b\p{L}+(?:en|ern|eln)\s*$/iu.test(
-        normalizedClause,
+      ) || /\blager\w*\b[^.;]{0,60}\bum\b/i.test(clause);
+    const explicitFollowUpControl =
+      /\b(?:blutzucker[-\s]*)?kontrolle\b[^.;]{0,50}\b(?:in|nach)\s+\d+\s*(?:min(?:uten?)?|std\.?|stunden?)\b/i.test(
+        clause,
       );
     const imperative =
       /\b(?:geben|gib|verabreichen|verabreiche|injizieren|injiziere|verteilen|verteile|absetzen|entfernen|entferne|wechseln|wechsle|legen|lege|applizieren|appliziere|anordnen|ordne|verordnen|verordne|verschreiben|verschreibe|behandeln|behandle|therapieren|therapiere|stoppen|stoppe|ändern|ändere|anpassen|passe|reduzieren|reduziere|erhöhen|erhöhe|titrieren|titriere|senken|senke|ersetzen|ersetze|ziehen|zieh|verbinden|spülen|spüle|erneuern|absaugen|leeren|leere|versorgen|versorge|umlagern|lagere|durchführen|führe|messen|miss|lassen|lass|inhalieren)\b/i.test(
@@ -771,19 +760,30 @@ export function requiresDedicatedClinicalWorkflow(source: string): boolean {
       (/\bstarten\b/i.test(clause) &&
         /\b(?:wund|therapie|behandlung|diagnos)\w*\b/i.test(clause));
     const highRiskProcedure =
-      /\b(?:reanimier|defibrillier|sedier|intubier|fixier|fessel)\p{L}*\b/iu.test(
+      /\b(?:reanimier|defibrillier|sedier|intubier|fixier|fessel|isolier|gurt)\p{L}*\b/iu.test(
+        clause,
+      ) ||
+      /\bsetz(?:e|en\s+sie)\b[^.;]{0,50}\bab\b/iu.test(clause) ||
+      /\b(?:stoppe|reduziere|erhöhe|senke)\b\s+(?!(?:die\s+)?(?:aufgabe|alarm|timer|wiedergabe|musik)\b)\p{L}/iu.test(
+        clause,
+      ) ||
+      /\b(?:soll|muss|sollen|müssen)\b[^.;]{0,80}\b(?:gegeben|verabreicht|abgesetzt|injiziert|appliziert|titriert|reduziert|erhöht)\b/iu.test(
+        clause,
+      ) ||
+      /\b(?:gib|geben|verabreich\w*)\s+(?!(?:wasser|tee|kaffee|essen|trinken|glas|becher)\b)\p{L}/iu.test(
         clause,
       );
     // These domains are fail-closed unless the utterance is unmistakably a
     // completed report or descriptive state. This also catches terse orders
     // and unseen verbs without relying on an endless imperative denylist.
     return (
-      (imperative && !completed) ||
+      (imperative && safetySensitiveSubject && !completed) ||
       (highRiskProcedure && !completed) ||
-      modalCommand ||
-      (imperativeSentenceShape && !allowedNonClinicalCommand && !completed) ||
-      (targetedInfinitiveInstruction && !completed && !clearlyDescriptive) ||
-      (safetySensitiveSubject && !completed && !clearlyDescriptive)
+      (modalCommand && safetySensitiveSubject) ||
+      (safetySensitiveSubject &&
+        !explicitFollowUpControl &&
+        !completed &&
+        !clearlyDescriptive)
     );
   });
 }

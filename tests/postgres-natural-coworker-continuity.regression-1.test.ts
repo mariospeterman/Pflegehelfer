@@ -90,5 +90,92 @@ describe.runIf(Boolean(databaseUrl))(
         await app.close();
       }
     });
+
+    it("restores a suspended patient proposal after leaving and returning", async () => {
+      const store = new PostgresOperationalStore(databaseUrl!);
+      await store.initialize();
+      await store.resetDemoState();
+      const app = buildApp(undefined, {
+        demoMode: true,
+        operationalStore: store,
+        modelGateway: new ModelGateway({ PFH_AI_MODE: "deterministic" }),
+      });
+      try {
+        const switchTo = (patientId: string) =>
+          app.inject({
+            method: "POST",
+            url: "/api/v1/assistant/context",
+            headers: commandHeaders("u-nurse"),
+            payload: { patientId },
+          });
+        await switchTo("p-anna");
+        const drafted = await app.inject({
+          method: "POST",
+          url: "/api/v1/assistant/query",
+          headers: commandHeaders("u-nurse"),
+          payload: {
+            patientId: "p-anna",
+            prompt: "Puls 82.",
+            inputModality: "typed",
+          },
+        });
+        const originalToken = drafted
+          .json<{
+            components: Array<{ type: string; intentToken?: string }>;
+          }>()
+          .components.find(
+            (component) => component.type === "DraftAction",
+          )!.intentToken!;
+        await switchTo("p-luca");
+        await switchTo("p-anna");
+        const restored = await app.inject({
+          method: "POST",
+          url: "/api/v1/assistant/pending-review",
+          headers: commandHeaders("u-nurse"),
+          payload: {},
+        });
+        expect(restored.statusCode).toBe(200);
+        const newToken = restored
+          .json<{
+            pending: {
+              response: {
+                components: Array<{ type: string; intentToken?: string }>;
+              };
+            };
+          }>()
+          .pending.response.components.find(
+            (component) => component.type === "DraftAction",
+          )!.intentToken!;
+        expect(newToken).not.toBe(originalToken);
+        const session = await store.getOrStartSession(
+          "u-nurse",
+          "registered-nurse",
+        );
+        await expect(
+          store.loadIntentAuthority({
+            tokenHash: createHash("sha256").update(originalToken).digest("hex"),
+            actorId: "u-nurse",
+            sessionId: session.id,
+            threadId: session.threadId,
+            contextRevision: session.contextRevision,
+            patientId: "p-anna",
+            encounterId: "enc-anna-2026",
+          }),
+        ).resolves.toBeNull();
+        await expect(
+          store.loadIntentAuthority({
+            tokenHash: createHash("sha256").update(newToken).digest("hex"),
+            actorId: "u-nurse",
+            sessionId: session.id,
+            threadId: session.threadId,
+            contextRevision: session.contextRevision,
+            patientId: "p-anna",
+            encounterId: "enc-anna-2026",
+          }),
+        ).resolves.toMatchObject({ command: "care-update:draft" });
+      } finally {
+        await app.close();
+      }
+    });
   },
 );

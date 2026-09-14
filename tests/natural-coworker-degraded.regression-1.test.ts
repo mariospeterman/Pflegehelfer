@@ -53,4 +53,32 @@ describe("natural coworker degraded operation regression", () => {
       response.components.some((component) => component.type === "DraftAction"),
     ).toBe(false);
   });
+
+  it.each([
+    "Danke, das war alles.",
+    "Ich bin kurz beim Mittagessen.",
+    "Luca wirkt heute freundlich.",
+  ])(
+    "keeps casual wording conversational without a clinical draft: %s",
+    async (prompt) => {
+      const response = await new AssistantService(
+        new PflegehelferService(),
+        new ModelGateway({ PFH_AI_MODE: "deterministic" }),
+      ).query("u-assistant", {
+        patientId: "p-luca",
+        purpose: "direct-care",
+        prompt,
+        inputModality: "typed",
+      });
+
+      expect(
+        response.components.some(
+          (component) => component.type === "DraftAction",
+        ),
+      ).toBe(false);
+      expect(JSON.stringify(response.components)).toContain(
+        "keine klinische Änderung",
+      );
+    },
+  );
 });

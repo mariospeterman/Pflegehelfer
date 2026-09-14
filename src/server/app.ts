@@ -79,6 +79,18 @@ const purposeSchema = z.enum([
   "quality-review",
 ]);
 const prioritySchema = z.enum(["routine", "elevated", "urgent"]);
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value !== null && typeof value === "object")
+    return `{${Object.entries(value as Record<string, unknown>)
+      .filter(([, item]) => item !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`)
+      .join(",")}}`;
+  return JSON.stringify(value) ?? "null";
+}
+
 const taskBody = z.object({
   evidence: z.string().max(500).optional(),
   delegateRole: roleSchema.optional(),
@@ -1024,7 +1036,12 @@ export function buildApp(
     service.user(actorId);
     const key = `${actorId}:${request.method}:${route}:${commandId}`;
     const requestHash = createHash("sha256")
-      .update(JSON.stringify(request.body ?? null))
+      .update(
+        canonicalJson({
+          path: request.url.split("?", 1)[0],
+          body: request.body ?? null,
+        }),
+      )
       .digest("hex");
     const cached = committedCommandKeys.has(key)
       ? service.commandReceipt(key)
@@ -1961,7 +1978,7 @@ export function buildApp(
     }
     assistant.revokeActorIntents(actorId);
     revokeVoiceReceipts(actorId);
-    await operationalStore.revokeActorAuthorities(actorId);
+    await operationalStore.suspendActorAuthorities(actorId);
     const transition = operationalStore.changePatientContext(
       actorId,
       actor.role,

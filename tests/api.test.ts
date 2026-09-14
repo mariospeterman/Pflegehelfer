@@ -602,6 +602,99 @@ describe("purpose-specific BFF", () => {
     expect(replay.statusCode).toBe(403);
   });
 
+  it("binds an idempotent command receipt to the concrete review authority", async () => {
+    const app = buildApp(undefined, { demoMode: true });
+    apps.push(app);
+    await app.inject({
+      method: "POST",
+      url: "/api/v1/assistant/context",
+      headers: commandHeaders("u-nurse"),
+      payload: { patientId: "p-anna" },
+    });
+    const query = await app.inject({
+      method: "POST",
+      url: "/api/v1/assistant/query",
+      headers: commandHeaders("u-nurse"),
+      payload: {
+        patientId: "p-anna",
+        prompt: "Puls 82.",
+        inputModality: "typed",
+      },
+    });
+    const queryBody = query.json<{
+      patientContext: {
+        patientId: string;
+        encounterId: string;
+        resourceVersion: number;
+      };
+      components: Array<{
+        type: string;
+        intentToken?: string;
+        reviewItems?: Array<{ id: string }>;
+      }>;
+    }>();
+    const first = queryBody.components.find(
+      (component) => component.type === "DraftAction",
+    )!;
+    const restored = await app.inject({
+      method: "POST",
+      url: "/api/v1/assistant/pending-review",
+      headers: commandHeaders("u-nurse"),
+      payload: {},
+    });
+    const second = restored
+      .json<{
+        pending: {
+          response: {
+            components: Array<{ type: string; intentToken?: string }>;
+          };
+        };
+      }>()
+      .pending.response.components.find(
+        (component) => component.type === "DraftAction",
+      )!;
+    expect(second.intentToken).not.toBe(first.intentToken);
+    const payload = {
+      patientId: queryBody.patientContext.patientId,
+      encounterId: queryBody.patientContext.encounterId,
+      purpose: "direct-care",
+      resourceVersion: queryBody.patientContext.resourceVersion,
+      explicitlyConfirmed: true,
+      reviewedActionIds: first.reviewItems!.map((item) => item.id),
+    };
+    const commandId = crypto.randomUUID();
+    const headers = { ...commandHeaders("u-nurse"), "x-command-id": commandId };
+    const firstExecution = await app.inject({
+      method: "POST",
+      url: `/api/v1/assistant/intents/${first.intentToken}/execute`,
+      headers,
+      payload,
+    });
+    expect(firstExecution.statusCode).toBe(200);
+    const exactReplay = await app.inject({
+      method: "POST",
+      url: `/api/v1/assistant/intents/${first.intentToken}/execute`,
+      headers,
+      payload: {
+        explicitlyConfirmed: true,
+        reviewedActionIds: payload.reviewedActionIds,
+        resourceVersion: payload.resourceVersion,
+        purpose: payload.purpose,
+        encounterId: payload.encounterId,
+        patientId: payload.patientId,
+      },
+    });
+    expect(exactReplay.statusCode).toBe(200);
+    expect(exactReplay.body).toBe(firstExecution.body);
+    const wrongAuthority = await app.inject({
+      method: "POST",
+      url: `/api/v1/assistant/intents/${second.intentToken}/execute`,
+      headers,
+      payload,
+    });
+    expect(wrongAuthority.statusCode).toBe(409);
+  });
+
   it("durably revokes an older same-context review when a newer query arrives", async () => {
     const app = buildApp(undefined, { demoMode: true });
     apps.push(app);

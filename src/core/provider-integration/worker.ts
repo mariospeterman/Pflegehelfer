@@ -252,10 +252,38 @@ export class ProviderDeliveryWorker {
           : await adapter.executeCommand(
               await adapter.prepareCommand(job.payload.command),
             );
-        const readBack =
-          acknowledgement.status === "acknowledged"
-            ? await verifyProviderReadBack(adapter, job.payload.command)
-            : null;
+        let readBack: Awaited<ReturnType<typeof verifyProviderReadBack>> = null;
+        if (acknowledgement.status === "acknowledged") {
+          try {
+            readBack = await verifyProviderReadBack(
+              adapter,
+              job.payload.command,
+            );
+          } catch (error) {
+            if (!technicalFailure(error)) throw error;
+            const retryAt =
+              job.attempts < this.options.maximumAttempts
+                ? this.retryAt(job.attempts)
+                : null;
+            // The remote receipt is already a durable fact. Persist it before
+            // retrying read-back so restart recovery polls the receipt instead
+            // of executing the command a second time.
+            await this.store.finishProviderDelivery({
+              jobId: job.id,
+              workerId: this.options.workerId,
+              acknowledgement: {
+                ...acknowledgement,
+                status: "pending",
+                errorCode: "PROVIDER_READBACK_PENDING",
+                errorClassification: "technical",
+              },
+              retryAt,
+            });
+            if (retryAt) result.retrying += 1;
+            else result.manual += 1;
+            continue;
+          }
+        }
         if (
           acknowledgement.status === "acknowledged" &&
           (!readBack ||

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   canonicalClinicalCommandSchema,
   createSyntheticProviderRegistry,
@@ -62,6 +62,7 @@ const authorizeDelivery = () => ({ allowed: true as const });
 class RecordingDeliveryStore implements ProviderDeliveryStore {
   readonly completed: Array<{
     acknowledgement: ProviderAcknowledgement;
+    retryAt: Date | null;
     readBackEvidence?: {
       providerVersion: string;
       contentHash: string;
@@ -89,6 +90,7 @@ class RecordingDeliveryStore implements ProviderDeliveryStore {
 
   finishProviderDelivery(input: {
     acknowledgement: ProviderAcknowledgement;
+    retryAt: Date | null;
     readBackEvidence?: {
       providerVersion: string;
       contentHash: string;
@@ -208,6 +210,48 @@ describe("bounded provider delivery worker", () => {
       /^[a-f0-9]{64}$/,
     );
     expect(store.failures).toEqual([]);
+  });
+
+  it("persists an acknowledged receipt before retrying failed read-back", async () => {
+    const registry = createSyntheticProviderRegistry();
+    const pending = job("reconcile-before-retry");
+    const adapter = registry.adapterForOperation(
+      pending.provider,
+      pending.profile,
+      pending.operation,
+    )!;
+    vi.spyOn(adapter, "read").mockRejectedValue(
+      Object.assign(new Error("PROVIDER_UNAVAILABLE"), {
+        name: "ProviderTransportError",
+      }),
+    );
+    const store = new RecordingDeliveryStore([pending]);
+    const worker = new ProviderDeliveryWorker(store, registry, {
+      workerId: "worker-readback-retry",
+      profile: "synthetic-simulator",
+      retryBaseMs: 1_000,
+      now: () => new Date("2026-09-13T08:00:00.000Z"),
+      authorizeDelivery,
+    });
+
+    await expect(worker.runOnce()).resolves.toEqual({
+      claimed: 1,
+      delivered: 0,
+      retrying: 1,
+      manual: 0,
+    });
+    expect(store.failures).toEqual([]);
+    expect(store.completed).toHaveLength(1);
+    expect(store.completed[0]?.acknowledgement.status).toBe("pending");
+    expect(store.completed[0]?.acknowledgement.receiptId).toEqual(
+      expect.stringMatching(/\S/),
+    );
+    expect(store.completed[0]?.acknowledgement.errorCode).toBe(
+      "PROVIDER_READBACK_PENDING",
+    );
+    expect(store.completed[0]?.retryAt).toEqual(
+      new Date("2026-09-13T08:00:01.000Z"),
+    );
   });
 
   it("does not blindly resend an expired lease without idempotency proof", async () => {

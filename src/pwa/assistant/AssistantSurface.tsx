@@ -1116,7 +1116,7 @@ export function AssistantSurface({
     setPendingAction((current) => {
       if (current)
         setError(
-          "Patientenkontext geändert: Die offene Änderung wurde sicher verworfen.",
+          "Patientenkontext geändert: Die offene Prüfung ist pausiert und wird bei der Rückkehr erneut geprüft.",
         );
       return null;
     });

@@ -226,4 +226,113 @@ describe("runtime-guided assistant agent", () => {
       "Agentenlauf wurde nicht abgeschlossen",
     );
   });
+
+  it.each([
+    {
+      toolName: "get_patient_summary",
+      answer: "Luca ist heute schmerzfrei und hat sicher keine Allergien.",
+      referencePrefix: "Patient/",
+    },
+    {
+      toolName: "get_open_tasks",
+      answer: "Luca hat 4 offene Aufgaben.",
+      referencePrefix: "Task/search/",
+    },
+  ])(
+    "withholds unsupported clinical prose even when it cites $referencePrefix",
+    async ({ toolName, answer, referencePrefix }) => {
+      let agentTurn = 0;
+      vi.stubGlobal(
+        "fetch",
+        vi.fn((_url: string, init?: RequestInit) => {
+          if (typeof init?.body !== "string")
+            throw new Error("Expected a serialized model request");
+          const body = JSON.parse(init.body) as Record<string, unknown>;
+          const format = (
+            body.text as { format?: { name?: string } } | undefined
+          )?.format;
+          if (format?.name === "assistant_intent_v1")
+            return Promise.resolve(
+              new Response(
+                JSON.stringify({
+                  output_text: JSON.stringify({ intent: "unknown" }),
+                }),
+                {
+                  status: 200,
+                  headers: { "content-type": "application/json" },
+                },
+              ),
+            );
+          const serialized = JSON.stringify(body);
+          const reference = serialized.match(
+            new RegExp(`${referencePrefix.replaceAll("/", "\\/")}[^"\\\\]+`),
+          )?.[0];
+          const decision =
+            agentTurn++ === 0
+              ? {
+                  kind: "tool-call",
+                  toolName,
+                  input: {},
+                  text: null,
+                  draftReferenceId: null,
+                  sourceReferenceIds: [],
+                }
+              : {
+                  kind: "answer",
+                  toolName: null,
+                  input: null,
+                  text: answer,
+                  draftReferenceId: null,
+                  sourceReferenceIds: reference ? [reference] : [],
+                };
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({ output_text: JSON.stringify(decision) }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        }),
+      );
+      const gateway = new ModelGateway({
+        PFH_AI_MODE: "hosted-test",
+        PFH_DEMO_MODE: "true",
+        PFH_LLM_DATA_CLASSIFICATION: "synthetic-only",
+        PFH_ALLOW_EXTERNAL_AI: "true",
+        PFH_LLM_API_KEY: syntheticCredential,
+        PFH_LLM_BASE_URL: "https://synthetic-model.example.invalid/v1",
+        PFH_LLM_MODEL: "fixture-agent",
+      });
+      const response = await new AssistantService(
+        new PflegehelferService(),
+        gateway,
+      ).query("u-nurse", {
+        prompt: "Was ist wichtig?",
+        patientId: "p-luca",
+        workingContext: {
+          organizationId: "org-tertianum",
+          sessionId: "session-test",
+          threadId: "assistant:u-nurse:patient:p-luca:enc-luca-2026",
+          contextRevision: 4,
+          departmentId: "rehab-2",
+          stationId: "rehabilitation-2",
+          roleProfileId: "fage-efz",
+          workflowId: "nursing-day",
+          currentStepId: "patient-work",
+          activeEpisodeTitle: "Morgenpflege",
+          activeEpisodePatientId: "p-luca",
+          resumableEpisodePatientId: null,
+          recentPrompts: [],
+          organizationLabel: "Kronenhof Demo",
+          actorRole: "registered-nurse",
+          dataClass: "synthetic-demo",
+          workdayHandover: null,
+        },
+      });
+
+      expect(JSON.stringify(response.components)).not.toContain(answer);
+      expect(response.warnings.join(" ")).toContain(
+        "widersprüchlicher Quellenbindung",
+      );
+    },
+  );
 });

@@ -436,7 +436,7 @@ describe("assistant action gateway", () => {
         patientId: "p-anna",
         purpose: "direct-care",
       });
-      expect(response.classification.intent).toBe("medication-request");
+      expect(response.classification.intent, prompt).toBe("medication-request");
       expect(
         response.components.some(
           (component) => component.type === "DraftAction",

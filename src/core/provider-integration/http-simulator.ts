@@ -53,6 +53,13 @@ const acknowledgementSchema = z
   })
   .strict();
 
+class ProviderTransportError extends Error {
+  constructor() {
+    super("PROVIDER_UNAVAILABLE");
+    this.name = "ProviderTransportError";
+  }
+}
+
 function clone<T>(value: T): T {
   return structuredClone(value);
 }
@@ -170,14 +177,20 @@ export class HttpProviderSimulatorAdapter implements ProviderAdapter {
           signal: controller.signal,
         },
       );
-      if (!response.ok)
-        throw new Error(
-          response.status === 503
-            ? "PROVIDER_UNAVAILABLE"
-            : `SIMULATOR_HTTP_${response.status}`,
-        );
+      if (!response.ok) {
+        if (response.status >= 500) throw new ProviderTransportError();
+        throw new Error(`SIMULATOR_HTTP_${response.status}`);
+      }
       if (response.status === 204) return undefined as T;
       return (await response.json()) as T;
+    } catch (error) {
+      if (
+        error instanceof ProviderTransportError ||
+        (error instanceof Error && error.name === "AbortError") ||
+        error instanceof TypeError
+      )
+        throw new ProviderTransportError();
+      throw error;
     } finally {
       clearTimeout(timer);
     }

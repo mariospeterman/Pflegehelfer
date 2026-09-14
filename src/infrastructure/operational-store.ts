@@ -427,6 +427,7 @@ export interface OperationalStore {
   deliveryDiagnostics(): Promise<DeliveryDiagnostics>;
   releaseIntentAuthority(tokenHash: string): Promise<void>;
   revokeResponseAuthorities(actorId: string, responseId: string): Promise<void>;
+  suspendActorAuthorities(actorId: string): Promise<void>;
   revokeActorAuthorities(actorId: string): Promise<void>;
   storeVoiceAuthority(
     tokenHash: string,
@@ -1323,6 +1324,11 @@ export class InMemoryOperationalStore implements OperationalStore {
         authority.responseId === responseId
       )
         authority.consumed = true;
+    return Promise.resolve();
+  }
+  suspendActorAuthorities(actorId: string): Promise<void> {
+    for (const authority of this.voiceAuthorities.values())
+      if (authority.record.actorId === actorId) authority.consumed = true;
     return Promise.resolve();
   }
   revokeActorAuthorities(actorId: string): Promise<void> {
@@ -3741,6 +3747,13 @@ export class PostgresOperationalStore
       [organizationId, actorId],
     );
   }
+  async suspendActorAuthorities(actorId: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE safety_authority SET consumed_at=now()
+       WHERE organization_id=$1 AND actor_id=$2 AND consumed_at IS NULL`,
+      [organizationId, actorId],
+    );
+  }
   async storeVoiceAuthority(
     tokenHash: string,
     record: DurableVoiceAuthority,
@@ -3983,6 +3996,18 @@ export class PostgresOperationalStore
       mappingVersion: string;
     };
   }): Promise<void> {
+    if (
+      input.acknowledgement.status === "acknowledged" &&
+      (!input.readBackEvidence ||
+        !input.readBackEvidence.providerVersion.trim() ||
+        !input.readBackEvidence.adapterVersion.trim() ||
+        !input.readBackEvidence.mappingVersion.trim() ||
+        !/^[a-f0-9]{64}$/.test(input.readBackEvidence.contentHash) ||
+        (input.acknowledgement.providerVersion !== null &&
+          input.acknowledgement.providerVersion !==
+            input.readBackEvidence.providerVersion))
+    )
+      throw new Error("PROVIDER_READBACK_EVIDENCE_REQUIRED");
     const nextState =
       input.acknowledgement.status === "acknowledged"
         ? "delivered"
