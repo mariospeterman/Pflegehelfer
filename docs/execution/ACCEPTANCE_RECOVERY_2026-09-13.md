@@ -80,11 +80,27 @@ PFH_DEMO_MODE=true node --env-file=.env.demo node_modules/vitest/vitest.mjs run 
   --no-file-parallelism --reporter=dot
 ```
 
-Latest focused result: 7 files and 23 tests passed against operational
+Latest focused result: 7 files and 24 tests passed against operational
 PostgreSQL on 2026-09-14. The migration ledger verified versions 1–10;
 migration 008 adds provider-version, adapter-version, mapping-version and
 read-back-hash evidence to durable provider receipts, while migrations 009–010
 add site-scoped browser-tab context bindings and their authority constraint.
+
+The natural interruption command now joins the same transaction. Pausing the
+exact actor-owned episode, ending its segment, creating the spontaneous episode,
+switching the working session and browser-tab context, consuming the reviewed
+authority, storing its receipt/audit and enqueuing projection/delivery are one
+PostgreSQL commit. The real-store regression proves the resulting Luca context,
+the resumable Anna episode and byte-identical command replay. A live 390 px
+integrated-browser run then approved the same sentence and showed room 207,
+`p-luca`, an enabled composer and no console errors; evidence screenshot:
+`/tmp/pfh-integrated-atomic-interruption-complete-390.png`.
+
+The full suite also exposed a transport cancellation race: a response `finish`
+could hide an earlier socket disconnect after the first pre-insert revocation.
+The disconnect state is now irreversible, so a post-insert revocation always
+runs. The five cancellation cases passed ten consecutive runs, followed by the
+full 411-test repository verification.
 
 The live scenario accepted the following three turns in one Luca conversation:
 

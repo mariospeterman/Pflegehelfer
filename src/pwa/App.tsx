@@ -728,46 +728,53 @@ export function App() {
   const generation = useRef(0);
   const boundAssistantPatientId = useRef<string | null | undefined>(undefined);
 
-  const load = useCallback(async () => {
-    const current = ++generation.current;
-    try {
-      const data = await api<AppSnapshot>("/api/v1/snapshot", userId);
-      const preferredPatientId =
-        selectedPatientId &&
-        data.patients.some((item) => item.id === selectedPatientId)
-          ? selectedPatientId
+  const load = useCallback(
+    async (selectedPatientOverride?: string | null) => {
+      const current = ++generation.current;
+      try {
+        const data = await api<AppSnapshot>("/api/v1/snapshot", userId);
+        const requestedPatientId =
+          selectedPatientOverride === undefined
+            ? selectedPatientId
+            : selectedPatientOverride;
+        const preferredPatientId =
+          requestedPatientId &&
+          data.patients.some((item) => item.id === requestedPatientId)
+            ? requestedPatientId
+            : null;
+        if (boundAssistantPatientId.current !== preferredPatientId) {
+          await api("/api/v1/assistant/context", userId, {
+            method: "POST",
+            body: JSON.stringify({ patientId: preferredPatientId }),
+          });
+          boundAssistantPatientId.current = preferredPatientId;
+        }
+        const conversationData = await api<{
+          conversations: ConversationDescriptor[];
+        }>("/api/v1/assistant/conversation", userId);
+        const workdayData = ["care-assistant", "registered-nurse"].includes(
+          data.currentUser.role,
+        )
+          ? await api<WorkdayView>("/api/v1/workday", userId)
           : null;
-      if (boundAssistantPatientId.current !== preferredPatientId) {
-        await api("/api/v1/assistant/context", userId, {
-          method: "POST",
-          body: JSON.stringify({ patientId: preferredPatientId }),
-        });
-        boundAssistantPatientId.current = preferredPatientId;
+        if (current !== generation.current) return;
+        setSnapshot(data);
+        setWorkday(workdayData);
+        setConversations(conversationData.conversations);
+        setApiReady(true);
+        setSelectedPatientId(preferredPatientId);
+      } catch (failure) {
+        if (current !== generation.current) return;
+        setApiReady(false);
+        setNotice(
+          failure instanceof Error
+            ? failure.message
+            : "Verbindung fehlgeschlagen.",
+        );
       }
-      const conversationData = await api<{
-        conversations: ConversationDescriptor[];
-      }>("/api/v1/assistant/conversation", userId);
-      const workdayData = ["care-assistant", "registered-nurse"].includes(
-        data.currentUser.role,
-      )
-        ? await api<WorkdayView>("/api/v1/workday", userId)
-        : null;
-      if (current !== generation.current) return;
-      setSnapshot(data);
-      setWorkday(workdayData);
-      setConversations(conversationData.conversations);
-      setApiReady(true);
-      setSelectedPatientId(preferredPatientId);
-    } catch (failure) {
-      if (current !== generation.current) return;
-      setApiReady(false);
-      setNotice(
-        failure instanceof Error
-          ? failure.message
-          : "Verbindung fehlgeschlagen.",
-      );
-    }
-  }, [selectedPatientId, userId]);
+    },
+    [selectedPatientId, userId],
+  );
 
   useEffect(() => {
     void load();
@@ -1222,8 +1229,13 @@ export function App() {
           patient={patient}
           userId={userId}
           online={connected}
-          onExecuted={async (message) => {
-            await load();
+          onExecuted={async (message, activePatientId) => {
+            if (activePatientId) {
+              boundAssistantPatientId.current = activePatientId;
+              setSelectedPatientId(activePatientId);
+              sessionStorage.setItem("pfh-patient-context", activePatientId);
+            }
+            await load(activePatientId);
             setNotice(message);
           }}
           onHandoff={setHandoff}

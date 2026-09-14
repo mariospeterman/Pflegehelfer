@@ -804,7 +804,7 @@ export function AssistantSurface({
   patient: Patient | null;
   userId: string;
   online: boolean;
-  onExecuted: (message: string) => Promise<void>;
+  onExecuted: (message: string, activePatientId?: string) => Promise<void>;
   onHandoff: (handoff: AssistantHandoff) => void;
   snapshotRevision: string;
   opening: ConversationOpening;
@@ -1553,6 +1553,7 @@ export function AssistantSurface({
         bundle?: unknown;
         itemStates?: string[];
         workflowChanged?: boolean;
+        activePatientId?: string;
       }>(
         `/api/v1/assistant/intents/${token}/execute`,
         userId,
@@ -1611,6 +1612,7 @@ export function AssistantSurface({
               : result.handoff
                 ? "Die Angaben sind jetzt im passenden Sicherheitseditor geöffnet."
                 : "Der prüfpflichtige Entwurf wurde erstellt.",
+        result.workflowChanged ? result.activePatientId : undefined,
       );
     } catch (failure) {
       if (failure instanceof DOMException && failure.name === "AbortError")

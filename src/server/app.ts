@@ -2295,6 +2295,7 @@ export function buildApp(
     const actorId = userId(request);
     const inferenceController = new AbortController();
     let completed = false;
+    let disconnected = false;
     let generatedResponse: AssistantResponse | null = null;
     let revocation = Promise.resolve();
     const revokeAuthorities = () => {
@@ -2307,7 +2308,8 @@ export function buildApp(
       return revocation;
     };
     const revokeAfterDisconnect = () => {
-      if (completed) return revocation;
+      if (completed && !disconnected) return revocation;
+      disconnected = true;
       inferenceController.abort("client-disconnected");
       return revokeAuthorities();
     };
@@ -2431,6 +2433,7 @@ export function buildApp(
     const actorId = userId(request);
     const inferenceController = new AbortController();
     let completed = false;
+    let disconnected = false;
     let streamedResponse: AssistantResponse | null = null;
     let revocation = Promise.resolve();
     const revokeAuthorities = () => {
@@ -2443,7 +2446,8 @@ export function buildApp(
       return revocation;
     };
     const revokeAfterDisconnect = () => {
-      if (completed) return revocation;
+      if (completed && !disconnected) return revocation;
+      disconnected = true;
       inferenceController.abort("client-disconnected");
       return revokeAuthorities();
     };
@@ -2640,6 +2644,10 @@ export function buildApp(
       );
     assistant.restoreDurableIntent(token, durableIntent);
     let executedResult: unknown;
+    let atomicWorkdayCommand: Extract<
+      WorkdayCommand,
+      { type: "interrupt-and-start" }
+    > | null = null;
     const executeAuthorizedIntent = async () => {
       const result = assistant.executeIntent(actorId, token, {
         patientId: execution.patientId,
@@ -2698,23 +2706,13 @@ export function buildApp(
           `Zimmer ${workflowAction.targetRoom} ist im freigegebenen Arbeitskontext nicht eindeutig verfügbar.`,
           400,
         );
-      if (runtime.profile === "integrated-demo")
-        throw new DomainError(
-          "INVALID_STATE",
-          "Der Ablaufwechsel benötigt atomare Arbeitsplan-Unterstützung und wurde nicht übernommen.",
-          409,
-        );
-      const next = await operationalStore.applyWorkdayCommand(
-        actorId,
-        actor.role,
-        {
-          type: "interrupt-and-start",
-          episodeId: active.id,
-          patientId: target.id,
-          encounterId: target.encounterId,
-          title: `Spontaner Besuch · Zimmer ${target.room}`,
-        },
-      );
+      const command = {
+        type: "interrupt-and-start" as const,
+        episodeId: active.id,
+        patientId: target.id,
+        encounterId: target.encounterId,
+        title: `Spontaner Besuch · Zimmer ${target.room}`,
+      };
       service.audit.append({
         actor,
         action: "assistant:workflow-interrupted",
@@ -2727,7 +2725,20 @@ export function buildApp(
           requestedByUser: true,
         },
       });
-      return { workday: next, workflowChanged: true };
+      if (runtime.profile === "integrated-demo") {
+        atomicWorkdayCommand = command;
+        return { workflowChanged: true, activePatientId: target.id };
+      }
+      const next = await operationalStore.applyWorkdayCommand(
+        actorId,
+        actor.role,
+        command,
+      );
+      return {
+        workday: next,
+        workflowChanged: true,
+        activePatientId: target.id,
+      };
     };
     try {
       if (runtime.profile === "integrated-demo") {
@@ -2836,6 +2847,9 @@ export function buildApp(
               "episodeEvidence" in result &&
               typeof result.episodeEvidence === "string"
                 ? { episodeEvidence: result.episodeEvidence }
+                : {}),
+              ...(atomicWorkdayCommand
+                ? { workdayCommand: atomicWorkdayCommand }
                 : {}),
               providerCommands,
             });

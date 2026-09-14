@@ -260,6 +260,7 @@ export interface LocalIntentAcceptance {
   clinicalExpectedVersions: Record<string, string | null>;
   checkpoint: ServiceCheckpoint;
   episodeEvidence?: string;
+  workdayCommand?: Extract<WorkdayCommand, { type: "interrupt-and-start" }>;
   providerCommands: Array<{
     provider: ProviderOutboxJob["provider"];
     profile: ProviderProfile;
@@ -2776,11 +2777,11 @@ export class PostgresOperationalStore
   }
   private async setThreadPatientContext(
     client: pg.PoolClient,
-    session: WorkingSessionView,
+    session: Pick<WorkingSessionView, "id" | "effectiveRole" | "departmentId">,
     actorId: string,
     patientId: string,
     encounterId: string,
-  ): Promise<void> {
+  ): Promise<{ threadId: string; threadContextRevision: number } | null> {
     await client.query(
       "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
       [`${organizationId}:${actorId}:conversation:${patientId}:${encounterId}`],
@@ -2834,7 +2835,7 @@ export class PostgresOperationalStore
       [organizationId, threadId],
     );
     const context = changed.rows[0];
-    if (!context) return;
+    if (!context) return null;
     await client.query(
       `INSERT INTO assistant_messages
          (organization_id,thread_id,sequence,id,kind,patient_id,context_revision,content)
@@ -2866,6 +2867,10 @@ export class PostgresOperationalStore
        WHERE organization_id=$1 AND id=$2`,
       [organizationId, session.id, threadId],
     );
+    return {
+      threadId,
+      threadContextRevision: context.context_revision,
+    };
   }
   async applyWorkdayCommand(
     actorId: string,
@@ -3941,6 +3946,100 @@ export class PostgresOperationalStore
             episodeEvidence,
           ],
         );
+      if (input.workdayCommand) {
+        const command = input.workdayCommand;
+        const changed = await client.query(
+          `UPDATE work_episodes
+           SET state='paused',draft_text=$7,row_version=row_version+1
+           WHERE organization_id=$1 AND id=$2 AND actor_id=$3
+             AND session_id=$4 AND patient_id=$5 AND encounter_id=$6
+             AND state='active'
+           RETURNING id`,
+          [
+            organizationId,
+            command.episodeId,
+            input.actorId,
+            input.sessionId,
+            input.patientId,
+            input.encounterId,
+            command.pausedDraftText?.slice(0, 1200) ?? "",
+          ],
+        );
+        if (!changed.rowCount) throw new Error("EPISODE_STATE_CONFLICT");
+        await client.query(
+          `UPDATE work_episode_segments
+           SET ended_at=now(),end_reason='interruption'
+           WHERE organization_id=$1 AND episode_id=$2
+             AND ordinal=(SELECT max(ordinal) FROM work_episode_segments
+                          WHERE organization_id=$1 AND episode_id=$2)
+             AND ended_at IS NULL`,
+          [organizationId, command.episodeId],
+        );
+        const nextEpisodeId = randomUUID();
+        await client.query(
+          `INSERT INTO work_episodes
+             (organization_id,id,session_id,actor_id,patient_id,encounter_id,kind,title,state)
+           VALUES ($1,$2,$3,$4,$5,$6,'spontaneous',$7,'active')`,
+          [
+            organizationId,
+            nextEpisodeId,
+            input.sessionId,
+            input.actorId,
+            command.patientId,
+            command.encounterId,
+            command.title,
+          ],
+        );
+        await client.query(
+          `INSERT INTO work_episode_segments
+             (organization_id,episode_id,ordinal,started_at)
+           VALUES ($1,$2,1,now())`,
+          [organizationId, nextEpisodeId],
+        );
+        const nextContext = await this.setThreadPatientContext(
+          client,
+          {
+            id: input.sessionId,
+            effectiveRole: input.actorRole,
+            departmentId,
+          },
+          input.actorId,
+          command.patientId,
+          command.encounterId,
+        );
+        if (!nextContext) throw new Error("ASSISTANT_CONTEXT_SWITCH_FAILED");
+        if (input.clientContextId) {
+          const rebound = await client.query(
+            `UPDATE assistant_client_contexts
+             SET thread_id=$8,context_revision=context_revision+1,
+                 patient_id=$9,encounter_id=$10,expires_at=$11,updated_at=now()
+             WHERE organization_id=$1 AND id=$2 AND actor_id=$3
+               AND effective_role=$4 AND session_id=$5 AND thread_id=$6
+               AND context_revision=$7`,
+            [
+              organizationId,
+              input.clientContextId,
+              input.actorId,
+              input.actorRole,
+              input.sessionId,
+              input.threadId,
+              input.contextRevision,
+              nextContext.threadId,
+              command.patientId,
+              command.encounterId,
+              new Date(Date.now() + sessionTtlMs),
+            ],
+          );
+          if (rebound.rowCount !== 1)
+            throw new Error("ASSISTANT_CONTEXT_STALE");
+        }
+        await client.query(
+          `UPDATE working_sessions
+           SET current_step_id='work',row_version=row_version+1,updated_at=now()
+           WHERE organization_id=$1 AND id=$2`,
+          [organizationId, input.sessionId],
+        );
+      }
       await client.query(
         `INSERT INTO clinical_projection_outbox
            (organization_id,id,accepted_command_id,idempotency_key,payload,state)

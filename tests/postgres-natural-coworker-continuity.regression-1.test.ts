@@ -186,5 +186,146 @@ describe.runIf(Boolean(databaseUrl))(
         await app.close();
       }
     });
+
+    it("accepts an assistant-requested interruption atomically with the one-use receipt", async () => {
+      const clientContextId = crypto.randomUUID();
+      const store = new PostgresOperationalStore(databaseUrl!);
+      await store.initialize();
+      await store.resetDemoState();
+      const app = buildApp(undefined, {
+        demoMode: true,
+        operationalStore: store,
+        modelGateway: new ModelGateway({ PFH_AI_MODE: "deterministic" }),
+        runtime: {
+          profile: "integrated-demo",
+          demoMode: true,
+          storageMode: "medplum",
+          persistenceMode: "postgresql",
+          providerMode: "external-simulator",
+        },
+      });
+      try {
+        let workdayResponse = await app.inject({
+          method: "GET",
+          url: "/api/v1/workday",
+          headers: { "x-demo-user": "u-nurse" },
+        });
+        const handover = workdayResponse.json<{
+          handover: { id: string; version: number; patientIds: string[] };
+        }>().handover;
+        for (const patientId of handover.patientIds)
+          workdayResponse = await app.inject({
+            method: "POST",
+            url: "/api/v1/workday",
+            headers: commandHeaders("u-nurse"),
+            payload: {
+              type: "acknowledge-handover",
+              handoverId: handover.id,
+              patientId,
+              version: handover.version,
+            },
+          });
+        expect(workdayResponse.statusCode).toBe(200);
+        const started = await app.inject({
+          method: "POST",
+          url: "/api/v1/workday",
+          headers: commandHeaders("u-nurse"),
+          payload: {
+            type: "start-episode",
+            patientId: "p-anna",
+            encounterId: "enc-anna-2026",
+            kind: "planned",
+            title: "Morgenpflege",
+          },
+        });
+        expect(started.statusCode).toBe(200);
+
+        await app.inject({
+          method: "POST",
+          url: "/api/v1/assistant/context",
+          headers: commandHeaders("u-nurse", clientContextId),
+          payload: { patientId: "p-anna" },
+        });
+        const drafted = await app.inject({
+          method: "POST",
+          url: "/api/v1/assistant/query",
+          headers: commandHeaders("u-nurse", clientContextId),
+          payload: {
+            patientId: "p-anna",
+            prompt: "Anna pausieren, ich gehe zu Zimmer 207.",
+            inputModality: "typed",
+          },
+        });
+        expect(drafted.statusCode).toBe(200);
+        const draft = drafted.json<{
+          patientContext: {
+            patientId: string;
+            encounterId: string;
+            resourceVersion: number;
+          };
+          components: Array<{
+            type: string;
+            intentToken?: string;
+            reviewItems?: Array<{ id: string }>;
+          }>;
+        }>();
+        const action = draft.components.find(
+          (component) => component.type === "DraftAction",
+        );
+        expect(action?.reviewItems).toHaveLength(1);
+        const commandId = crypto.randomUUID();
+        const payload = {
+          patientId: draft.patientContext.patientId,
+          encounterId: draft.patientContext.encounterId,
+          purpose: "direct-care",
+          resourceVersion: draft.patientContext.resourceVersion,
+          explicitlyConfirmed: true,
+          reviewedActionIds: action!.reviewItems!.map(({ id }) => id),
+        };
+        const execute = () =>
+          app.inject({
+            method: "POST",
+            url: `/api/v1/assistant/intents/${action!.intentToken}/execute`,
+            headers: {
+              "x-demo-user": "u-nurse",
+              "x-command-id": commandId,
+              "x-pfh-client-context": clientContextId,
+            },
+            payload,
+          });
+        const accepted = await execute();
+        expect(accepted.statusCode).toBe(200);
+        expect(accepted.json()).toEqual({
+          workflowChanged: true,
+          activePatientId: "p-luca",
+        });
+        const replay = await execute();
+        expect(replay.statusCode).toBe(200);
+        expect(replay.body).toBe(accepted.body);
+
+        const workday = await store.getWorkday("u-nurse", "registered-nurse");
+        expect(workday.activeEpisode).toMatchObject({
+          patientId: "p-luca",
+          encounterId: "enc-luca-2026",
+          kind: "spontaneous",
+        });
+        expect(workday.resumableEpisode).toMatchObject({
+          patientId: "p-anna",
+          state: "paused",
+        });
+        await expect(
+          store.resolveAssistantContext(
+            "u-nurse",
+            "registered-nurse",
+            clientContextId,
+          ),
+        ).resolves.toMatchObject({
+          patientId: "p-luca",
+          encounterId: "enc-luca-2026",
+        });
+      } finally {
+        await app.close();
+      }
+    });
   },
 );
