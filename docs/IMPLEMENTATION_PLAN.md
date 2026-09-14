@@ -1,6 +1,6 @@
 # Implementation plan
 
-Last updated: 2026-09-13
+Last updated: 2026-09-14
 Patient-workspace baseline: `479b2f807bb08e755088801e581ab3c17aed3fb6`
 
 The product contract is `docs/PRODUCT_CONTRACT.md`. Work proceeds in six vertical slices on the existing modular monolith and one PWA. A table, migration or simulator alone does not complete a slice; each gate needs a real endpoint-to-storage-to-UI test.
@@ -11,13 +11,13 @@ Completed coherent increments:
 
 1. Migration history and legacy attestation are verified under the advisory lock before pending SQL.
 2. Published directory-v2 runtime packs securely load exact site/department/station/role/workflow/provider Markdown and bind explicit actor role-profile/station assignments to central policy.
-3. The configured model can select bounded read or draft-preparation tools, observe scoped results and continue without a separate model intent-enum call. Draft tools receive server-bound actor/patient/encounter/source context and return no execution authority; the server alone hydrates clinical facts/GenUI and all writes remain in the existing reviewed proposal pipeline.
+3. The configured model can select bounded read tools or one generic typed clinical-draft tool, observe scoped results and continue without a separate intent-enum call, last-tool router or nested second model request. Actor/patient/encounter/provenance stay server-owned. Tool evidence persists independently of cards; text is the default and optional table/chart specifications are hydrated only from an exact cited result. All writes remain in the existing reviewed proposal pipeline.
 4. The relational provider/Medplum delivery path implements validated write-only commands, deduplication, acceptance-time versions, leases, bounded recovery, receipt polling, mandatory read-back and manual quarantine. In the integrated profile both workers start with the application and reviewed assistant actions are accepted with their authority, receipt, audit, matching episode evidence, restart checkpoint, projection and delivery jobs in one PostgreSQL transaction.
 5. Source-bound model prose is now displayed instead of replaced by canned text; terminal answers must cite exact tool-result references. Proposal revisions retain immutable hashed input records, the Luca 200→150 ml chain revalidates all contributing turns, unknown corrections clarify instead of silently preserving stale meaning, and no-model mode is explicit with verbatim review.
 6. The latest pending review now restores after refresh through a fresh short-lived token bound to the same proposal; multiple tokens share one consumable proposal. Migrations 008–010 persist provider/adapter/mapping/read-back evidence and independent browser-tab bindings, while ordered clinical projections prevent an older checkpoint retry from overtaking a newer one. An audited IT recovery command may requeue only the exact error-bound queue head.
 7. Voice transcript correction is attributable rather than destructive: immutable ASR capture, model/mode/language/hash and explicit human-reviewed revision remain bound through the proposal, accepted note, conversation and FHIR `DocumentReference`; audio is not retained.
 8. Provider read-back outages retain the acknowledgement as a non-terminal receipt and retry verification without blindly resending. Terminal delivery requires complete hash/version evidence. Assistant idempotency binds the concrete intent token while retaining compatibility with prior non-assistant receipts.
-9. Integrated browser inspection covers compact handover behavior at 390 px, tablet and desktop/dark, plus an automated 150% text/reduced-keyboard viewport. Real model/ASR/TTS acceptance remains blocked and explicitly separate from fixture coverage.
+9. Integrated browser inspection covers compact handover behavior at 390 px, tablet and desktop/dark, plus an automated 150% text/reduced-keyboard viewport. The selected patient's acknowledgement now precedes expanded detail and is measurably above the composer. The full memory-profile Playwright matrix passes 66 tests with 19 deliberate skips. Real model/ASR/TTS acceptance remains blocked and explicitly separate from fixture coverage.
 
 Next vertical slice remains G1, not a new fork: migrate the now fail-closed direct detail mutation routes to the accepted-command boundary, restore current clinical state from scoped FHIR resources rather than the whole-state Binary, add relational inbound/conflict reconciliation and finish per-command reconciliation UI. Then proceed to G3 shared-thread ACLs and append-only G2 handover addenda. The old checkpoint processor is disabled in the integrated profile and must not be reconnected.
 

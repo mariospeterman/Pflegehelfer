@@ -134,14 +134,25 @@ restored after refresh by a fresh short-lived token for the same proposal;
 parallel tokens consume that proposal only once. The focused mobile 390 px
 Playwright regression passed in 1.3 minutes.
 
-At `ca4e0e9`, the same bounded loop can also choose the non-executable
-`prepare_care_update` draft tool for an unfamiliar paraphrase. The server, not
-the model, binds actor, patient, encounter, exact input and immutable source
-record; the tool returns only an opaque draft reference and counts. The agent
-must return that exact reference before the prepared plan is reused. A
-separate model intent-enum call was removed from this path. Fixture evidence is
-5 agent-integration tests and is orchestration evidence only; the real-model
-gate below remains unpassed.
+At `35ba60e`, the bounded loop uses one general non-executable
+`prepare_clinical_draft` tool rather than the old empty-input
+`prepare_care_update` wrapper. The model submits a complete typed proposal in
+the same agent turn; there is no nested extraction call and no last-tool intent
+selection. The server captures actor, patient, encounter and current input,
+rebinds exact spans to immutable source records, derives recipient/deadline
+authority and independently validates every executable action. Only the exact
+opaque draft reference returned by that tool can become a review.
+
+Successful tool results are retained as immutable evidence records even when
+no card is rendered. Natural text is the default. A model may optionally select
+an `EvidenceTable` or `EvidenceChart` from the exact registered presentation
+catalog, but the server hydrates it only from one cited result; invented
+references are rejected. Generated prose is checked against those evidence
+records rather than whatever cards happen to be on screen. A restored,
+reissued or executed proposal is revalidated from its source hashes, and
+treatment/medication text cannot be introduced by altering a durable generic
+note. Fixture evidence is orchestration and trust-boundary evidence only; the
+real-model gate below remains unpassed.
 
 Clinical projection leasing is now strictly ordered across unresolved
 whole-state checkpoints, preventing an older retry from overwriting a newer
@@ -179,10 +190,13 @@ increased once, not twice.
 
 ## Actual AI/audio acceptance
 
-The configured synthetic hosted profile re-attempted the real GPT-5.6 Terra
-contract and a generated German synthetic WAV transcription on 2026-09-14.
-Both requests reached the official service and received HTTP 429. This is
-connectivity/error-handling evidence only:
+The configured synthetic hosted profile re-attempted its model contract on
+2026-09-14 after `977e3ae`. The non-writing route took 4515 ms and returned
+`ready:false`, `model:deterministic-clinical-planner-v1` with the message that
+the configured model failed and deterministic fallback remained active. An
+earlier same-day model and generated German synthetic WAV attempt reached the
+external service and received HTTP 429. This is connectivity/error-handling
+evidence only:
 
 - model acceptance: **not passed**;
 - ASR acceptance: **not passed**;
@@ -199,7 +213,7 @@ at 768×1024 its lower edge was 994 px. Every visible interactive control
 measured at least 44 px high. A 150% root-font-size plus reduced 560-px
 keyboard viewport regression is part of the Playwright suite.
 
-The full memory-profile Playwright regression passes 66 tests with 19
+The full memory-profile Playwright regression at `977e3ae` passes 66 tests with 19
 deliberate project skips. It exposed a fast patient-transition busy-state race:
 selection updated React state before the transition conversation read
 completed, so the refresh generation invalidated its own cleanup. Selection
@@ -207,6 +221,11 @@ is now committed only after transition reads finish. The six directly affected
 mobile journeys pass, and an independent integrated 390 px run switches to
 Luca, closes the drawer and leaves the composer enabled with zero console
 errors. The memory E2E result is not a substitute for integrated evidence.
+
+The 390 px integrated browser measurement after the handover adjustment placed
+the first enabled `Gelesen & übernehmen` control at y=445.5–489.5 and the
+composer at y=728–801 in an 844 px visual viewport. The control is therefore
+fully reachable before the expanded detail and is not hidden by the composer.
 
 Visual evidence:
 
@@ -243,3 +262,10 @@ Use `pnpm verify`, `pnpm verify:security`, `pnpm verify:ops`,
 `pnpm verify:airgap` and `pnpm verify:e2e` for the repository audit. Do not
 mark integrated acceptance passed if `integrated-demo` cannot start all three
 stores or if any environment-gated suite is skipped.
+
+Real-store suites reset the same demo institution and must be run one file at a
+time. Running them in parallel causes cross-test deletion/lease races and is
+not valid acceptance evidence. On 2026-09-14 the atomic acceptance test (1),
+operational store (14), provider worker (3), natural continuity (2), projection
+ordering (1), synchronization summary (1) and Medplum concurrency (1) all
+passed sequentially against the live stores.
