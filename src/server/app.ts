@@ -1035,13 +1035,19 @@ export function buildApp(
     const actorId = userId(request);
     service.user(actorId);
     const key = `${actorId}:${request.method}:${route}:${commandId}`;
+    // Preserve the established receipt hash for ordinary API commands so
+    // durable receipts from the previous release remain replayable. The
+    // assistant execution route additionally binds the concrete one-use
+    // intent token; its Fastify route template alone is not sufficient.
+    const requestHashInput =
+      route === "/api/v1/assistant/intents/:token/execute"
+        ? canonicalJson({
+            path: request.url.split("?", 1)[0],
+            body: request.body ?? null,
+          })
+        : JSON.stringify(request.body ?? null);
     const requestHash = createHash("sha256")
-      .update(
-        canonicalJson({
-          path: request.url.split("?", 1)[0],
-          body: request.body ?? null,
-        }),
-      )
+      .update(requestHashInput)
       .digest("hex");
     const cached = committedCommandKeys.has(key)
       ? service.commandReceipt(key)
