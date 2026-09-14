@@ -445,6 +445,9 @@ input:focus-visible {
 .connection-state.pending i {
   background: #d78b18;
 }
+.sync-label-compact {
+  display: none;
+}
 .role-switcher select {
   max-width: 220px;
   min-height: 34px;
@@ -1590,9 +1593,13 @@ button:disabled {
   }
   .connection-state {
     font-size: 10px;
-    max-width: 154px;
-    overflow: hidden;
     white-space: nowrap;
+  }
+  .sync-label-full {
+    display: none;
+  }
+  .sync-label-compact {
+    display: inline;
   }
   .patient-safety-bar {
     align-items: center;

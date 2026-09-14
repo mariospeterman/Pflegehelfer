@@ -181,6 +181,7 @@ export interface StoredConversationTurn {
   createdAt: string;
   inputModality: "typed" | "voice";
   voiceTranscriptProvenance?: VoiceTranscriptProvenance[];
+  executionStatus?: "locally-accepted";
   originPatientId?: string | null;
   originEncounterId?: string | null;
   originThreadId?: string;
@@ -445,6 +446,7 @@ export interface OperationalStore {
     clientContextId?: string;
   }): Promise<DurableIntentRecord | null>;
   consumeIntentAuthority(tokenHash: string): Promise<boolean>;
+  markIntentConversationAccepted(tokenHash: string): Promise<void>;
   acceptIntentCommand(
     input: LocalIntentAcceptance,
   ): Promise<AcceptedCommandReceipt>;
@@ -1360,6 +1362,17 @@ export class InMemoryOperationalStore implements OperationalStore {
         candidate.consumed = true;
     return Promise.resolve(true);
   }
+  markIntentConversationAccepted(tokenHash: string): Promise<void> {
+    const authority = this.authorities.get(tokenHash);
+    const thread = authority
+      ? this.memoryThreads.get(authority.threadId)
+      : undefined;
+    const turn = thread?.turns.find(
+      (candidate) => candidate.id === authority?.responseId,
+    );
+    if (turn) turn.executionStatus = "locally-accepted";
+    return Promise.resolve();
+  }
   acceptIntentCommand(
     input: LocalIntentAcceptance,
   ): Promise<AcceptedCommandReceipt> {
@@ -1405,6 +1418,11 @@ export class InMemoryOperationalStore implements OperationalStore {
       requestHash: input.requestHash,
       receipt,
     });
+    const acceptedThread = this.memoryThreads.get(authority.threadId);
+    const acceptedTurn = acceptedThread?.turns.find(
+      (turn) => turn.id === authority.responseId,
+    );
+    if (acceptedTurn) acceptedTurn.executionStatus = "locally-accepted";
     this.clinicalProjectionJobs.push({
       id: randomUUID(),
       acceptedCommandId: receipt.id,
@@ -3630,6 +3648,19 @@ export class PostgresOperationalStore
     );
     return Boolean(result.rowCount);
   }
+  async markIntentConversationAccepted(tokenHash: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE assistant_messages m
+       SET content=jsonb_set(m.content,'{executionStatus}',to_jsonb('locally-accepted'::text),true)
+       FROM safety_authority a
+       JOIN assistant_proposal_revisions p
+         ON p.organization_id=a.organization_id AND p.id=a.proposal_revision_id
+       WHERE a.organization_id=$1 AND a.token_hash=$2
+         AND m.organization_id=p.organization_id AND m.thread_id=p.thread_id
+         AND m.id=p.source_response_id AND m.kind='assistant'`,
+      [organizationId, tokenHash],
+    );
+  }
   async acceptIntentCommand(
     input: LocalIntentAcceptance,
   ): Promise<AcceptedCommandReceipt> {
@@ -3825,6 +3856,15 @@ export class PostgresOperationalStore
         `UPDATE assistant_proposal_revisions
          SET status='consumed',consumed_at=now()
          WHERE organization_id=$1 AND id=$2 AND status='pending'`,
+        [organizationId, bound.proposal_revision_id],
+      );
+      await client.query(
+        `UPDATE assistant_messages m
+         SET content=jsonb_set(m.content,'{executionStatus}',to_jsonb('locally-accepted'::text),true)
+         FROM assistant_proposal_revisions p
+         WHERE p.organization_id=$1 AND p.id=$2
+           AND m.organization_id=p.organization_id AND m.thread_id=p.thread_id
+           AND m.id=p.source_response_id AND m.kind='assistant'`,
         [organizationId, bound.proposal_revision_id],
       );
       await client.query(

@@ -174,11 +174,13 @@ describe("voice transcript API provenance", () => {
         turns: Array<{
           inputModality: string;
           voiceTranscriptProvenance?: unknown[];
+          executionStatus?: string;
         }>;
       }>()
       .turns.at(-1);
     expect(turn).toMatchObject({
       inputModality: "voice",
+      executionStatus: "locally-accepted",
       voiceTranscriptProvenance: [
         {
           original: { transcript: originalTranscript },

@@ -2867,6 +2867,13 @@ export function buildApp(
       assistant.restoreDurableIntent(token, durableIntent);
       throw error;
     }
+    if (
+      runtime.profile !== "integrated-demo" &&
+      executedResult &&
+      typeof executedResult === "object" &&
+      ("bundle" in executedResult || "itemStates" in executedResult)
+    )
+      await operationalStore.markIntentConversationAccepted(tokenHash);
     // The integrated profile stores episode evidence in the same PostgreSQL
     // acceptance transaction. This fallback exists only for the explicit
     // memory demo path.

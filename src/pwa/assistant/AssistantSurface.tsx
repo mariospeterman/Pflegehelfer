@@ -981,6 +981,7 @@ export function AssistantSurface({
             id: string;
             prompt: string;
             response: AssistantResponse;
+            executionStatus?: "locally-accepted";
           }>;
         };
       })
@@ -1019,12 +1020,27 @@ export function AssistantSurface({
             )
           : turns;
         const restored: ConversationMessage[] = archiveSupersededDrafts(
-          hydratedTurns.map((turn) => ({
-            kind: "turn",
-            id: turn.id,
-            prompt: turn.prompt,
-            response: turn.response,
-          })),
+          hydratedTurns.map((turn) =>
+            turn.executionStatus === "locally-accepted"
+              ? {
+                  kind: "turn",
+                  id: turn.id,
+                  prompt: turn.prompt,
+                  execution:
+                    "Freigegeben: Die ausgewählten Angaben wurden lokal angenommen. Der aktuelle Medplum- und Anbieterstatus steht oben.",
+                  response: {
+                    ...turn.response,
+                    components: [],
+                    openUi: completedActionOpenUi,
+                  },
+                }
+              : {
+                  kind: "turn",
+                  id: turn.id,
+                  prompt: turn.prompt,
+                  response: turn.response,
+                },
+          ),
         );
         const latestDraftIndex = restored.findLastIndex(
           (message) =>

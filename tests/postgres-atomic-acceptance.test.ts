@@ -24,6 +24,7 @@ describe.runIf(Boolean(databaseUrl))("atomic local command acceptance", () => {
       );
       const token = randomUUID();
       const tokenHash = createHash("sha256").update(token).digest("hex");
+      const responseId = randomUUID();
       const record = {
         actorId: "u-assistant",
         actorRole: "care-assistant" as const,
@@ -35,13 +36,24 @@ describe.runIf(Boolean(databaseUrl))("atomic local command acceptance", () => {
         payload: { plan: "{}" },
         expiresAt: Date.now() + 60_000,
       };
+      await store.appendConversationTurn("u-assistant", "care-assistant", {
+        id: responseId,
+        prompt: "Synthetischer Annahmetest",
+        response: {},
+        createdAt: new Date().toISOString(),
+        inputModality: "typed",
+        originPatientId: "p-luca",
+        originEncounterId: "enc-luca-2026",
+        originThreadId: session.threadId,
+        originContextRevision: session.contextRevision,
+      });
       await store.storeIntentAuthority({
         tokenHash,
         record,
         sessionId: session.id,
         threadId: session.threadId,
         contextRevision: session.contextRevision,
-        responseId: randomUUID(),
+        responseId,
         reviewItems: [{ id: "action-1", kind: "note" }],
       });
       const audit = new AuditChain();
@@ -114,6 +126,11 @@ describe.runIf(Boolean(databaseUrl))("atomic local command acceptance", () => {
         payload: { accepted: true },
         replayed: true,
       });
+      await expect(
+        store.loadConversation("u-assistant", "care-assistant", "p-luca"),
+      ).resolves.toMatchObject([
+        { id: responseId, executionStatus: "locally-accepted" },
+      ]);
       await expect(
         store.loadIntentAuthority({
           tokenHash,

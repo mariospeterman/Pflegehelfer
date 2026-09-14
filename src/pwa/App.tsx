@@ -1059,6 +1059,14 @@ export function App() {
   const syncTitle = delivery
     ? `Lokal angenommen: ${Object.values(delivery.acceptedCommands).reduce((sum, count) => sum + count, 0)} · Medplum gespeichert: ${clinicalDelivered}, offen: ${clinicalOpen}, Prüfung: ${clinicalReview} · Anbieter bestätigt: ${providerDelivered}, offen: ${providerOpen}, Prüfung: ${providerReview}`
     : syncLabel;
+  const syncCompactLabel =
+    syncLabel === "Lokal angenommen · Medplum offen"
+      ? "Lokal · Medplum offen"
+      : syncLabel === "Medplum gespeichert · Anbieter offen"
+        ? "Medplum · Anbieter offen"
+        : syncLabel === "Medplum gespeichert · Anbieter bestätigt"
+          ? "Gespeichert · bestätigt"
+          : syncLabel;
   const opening =
     workflowOpenings[snapshot.currentUser.role] ?? fallbackOpening;
 
@@ -1109,7 +1117,8 @@ export function App() {
               title={syncTitle}
             >
               <i />
-              {syncLabel}
+              <span className="sync-label-full">{syncLabel}</span>
+              <span className="sync-label-compact">{syncCompactLabel}</span>
             </span>
             {snapshot.workspaceLinks && patient && (
               <a
