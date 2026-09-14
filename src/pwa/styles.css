@@ -899,6 +899,18 @@ input:focus-visible {
 .workday-patient-block {
   min-width: 0;
 }
+.handover-row {
+  grid-template-columns: minmax(0, 1fr);
+}
+.handover-row .workday-patient-block {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+.handover-row .handover-expanded {
+  grid-column: 1 / -1;
+}
 .workday-patient[aria-expanded="true"] strong {
   color: var(--blue);
 }
@@ -1725,6 +1737,9 @@ button:disabled {
     padding: 14px;
   }
   .workday-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .handover-row .workday-patient-block {
     grid-template-columns: minmax(0, 1fr);
   }
   .handover-sections > div {

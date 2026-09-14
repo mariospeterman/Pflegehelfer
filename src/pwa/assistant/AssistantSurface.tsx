@@ -402,7 +402,10 @@ function WorkdayCard({
                   const expanded = expandedHandoverPatientId === patientId;
                   if (!listedPatient) return null;
                   return (
-                    <section className="workday-row" key={patientId}>
+                    <section
+                      className="workday-row handover-row"
+                      key={patientId}
+                    >
                       <div className="workday-patient-block">
                         <button
                           className="workday-patient"
@@ -421,6 +424,28 @@ function WorkdayCard({
                             {plannedCare?.title ?? "Pflegeplanung prüfen"} ·{" "}
                             {acknowledged ? "geprüft" : "noch zu prüfen"}
                           </span>
+                        </button>
+                        <button
+                          className={
+                            acknowledged
+                              ? "status-button done"
+                              : "status-button"
+                          }
+                          disabled={busy || acknowledged}
+                          aria-label={`${acknowledged ? "Übergabe geprüft" : "Gelesen und übernehmen"}: Zimmer ${listedPatient.room}, ${listedPatient.displayName}`}
+                          onClick={() =>
+                            perform(
+                              {
+                                type: "acknowledge-handover",
+                                handoverId: workday.handover.id,
+                                patientId,
+                                version: workday.handover.version,
+                              },
+                              "Übergabe konnte nicht bestätigt werden.",
+                            )
+                          }
+                        >
+                          {acknowledged ? "Geprüft" : "Gelesen & übernehmen"}
                         </button>
                         {expanded && (
                           <div
@@ -472,26 +497,6 @@ function WorkdayCard({
                           </div>
                         )}
                       </div>
-                      <button
-                        className={
-                          acknowledged ? "status-button done" : "status-button"
-                        }
-                        disabled={busy || acknowledged}
-                        aria-label={`${acknowledged ? "Übergabe geprüft" : "Gelesen und übernehmen"}: Zimmer ${listedPatient.room}, ${listedPatient.displayName}`}
-                        onClick={() =>
-                          perform(
-                            {
-                              type: "acknowledge-handover",
-                              handoverId: workday.handover.id,
-                              patientId,
-                              version: workday.handover.version,
-                            },
-                            "Übergabe konnte nicht bestätigt werden.",
-                          )
-                        }
-                      >
-                        {acknowledged ? "Geprüft" : "Gelesen & übernehmen"}
-                      </button>
                     </section>
                   );
                 })}
