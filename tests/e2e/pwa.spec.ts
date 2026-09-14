@@ -345,6 +345,34 @@ test("keyboard focus and accessible landmarks remain usable", async ({
   );
 });
 
+test("large text and a reduced keyboard viewport keep the composer usable", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    !["mobile-360", "mobile-390"].includes(testInfo.project.name),
+    "Mobile visual-viewport acceptance",
+  );
+  await page.locator("html").evaluate((element) => {
+    element.style.fontSize = "150%";
+  });
+  const composer = page.getByLabel("Nachricht an Pflegehelfer");
+  await composer.focus();
+  await page.setViewportSize({
+    width: testInfo.project.use.viewport!.width,
+    height: 560,
+  });
+  await expect(composer).toBeVisible();
+  const bounds = await page.locator(".assistant-composer").boundingBox();
+  expect(bounds).not.toBeNull();
+  expect(bounds!.y).toBeGreaterThanOrEqual(0);
+  expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(560);
+  expect(
+    await page
+      .locator("html")
+      .evaluate((element) => element.scrollWidth <= element.clientWidth),
+  ).toBe(true);
+});
+
 test("handover readout uses explicit controllable browser speech", async ({
   page,
 }) => {
