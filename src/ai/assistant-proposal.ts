@@ -2677,9 +2677,11 @@ export function verifyModelProposalAgainstDeterministicCompiler(
     item: T,
   ) =>
     Object.assign({}, item, {
-      sourceRecordIds: item.sourceRecordIds?.length
-        ? item.sourceRecordIds
-        : [verifiedSource.id],
+      // A model may point at exact spans, but it cannot mint or select
+      // provenance authority. This planning call is bound to the current
+      // immutable employee input, so the server replaces every proposed
+      // source id with the independently captured source record.
+      sourceRecordIds: [verifiedSource.id],
     });
   if (
     compiled?.actions.length === 0 &&

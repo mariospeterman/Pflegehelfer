@@ -587,11 +587,18 @@ export class AssistantService {
             dataClass: request.workingContext.dataClass,
           }
         : undefined;
-    const classified = await this.models.classify(
-      prompt,
-      modelContext,
-      request.signal,
+    const canRunBoundedAgent = Boolean(
+      request.workingContext?.roleProfileId &&
+      request.workingContext.workflowId &&
+      this.models.supportsAgent(request.workingContext.dataClass),
     );
+    // The bounded agent chooses conversational read/draft tools directly.
+    // Its free-language path must not pay for, or depend on, a separate model
+    // intent enum. The deterministic route remains only a fast presentation
+    // hint and an honest degraded-mode control surface.
+    const classified = canRunBoundedAgent
+      ? this.models.classifyDeterministically(prompt)
+      : await this.models.classify(prompt, modelContext, request.signal);
     // Raw-language safety gates are authoritative even when a configured
     // model chose a broader keyword route.
     let safeIntent = classified.intent;
@@ -618,21 +625,27 @@ export class AssistantService {
     let agentRun: AgentRunResult | null = null;
     let agentSelectedIntent: IntentClassification["intent"] | null = null;
     let agentGuidance: ReturnType<typeof resolveRuntimeGuidance> | null = null;
-    const readOnlyAgentIntents = new Set([
+    let agentPreparedCarePlan: ClinicalPlanResult | null = null;
+    let agentPreparedCareReferenceId: string | null = null;
+    const agentEligibleIntents = new Set([
       "patient-summary",
       "open-tasks",
       "latest-vitals",
       "handover",
       "team-inbox",
       "sync-status",
+      "draft-note",
+      "draft-task",
+      "draft-physician-question",
+      "care-update",
       "unknown",
     ]);
     if (
+      canRunBoundedAgent &&
       request.workingContext &&
       request.workingContext.roleProfileId &&
       request.workingContext.workflowId &&
-      this.models.supportsAgent(request.workingContext.dataClass) &&
-      readOnlyAgentIntents.has(safeIntent)
+      agentEligibleIntents.has(safeIntent)
     ) {
       agentGuidance = resolveRuntimeGuidance(runtimeSitePack, {
         departmentId: request.workingContext.departmentId,
@@ -646,6 +659,12 @@ export class AssistantService {
       const workflowSkillInput = z
         .object({ skillId: z.string().regex(/^[a-z0-9-]{2,80}$/) })
         .strict();
+      const canPrepareCareUpdate = Boolean(
+        patient &&
+        ["care-assistant", "registered-nurse"].includes(actor.role) &&
+        !requiresDedicatedClinicalWorkflow(prompt) &&
+        !explicitlyRefusesDocumentation(prompt),
+      );
       const selectedTools: string[] = [];
       const record = (name: string) => selectedTools.push(name);
       const registry = new AuthorizedToolRegistry([
@@ -896,10 +915,51 @@ export class AssistantService {
             });
           },
         },
+        ...(canPrepareCareUpdate
+          ? [
+              {
+                name: "prepare_care_update",
+                version: 1,
+                description:
+                  "Prepare, but never execute, the minimum faithful review for a naturally worded care report or requested workflow change. The server binds the exact current employee message, patient, encounter, role and conversation; input must be empty. Use this only when the employee is reporting work or asking to prepare a change, then return draft-ready with the exact referenceId.",
+                effect: "draft" as const,
+                input: emptyInput,
+                execute: async (
+                  _input: unknown,
+                  _context: unknown,
+                  signal: AbortSignal,
+                ) => {
+                  record("prepare_care_update");
+                  const prepared = await this.models.planCareUpdate(
+                    prompt,
+                    modelContext,
+                    signal,
+                  );
+                  agentPreparedCarePlan = prepared;
+                  const referenceId = prepared.plan
+                    ? `DraftPreparation/care-update/${prepared.plan.requestId}`
+                    : `DraftPreparation/care-update/unresolved-${randomUUID()}`;
+                  agentPreparedCareReferenceId = referenceId;
+                  return {
+                    referenceId,
+                    complete: prepared.plan !== null,
+                    data: {
+                      kind: "care-update-review",
+                      complete: prepared.plan !== null,
+                      actionCount: prepared.plan?.actions.length ?? 0,
+                      ambiguityCount: prepared.plan?.ambiguities.length ?? 0,
+                      degraded: prepared.degraded,
+                    },
+                  };
+                },
+              },
+            ]
+          : []),
       ]);
       agentRun = await new BoundedAgentRuntime(
         this.models.agentAdapter(),
         registry,
+        { deadlineMs: 25_000 },
       ).run({
         request: prompt,
         context: {
@@ -953,6 +1013,7 @@ export class AssistantService {
           "get_team_inbox",
           ...(!patient ? ["get_sync_status"] : []),
           "load_workflow_skill",
+          ...(canPrepareCareUpdate ? ["prepare_care_update"] : []),
         ],
         ...(request.signal ? { signal: request.signal } : {}),
       });
@@ -965,6 +1026,7 @@ export class AssistantService {
         get_handover: "handover",
         get_team_inbox: "team-inbox",
         get_sync_status: "sync-status",
+        prepare_care_update: "care-update",
       };
       const selectedIntent = [...selectedTools]
         .reverse()
@@ -1783,11 +1845,18 @@ export class AssistantService {
           });
           break;
         }
-        const modelPlan = await this.models.planCareUpdate(
-          prompt,
-          modelContext,
-          request.signal,
-        );
+        const agentDraftIsAccepted =
+          agentRun?.status === "draft-ready" &&
+          agentPreparedCareReferenceId !== null &&
+          agentRun.draftReferenceId === agentPreparedCareReferenceId;
+        const modelPlan =
+          agentDraftIsAccepted && agentPreparedCarePlan
+            ? agentPreparedCarePlan
+            : await this.models.planCareUpdate(
+                prompt,
+                modelContext,
+                request.signal,
+              );
         const mentionedRecipients = snapshot.users
           .filter((candidate) => candidate.id !== actor.id)
           .filter((candidate) => {
@@ -1870,6 +1939,7 @@ export class AssistantService {
             : "Klinischer Coworker · vorbereitete Änderungen",
           degraded: planned.degraded,
           ...(planned.failure ? { failure: planned.failure.code } : {}),
+          ...(runtime.agent ? { agent: runtime.agent } : {}),
         };
         if (planned.plan.actions.length === 0) {
           const negated = planned.plan.understoodFacts

@@ -3,6 +3,7 @@ import { ModelGateway } from "../src/ai/model-gateway.js";
 import { AssistantService } from "../src/core/assistant-service.js";
 import { runtimeSitePack } from "../src/core/runtime-instructions.js";
 import { PflegehelferService } from "../src/core/service.js";
+import { deterministicAssistantProposal } from "../src/ai/assistant-proposal.js";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -135,7 +136,7 @@ describe("runtime-guided assistant agent", () => {
       expect.objectContaining({ type: "HandoverChecklist", openCount: 2 }),
     );
     const agentSystemText = (
-      bodies[1]!.input as Array<{
+      bodies[0]!.input as Array<{
         role: string;
         content: Array<{ text: string }>;
       }>
@@ -144,29 +145,29 @@ describe("runtime-guided assistant agent", () => {
       .flatMap(({ content }) => content.map(({ text }) => text))
       .join("\n");
     expect(agentSystemText).toContain(runtimeSitePack.instructions.base!.body);
-    expect(JSON.stringify(bodies[1])).toContain("availableWorkflowSkills");
-    expect(JSON.stringify(bodies[1])).toContain("nursing-early");
-    expect(JSON.stringify(bodies[1])).toContain(
+    expect(JSON.stringify(bodies[0])).toContain("availableWorkflowSkills");
+    expect(JSON.stringify(bodies[0])).toContain("nursing-early");
+    expect(JSON.stringify(bodies[0])).toContain(
       "Ich habe vier Kontexte geprüft",
     );
     expect(agentSystemText).toContain("TRUSTED_WORKING_CONTEXT");
     expect(agentSystemText).toContain('"hasResumableEpisode":true');
     expect(agentSystemText).not.toContain("p-luca");
     expect(agentSystemText).not.toContain("p-anna");
-    expect(JSON.stringify(bodies[2])).toContain("UNTRUSTED_TOOL_DATA");
-    expect(JSON.stringify(bodies[2])).toContain(
+    expect(JSON.stringify(bodies[1])).toContain("UNTRUSTED_TOOL_DATA");
+    expect(JSON.stringify(bodies[1])).toContain(
       runtimeSitePack.instructions["nursing-early"]!.sha256,
     );
-    expect(JSON.stringify(bodies[2])).toContain(
+    expect(JSON.stringify(bodies[1])).toContain(
       "Begin with the exact versioned handover roster",
     );
-    expect(JSON.stringify(bodies[2])).not.toContain(
+    expect(JSON.stringify(bodies[1])).not.toContain(
       runtimeSitePack.instructions.arzt!.body,
     );
-    expect(JSON.stringify(bodies[3])).toContain("observations");
-    expect(JSON.stringify(bodies[3])).not.toContain("Patient/p-");
-    expect(JSON.stringify(bodies[3])).not.toContain("externalId");
-    expect(JSON.stringify(bodies[4])).toContain(
+    expect(JSON.stringify(bodies[2])).toContain("observations");
+    expect(JSON.stringify(bodies[2])).not.toContain("Patient/p-");
+    expect(JSON.stringify(bodies[2])).not.toContain("externalId");
+    expect(JSON.stringify(bodies[3])).toContain(
       "4/6 Patientenkontexte geprüft",
     );
     expect(JSON.stringify(bodies)).not.toContain(syntheticCredential);
@@ -225,6 +226,116 @@ describe("runtime-guided assistant agent", () => {
     expect(response.warnings.join(" ")).toContain(
       "Agentenlauf wurde nicht abgeschlossen",
     );
+  });
+
+  it("lets the bounded agent choose a patient-bound draft tool for an unfamiliar care paraphrase", async () => {
+    const prompt = "Beim Aufstehen bis zum Fenster unterstützt.";
+    const fixturePlan = deterministicAssistantProposal(prompt);
+    if (!fixturePlan) throw new Error("Expected a faithful fixture proposal");
+    let agentTurn = 0;
+    const seenFormats: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: string, init?: RequestInit) => {
+        if (typeof init?.body !== "string")
+          throw new Error("Expected a serialized model request");
+        const body = JSON.parse(init.body) as Record<string, unknown>;
+        const format = (body.text as { format?: { name?: string } } | undefined)
+          ?.format?.name;
+        if (format) seenFormats.push(format);
+        const output =
+          format === "assistant_proposal_v3"
+            ? fixturePlan
+            : agentTurn++ === 0
+              ? {
+                  kind: "tool-call",
+                  toolName: "prepare_care_update",
+                  input: {},
+                  text: null,
+                  draftReferenceId: null,
+                  sourceReferenceIds: [],
+                }
+              : {
+                  kind: "draft-ready",
+                  toolName: null,
+                  input: null,
+                  text: "Ich habe deine Aussage als prüfbaren Entwurf vorbereitet.",
+                  draftReferenceId: `DraftPreparation/care-update/${fixturePlan.requestId}`,
+                  sourceReferenceIds: [],
+                };
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ output_text: JSON.stringify(output) }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        );
+      }),
+    );
+    const clinical = new PflegehelferService();
+    const initialNotes = clinical.snapshot("u-nurse").notes.length;
+    const gateway = new ModelGateway({
+      PFH_AI_MODE: "hosted-test",
+      PFH_DEMO_MODE: "true",
+      PFH_LLM_DATA_CLASSIFICATION: "synthetic-only",
+      PFH_ALLOW_EXTERNAL_AI: "true",
+      PFH_LLM_API_KEY: syntheticCredential,
+      PFH_LLM_BASE_URL: "https://synthetic-model.example.invalid/v1",
+      PFH_LLM_MODEL: "fixture-agent",
+    });
+    const response = await new AssistantService(clinical, gateway).query(
+      "u-nurse",
+      {
+        prompt,
+        patientId: "p-luca",
+        workingContext: {
+          organizationId: "org-tertianum",
+          sessionId: "session-test",
+          threadId: "assistant:u-nurse:patient:p-luca:enc-luca-2026",
+          contextRevision: 4,
+          departmentId: "rehab-2",
+          stationId: "rehabilitation-2",
+          roleProfileId: "fage-efz",
+          workflowId: "nursing-day",
+          currentStepId: "patient-work",
+          activeEpisodeTitle: "Morgenpflege",
+          activeEpisodePatientId: "p-luca",
+          resumableEpisodePatientId: null,
+          recentPrompts: [],
+          recentConversation: [],
+          organizationLabel: "Kronenhof Demo",
+          actorRole: "registered-nurse",
+          dataClass: "synthetic-demo",
+          workdayHandover: null,
+        },
+      },
+    );
+
+    expect(response.classification.intent).toBe("care-update");
+    expect(response.runtime.agent).toMatchObject({
+      status: "draft-ready",
+      toolCalls: 1,
+    });
+    expect(response.runtime.agent?.trace).toContainEqual(
+      expect.objectContaining({
+        kind: "tool",
+        tool: "prepare_care_update",
+        status: "ok",
+      }),
+    );
+    const draft = response.components.find(
+      (component) =>
+        component.type === "DraftAction" && component.kind === "care-update",
+    );
+    expect(draft?.type).toBe("DraftAction");
+    if (draft?.type !== "DraftAction")
+      throw new Error("Expected one care-update review");
+    expect(draft.preview).toContain(prompt);
+    expect(seenFormats).toEqual([
+      "pflegehelfer_agent_decision_v1",
+      "assistant_proposal_v3",
+      "pflegehelfer_agent_decision_v1",
+    ]);
+    expect(clinical.snapshot("u-nurse").notes).toHaveLength(initialNotes);
   });
 
   it.each([
