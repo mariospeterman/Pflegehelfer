@@ -1864,8 +1864,13 @@ export class PostgresOperationalStore
          FROM assistant_threads t
          WHERE s.organization_id=$1 AND s.actor_id=$2 AND s.status='active'
            AND t.organization_id=s.organization_id AND t.id=s.assistant_thread_id
-           AND (t.expires_at <= now() OR s.effective_role <> $3)`,
-        [organizationId, actorId, role],
+           AND (
+             t.expires_at <= now()
+             OR s.effective_role <> $3
+             OR t.site_id <> $4
+             OR t.department_id <> $5
+           )`,
+        [organizationId, actorId, role, siteConfiguration.siteId, departmentId],
       );
       const workflow = workflowForRole(role);
       const configuredWorkday = optionalWorkdayConfiguration(actorId, role);
