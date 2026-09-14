@@ -12,6 +12,12 @@ Pflegehelfer is a natural agentic coworker on top of a controlled execution syst
 
 Every writable revision retains immutable hashed input records and references the records from which its meaning was derived. A merged note may differ from one quoted span only when an explicit correction and all contributing source records are retained and revalidated. The reviewed revision—not a later model response—is the content executed.
 
+The model may identify exact source spans but cannot mint provenance. For one
+planning call, the server replaces every proposed source identifier with its
+independently captured immutable current-input record. Multi-turn correction
+logic then adds earlier authorized records explicitly rather than trusting a
+model-provided identifier.
+
 No-model operation is explicitly degraded. Direct data/work controls and verbatim draft capture remain available with human review, but fallback success is not connected-model acceptance. Pending reviews survive refresh by reissuing a short-lived authority for the same stored proposal; parallel tokens consume the same proposal only once.
 
 Voice correction does not overwrite its source. The immutable ASR transcript,

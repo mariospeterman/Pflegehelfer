@@ -964,14 +964,18 @@ export function App() {
       boundAssistantPatientId.current = id;
       if (requestGeneration !== generation.current || requestUserId !== userId)
         return false;
-      setSelectedPatientId(id);
-      setActivePatientLens("Chat");
       const conversationData = await api<{
         conversations: ConversationDescriptor[];
       }>("/api/v1/assistant/conversation", userId);
       if (requestGeneration !== generation.current || requestUserId !== userId)
         return false;
       setConversations(conversationData.conversations);
+      // Commit the visible selection only after all transition reads finish.
+      // selectedPatientId intentionally triggers load(); doing this before the
+      // conversation read increments generation and leaves this transition's
+      // busy state permanently stale on fast clients.
+      setSelectedPatientId(id);
+      setActivePatientLens("Chat");
       if (id) sessionStorage.setItem("pfh-patient-context", id);
       else sessionStorage.removeItem("pfh-patient-context");
       return true;
@@ -1117,8 +1121,12 @@ export function App() {
               title={syncTitle}
             >
               <i />
-              <span className="sync-label-full">{syncLabel}</span>
-              <span className="sync-label-compact">{syncCompactLabel}</span>
+              <span
+                className="sync-label"
+                data-compact-label={syncCompactLabel}
+              >
+                {syncLabel}
+              </span>
             </span>
             {snapshot.workspaceLinks && patient && (
               <a

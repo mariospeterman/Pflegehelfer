@@ -228,6 +228,58 @@ describe("runtime-guided assistant agent", () => {
     );
   });
 
+  it("does not make a second hosted call when a care-draft agent run fails", async () => {
+    const fetchSpy = vi.fn(() =>
+      Promise.resolve(new Response("{}", { status: 503 })),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+    const response = await new AssistantService(
+      new PflegehelferService(),
+      new ModelGateway({
+        PFH_AI_MODE: "hosted-test",
+        PFH_DEMO_MODE: "true",
+        PFH_LLM_DATA_CLASSIFICATION: "synthetic-only",
+        PFH_ALLOW_EXTERNAL_AI: "true",
+        PFH_LLM_API_KEY: syntheticCredential,
+        PFH_LLM_BASE_URL: "https://synthetic-model.example.invalid/v1",
+        PFH_LLM_MODEL: "fixture-agent",
+      }),
+    ).query("u-nurse", {
+      prompt: "Luca mobilisiert.",
+      patientId: "p-luca",
+      workingContext: {
+        organizationId: "org-tertianum",
+        sessionId: "session-test",
+        threadId: "assistant:u-nurse:patient:p-luca:enc-luca-2026",
+        contextRevision: 4,
+        departmentId: "rehab-2",
+        stationId: "rehabilitation-2",
+        roleProfileId: "fage-efz",
+        workflowId: "nursing-day",
+        currentStepId: "patient-work",
+        activeEpisodeTitle: "Morgenpflege",
+        activeEpisodePatientId: "p-luca",
+        resumableEpisodePatientId: null,
+        recentPrompts: [],
+        recentConversation: [],
+        organizationLabel: "Kronenhof Demo",
+        actorRole: "registered-nurse",
+        dataClass: "synthetic-demo",
+        workdayHandover: null,
+      },
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(response.runtime).toMatchObject({
+      route: "safe-fallback",
+      degraded: true,
+      agent: { status: "failed", toolCalls: 0 },
+    });
+    expect(response.components).toContainEqual(
+      expect.objectContaining({ type: "DraftAction", kind: "care-update" }),
+    );
+  });
+
   it("lets the bounded agent choose a patient-bound draft tool for an unfamiliar care paraphrase", async () => {
     const prompt = "Beim Aufstehen bis zum Fenster unterstützt.";
     const fixturePlan = deterministicAssistantProposal(prompt);

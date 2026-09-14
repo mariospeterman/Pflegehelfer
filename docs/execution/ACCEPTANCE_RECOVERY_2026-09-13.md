@@ -58,7 +58,8 @@ acceptance. Its manual processing/reconciliation endpoints fail closed in the
 integrated profile. Remaining direct mutation endpoints have not all migrated,
 which is why G1 stays `PARTIAL`.
 
-Current real-store regression command:
+Current real-store regression command (commit `ca4e0e9` plus the session-race
+fix at `dca9044`):
 
 ```sh
 PFH_DEMO_MODE=true node --env-file=.env.demo node_modules/vitest/vitest.mjs run \
@@ -68,10 +69,11 @@ PFH_DEMO_MODE=true node --env-file=.env.demo node_modules/vitest/vitest.mjs run 
   tests/postgres-provider-worker.test.ts \
   tests/postgres-operational-store.test.ts \
   tests/postgres-sync-summary.regression-1.test.ts \
+  tests/pwa-startup-session-race.regression-1.test.ts \
   --no-file-parallelism --reporter=dot
 ```
 
-Latest focused result: 6 files and 22 tests passed against operational
+Latest focused result: 7 files and 23 tests passed against operational
 PostgreSQL on 2026-09-14. The migration ledger verified versions 1–10;
 migration 008 adds provider-version, adapter-version, mapping-version and
 read-back-hash evidence to durable provider receipts, while migrations 009–010
@@ -125,6 +127,15 @@ restored after refresh by a fresh short-lived token for the same proposal;
 parallel tokens consume that proposal only once. The focused mobile 390 px
 Playwright regression passed in 1.3 minutes.
 
+At `ca4e0e9`, the same bounded loop can also choose the non-executable
+`prepare_care_update` draft tool for an unfamiliar paraphrase. The server, not
+the model, binds actor, patient, encounter, exact input and immutable source
+record; the tool returns only an opaque draft reference and counts. The agent
+must return that exact reference before the prepared plan is reused. A
+separate model intent-enum call was removed from this path. Fixture evidence is
+5 agent-integration tests and is orchestration evidence only; the real-model
+gate below remains unpassed.
+
 Clinical projection leasing is now strictly ordered across unresolved
 whole-state checkpoints, preventing an older retry from overwriting a newer
 checkpoint. Provider acknowledgement is accepted as delivered only after exact
@@ -161,9 +172,9 @@ increased once, not twice.
 
 ## Actual AI/audio acceptance
 
-The configured synthetic hosted profile attempted the real GPT-5.6 Terra
-contract and a real German synthetic WAV transcription. Both requests reached
-the official service and received HTTP 429 `credit_balance_exhausted`. This is
+The configured synthetic hosted profile re-attempted the real GPT-5.6 Terra
+contract and a generated German synthetic WAV transcription on 2026-09-14.
+Both requests reached the official service and received HTTP 429. This is
 connectivity/error-handling evidence only:
 
 - model acceptance: **not passed**;
@@ -177,14 +188,27 @@ The integrated PWA (not the memory profile) was inspected at 390×844,
 roster with exactly one selected-patient expansion, human-facing recipient and
 encounter labels, reachable review actions and no horizontal overflow. At
 390×844 the fixed composer measured 73.5 px high with its lower edge at 801 px;
-at 768×1024 its lower edge was 994 px. A 150% root-font-size plus reduced
-560-px keyboard viewport regression is part of the Playwright suite.
+at 768×1024 its lower edge was 994 px. Every visible interactive control
+measured at least 44 px high. A 150% root-font-size plus reduced 560-px
+keyboard viewport regression is part of the Playwright suite.
+
+The full memory-profile Playwright regression passes 66 tests with 19
+deliberate project skips. It exposed a fast patient-transition busy-state race:
+selection updated React state before the transition conversation read
+completed, so the refresh generation invalidated its own cleanup. Selection
+is now committed only after transition reads finish. The six directly affected
+mobile journeys pass, and an independent integrated 390 px run switches to
+Luca, closes the drawer and leaves the composer enabled with zero console
+errors. The memory E2E result is not a substitute for integrated evidence.
 
 Visual evidence:
 
-- `.gstack/qa-reports/screenshots/integrated-mobile-390-after.png`
-- `.gstack/qa-reports/screenshots/integrated-tablet-768.png`
-- `.gstack/qa-reports/screenshots/integrated-desktop-1280-dark.png`
+- `.gstack/qa-reports/screenshots/natural-coworker-mobile-390-light.png`
+- `.gstack/qa-reports/screenshots/natural-coworker-mobile-360-light.png`
+- `.gstack/qa-reports/screenshots/natural-coworker-tablet-768-light.png`
+- `.gstack/qa-reports/screenshots/natural-coworker-desktop-1280-dark.png`
+- `.gstack/qa-reports/screenshots/natural-coworker-mobile-390-keyboard-large-text.png`
+- `.gstack/qa-reports/screenshots/natural-coworker-integrated-patient-switch-390.png`
 
 Fixture endpoints prove schema/orchestration behavior only. Browser speech is
 not counted as governed TTS acceptance. Keys remain only in the ignored,

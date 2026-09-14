@@ -511,6 +511,21 @@ export class ModelGateway {
     };
   }
 
+  planCareUpdateDeterministically(prompt: string): ClinicalPlanResult {
+    return {
+      plan: deterministicAssistantProposal(prompt, {
+        inputTimestamp: new Date().toISOString(),
+      }),
+      mode: "deterministic",
+      model: "deterministic-clinical-planner-v1",
+      degraded: true,
+      failure: {
+        code: "not-configured",
+        message: "agent-draft-not-produced-verbatim-review-mode",
+      },
+    };
+  }
+
   /**
    * Adapts the configured OpenAI-compatible endpoint to the bounded agent
    * runtime. The model receives only reviewed instruction bodies, a compact

@@ -1852,11 +1852,13 @@ export class AssistantService {
         const modelPlan =
           agentDraftIsAccepted && agentPreparedCarePlan
             ? agentPreparedCarePlan
-            : await this.models.planCareUpdate(
-                prompt,
-                modelContext,
-                request.signal,
-              );
+            : agentRun
+              ? this.models.planCareUpdateDeterministically(prompt)
+              : await this.models.planCareUpdate(
+                  prompt,
+                  modelContext,
+                  request.signal,
+                );
         const mentionedRecipients = snapshot.users
           .filter((candidate) => candidate.id !== actor.id)
           .filter((candidate) => {
