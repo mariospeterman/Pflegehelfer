@@ -1197,6 +1197,68 @@ button:disabled {
 .assistant-evidence div {
   padding: 4px 0;
 }
+
+.evidence-view {
+  margin: 0;
+}
+
+.evidence-view figcaption {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.7rem;
+}
+
+.evidence-view figcaption span {
+  color: var(--warning);
+  font-size: 0.78rem;
+}
+
+.evidence-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.evidence-table-scroll table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.evidence-table-scroll th,
+.evidence-table-scroll td {
+  padding: 0.55rem 0.65rem;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.evidence-bars {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0;
+  list-style: none;
+}
+
+.evidence-bars li {
+  display: grid;
+  grid-template-columns: minmax(5.5rem, 1fr) minmax(4rem, 2fr) auto;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.evidence-bars i {
+  display: block;
+  height: 0.5rem;
+  border-radius: 999px;
+  background: var(--blue);
+}
+
+.evidence-bars small {
+  grid-column: 1 / -1;
+  color: var(--muted);
+}
 .assistant-thinking {
   margin-left: 42px;
   color: var(--muted);

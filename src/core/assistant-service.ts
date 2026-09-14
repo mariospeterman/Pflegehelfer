@@ -25,6 +25,7 @@ import {
   isDoubtfulObservation,
   reviseAssistantProposal,
   requiresDedicatedClinicalWorkflow,
+  verifyAgentProposal,
   verifyProposalSourceRecords,
   type ExecutableAssistantAction,
 } from "../ai/assistant-proposal.js";
@@ -158,6 +159,10 @@ export function toOpenUi(components: AssistantComponent[]): string {
         return `${name} = TeamInboxCard(${q(component.title)}, ${component.count}, ${q(component.summary)}, ${q(component.sourceLabel)}, ${JSON.stringify(component.items)})`;
       case "SyncSummary":
         return `${name} = SyncSummaryCard(${q(component.title)}, ${component.pending}, ${component.conflicts}, ${q(component.summary)}, ${q(component.sourceLabel)})`;
+      case "EvidenceTable":
+        return `${name} = EvidenceTable(${q(component.title)}, ${JSON.stringify(component.columns)}, ${JSON.stringify(component.rows)}, ${component.complete}, ${q(component.sourceLabel)})`;
+      case "EvidenceChart":
+        return `${name} = EvidenceChart(${q(component.title)}, ${JSON.stringify(component.points)}, ${component.complete}, ${q(component.sourceLabel)})`;
       case "DraftAction":
         return `${name} = DraftActionCard(${q(component.kind)}, ${q(component.title)}, ${q(component.preview)}, ${q(component.actionLabel)}, ${q(component.intentToken)}, ${q(component.sourceLabel)}, ${JSON.stringify(component.reviewItems ?? [])})`;
       case "MedicationReadOnly":
@@ -186,21 +191,15 @@ function cleanDraft(prompt: string): string {
     .slice(0, 1200);
 }
 
-function generatedCoworkerTextIsSafe(
-  run: AgentRunResult,
-  components: readonly AssistantComponent[],
-): boolean {
+function generatedCoworkerTextIsSafe(run: AgentRunResult): boolean {
   if (
     !["answer", "clarification-needed", "no-action"].includes(run.status) ||
     run.text.trim().length === 0 ||
     run.text.length > 1200
   )
     return false;
-  if (
-    run.status === "answer" &&
-    run.toolCalls > 0 &&
-    (run.sourceReferenceIds?.length ?? 0) === 0
-  )
+  if (run.toolCalls === 0) return run.status !== "answer";
+  if (run.status !== "answer" || (run.sourceReferenceIds?.length ?? 0) === 0)
     return false;
   // Generated prose can explain tool results. It can never carry authority,
   // executable links/tokens, or claim that a side effect already happened.
@@ -211,30 +210,19 @@ function generatedCoworkerTextIsSafe(
     )
   )
     return false;
-  const referenceTypes = new Set(
-    (run.sourceReferenceIds ?? []).flatMap((referenceId) => {
-      if (referenceId.startsWith("Patient/")) return ["PatientSummary"];
-      if (referenceId.startsWith("Task/")) return ["TaskList"];
-      if (referenceId.startsWith("Observation/")) return ["VitalTrend"];
-      if (referenceId.startsWith("WorkdayHandover/"))
-        return ["HandoverChecklist"];
-      if (referenceId.startsWith("Communication/")) return ["TeamInbox"];
-      if (referenceId.startsWith("ProviderSync/")) return ["SyncSummary"];
-      return [];
-    }),
+  const cited = new Set(run.sourceReferenceIds);
+  const evidenceRecords = (run.evidenceRecords ?? []).filter((record) =>
+    cited.has(record.referenceId),
   );
-  const groundedComponents = components.filter(
-    (component) =>
-      component.type !== "AssistantText" && referenceTypes.has(component.type),
-  );
-  if (run.toolCalls > 0 && groundedComponents.length === 0) return false;
-  const factualView = groundedComponents.map((component) => {
-    const copy = { ...component } as Record<string, unknown>;
-    delete copy.sourceLabel;
-    delete copy.intentToken;
-    return copy;
-  });
-  const groundedView = JSON.stringify(factualView)
+  if (evidenceRecords.length !== cited.size) return false;
+  const groundedView = JSON.stringify(
+    evidenceRecords.map(({ data, complete, freshness, sourceVersion }) => ({
+      data,
+      complete,
+      freshness: freshness ?? null,
+      sourceVersion: sourceVersion ?? null,
+    })),
+  )
     .normalize("NFKC")
     .toLocaleLowerCase("de-CH")
     .replace(/\s+/g, " ");
@@ -270,31 +258,6 @@ function generatedCoworkerTextIsSafe(
     )
   )
     return false;
-  const countClaim =
-    /\b(\d+)\s+(?:\w+\s+){0,2}(?:offen\w*|ausstehend\w*)\s*(aufgaben|fragen|nachrichten|punkte)?/i.exec(
-      normalizedText,
-    );
-  if (countClaim) {
-    const claimed = Number(countClaim[1]);
-    const noun = countClaim[2] ?? "punkte";
-    const countComponent = groundedComponents.find((component) =>
-      /aufgaben/.test(noun)
-        ? component.type === "TaskList"
-        : /fragen|nachrichten/.test(noun)
-          ? component.type === "TeamInbox"
-          : component.type === "HandoverChecklist" ||
-            component.type === "TaskList" ||
-            component.type === "TeamInbox",
-    );
-    const actual =
-      countComponent?.type === "HandoverChecklist"
-        ? countComponent.openCount
-        : countComponent?.type === "TaskList" ||
-            countComponent?.type === "TeamInbox"
-          ? countComponent.count
-          : null;
-    if (actual === null || claimed !== actual) return false;
-  }
   const unsupportedAbsoluteClaims = [
     /\bschmerzfrei\b/,
     /\bkeine(?:n|r|s)?\s+(?:bekannten?\s+)?allergien?\b/,
@@ -309,30 +272,152 @@ function generatedCoworkerTextIsSafe(
     )
   )
     return false;
-  for (const clinicalTerm of [
-    "allerg",
-    "schmerz",
-    "diagnos",
-    "medikament",
-    "blutdruck",
-    "puls",
-    "temperatur",
-    "sättigung",
-    "gewicht",
-    "sturz",
-  ])
-    if (
-      normalizedText.includes(clinicalTerm) &&
-      !groundedView.includes(clinicalTerm)
-    )
-      return false;
+  // Reject unsupported factual content conservatively. Natural connective
+  // language is allowed, but every content-bearing word must occur in the
+  // immutable cited tool records. This is intentionally stricter than the UI:
+  // a rendered card is never evidence authority.
+  const connectiveWords = new Set([
+    "aktuell",
+    "angefragt",
+    "angefragten",
+    "bestätigt",
+    "bestätigten",
+    "daten",
+    "deinem",
+    "deinen",
+    "deiner",
+    "derzeit",
+    "diese",
+    "diesen",
+    "direkt",
+    "findest",
+    "folgende",
+    "folgenden",
+    "freigegeben",
+    "freigegebenen",
+    "hier",
+    "informationen",
+    "kontext",
+    "laut",
+    "noch",
+    "offen",
+    "patientenkontext",
+    "quelle",
+    "quellen",
+    "sichtbar",
+    "stand",
+    "übersicht",
+    "vorliegen",
+  ]);
+  const groundedWords = new Set(groundedView.match(/[\p{L}\p{N}]+/gu) ?? []);
+  const unsupportedWord = (normalizedText.match(/[\p{L}\p{N}]+/gu) ?? [])
+    .filter((word) => word.length >= 5)
+    .find((word) => !groundedWords.has(word) && !connectiveWords.has(word));
+  if (unsupportedWord) return false;
   return true;
+}
+
+function valueAt(data: unknown, path: string): unknown {
+  if (!/^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*$/.test(path))
+    return undefined;
+  return path.split(".").reduce<unknown>((current, segment) => {
+    if (
+      current !== null &&
+      typeof current === "object" &&
+      !Array.isArray(current) &&
+      Object.prototype.hasOwnProperty.call(current, segment)
+    )
+      return (current as Record<string, unknown>)[segment];
+    return undefined;
+  }, data);
+}
+
+function scalarAt(
+  row: unknown,
+  path: string,
+): string | number | boolean | null {
+  const value = valueAt(row, path);
+  return value === null ||
+    ["string", "number", "boolean"].includes(typeof value)
+    ? (value as string | number | boolean | null)
+    : null;
+}
+
+function modelPresentation(run: AgentRunResult): AssistantComponent | null {
+  const spec = run.presentation;
+  if (!spec || spec.kind === "text") return null;
+  const record = run.evidenceRecords?.find(
+    (candidate) => candidate.referenceId === spec.sourceReferenceId,
+  );
+  if (!record || !(run.sourceReferenceIds ?? []).includes(record.referenceId))
+    return null;
+  const collection = valueAt(record.data, spec.collectionPath);
+  if (!Array.isArray(collection)) return null;
+  const sourceLabel = `${record.referenceId}${record.complete ? "" : " · Ausschnitt, nicht vollständig"}`;
+  if (spec.kind === "table") {
+    return {
+      type: "EvidenceTable",
+      title: spec.title,
+      columns: spec.columns.map(({ label }) => label),
+      rows: collection
+        .slice(0, 20)
+        .map((row) =>
+          spec.columns.map((column) =>
+            String(scalarAt(row, column.path) ?? "—"),
+          ),
+        ),
+      complete: record.complete && collection.length <= 20,
+      sourceLabel,
+    };
+  }
+  const points = collection.slice(0, 20).flatMap((row) => {
+    const x = scalarAt(row, spec.xPath);
+    const y = scalarAt(row, spec.yPath);
+    const label = scalarAt(row, spec.labelPath);
+    return typeof y === "number" && x !== null && label !== null
+      ? [{ x: String(x), y, label: String(label) }]
+      : [];
+  });
+  return {
+    type: "EvidenceChart",
+    title: spec.title,
+    points,
+    complete: record.complete && collection.length <= 20,
+    sourceLabel,
+  };
 }
 
 function explicitlyRequestsNote(prompt: string): boolean {
   return /^\s*(?:bitte\s+)?(?:notiz|dokumentiere|schreib(?:e)?(?:\s+auf)?|anamnes(?:e|is))\b/i.test(
     prompt,
   );
+}
+
+function validateDurableIntentPayload(
+  record: Pick<DurableIntentRecord, "command" | "payload">,
+): void {
+  if (record.command !== "care-update:draft") return;
+  const plan = verifyProposalSourceRecords(
+    assistantProposalSchema.parse(JSON.parse(record.payload.plan ?? "null")),
+  );
+  const sources = new Map(
+    (plan.sourceRecords ?? []).map((source) => [source.id, source.text]),
+  );
+  for (const action of plan.actions) {
+    const sourceText = (action.sourceRecordIds ?? [])
+      .map((id) => sources.get(id) ?? "")
+      .join("\n");
+    const actionText =
+      action.type === "note-proposal"
+        ? `${sourceText}\n${action.structuredText}`
+        : sourceText;
+    if (requiresDedicatedClinicalWorkflow(actionText))
+      throw new DomainError(
+        "VALIDATION",
+        "Dieser Inhalt gehört in den dafür vorgesehenen klinischen Fachworkflow.",
+        400,
+      );
+  }
 }
 
 function explicitlyRequestsTask(prompt: string): boolean {
@@ -507,6 +592,7 @@ export class AssistantService {
   }
 
   restoreDurableIntent(token: string, record: DurableIntentRecord): void {
+    validateDurableIntentPayload(record);
     this.intents.restore(token, record);
   }
 
@@ -518,6 +604,7 @@ export class AssistantService {
         "Der offene Entwurf gehört nicht zu dieser Mitarbeitenden-Sitzung.",
         403,
       );
+    validateDurableIntentPayload(record);
     return this.intents.issue(actor, {
       command: record.command,
       patientId: record.patientId,
@@ -536,7 +623,7 @@ export class AssistantService {
     const actor = this.clinical.user(userId);
     const purpose = request.purpose ?? actor.defaultPurpose;
     const prompt = request.prompt.trim();
-    if (prompt.length < 2 || prompt.length > 1200)
+    if (prompt.length < 2 || prompt.length > 8_000)
       throw new DomainError(
         "VALIDATION",
         "Assistenzanfrage ist ungültig.",
@@ -623,7 +710,6 @@ export class AssistantService {
     )
       safeIntent = "care-update";
     let agentRun: AgentRunResult | null = null;
-    let agentSelectedIntent: IntentClassification["intent"] | null = null;
     let agentGuidance: ReturnType<typeof resolveRuntimeGuidance> | null = null;
     let agentPreparedCarePlan: ClinicalPlanResult | null = null;
     let agentPreparedCareReferenceId: string | null = null;
@@ -665,8 +751,64 @@ export class AssistantService {
         !requiresDedicatedClinicalWorkflow(prompt) &&
         !explicitlyRefusesDocumentation(prompt),
       );
-      const selectedTools: string[] = [];
-      const record = (name: string) => selectedTools.push(name);
+      const draftInput = z
+        .object({ proposalJson: z.string().min(2).max(20_000) })
+        .strict();
+      const previousProposal = request.workingContext.previousCarePlan
+        ? assistantProposalSchema.safeParse(
+            JSON.parse(request.workingContext.previousCarePlan),
+          )
+        : null;
+      const allowedRecipients = snapshot.users
+        .filter((candidate) => candidate.id !== actor.id)
+        .filter((candidate) =>
+          [
+            "registered-nurse",
+            "physician",
+            "pharmacy",
+            "physiotherapy",
+            "occupational-therapy",
+          ].includes(candidate.role),
+        )
+        .map((candidate) => ({
+          label: candidate.displayName,
+          role: candidate.role as
+            | "registered-nurse"
+            | "physician"
+            | "pharmacy"
+            | "physiotherapy"
+            | "occupational-therapy",
+        }));
+      const prepareDraft = (input: unknown) => {
+        const parsed = draftInput.parse(input);
+        const plan = verifyAgentProposal(
+          prompt,
+          JSON.parse(parsed.proposalJson),
+          {
+            inputTimestamp: new Date().toISOString(),
+            inputModality: request.inputModality ?? "typed",
+            previous: previousProposal?.success ? previousProposal.data : null,
+            allowedRecipients,
+          },
+        );
+        agentPreparedCarePlan = {
+          plan,
+          mode: this.models.agentMode(),
+          model: this.models.agentModel(),
+          degraded: false,
+        };
+        const referenceId = `DraftPreparation/care-update/${plan.requestId}`;
+        agentPreparedCareReferenceId = referenceId;
+        return Promise.resolve({
+          referenceId,
+          complete: true,
+          data: {
+            kind: "care-update-review",
+            actionCount: plan.actions.length,
+            ambiguityCount: plan.ambiguities.length,
+          },
+        });
+      };
       const registry = new AuthorizedToolRegistry([
         {
           name: "get_patient_summary",
@@ -676,7 +818,6 @@ export class AssistantService {
           effect: "read",
           input: emptyInput,
           execute: () => {
-            record("get_patient_summary");
             return Promise.resolve({
               referenceId: patient
                 ? `Patient/${patient.id}/_history/${patient.source.version}`
@@ -703,15 +844,14 @@ export class AssistantService {
           effect: "read",
           input: emptyInput,
           execute: () => {
-            record("get_open_tasks");
-            const tasks = snapshot.tasks
-              .filter(
-                (task) =>
-                  (!patient ||
-                    (task.patientId === patient.id &&
-                      task.encounterId === patient.encounterId)) &&
-                  task.state !== "completed",
-              )
+            const allTasks = snapshot.tasks.filter(
+              (task) =>
+                (!patient ||
+                  (task.patientId === patient.id &&
+                    task.encounterId === patient.encounterId)) &&
+                task.state !== "completed",
+            );
+            const tasks = allTasks
               .slice(0, 20)
               .map(({ patientId, title, reason, state, priority, dueAt }) => {
                 const subject = snapshot.patients.find(
@@ -731,8 +871,8 @@ export class AssistantService {
             return Promise.resolve({
               referenceId: `Task/search/${snapshot.serverTime}`,
               freshness: snapshot.serverTime,
-              complete: true,
-              data: { tasks },
+              complete: allTasks.length <= tasks.length,
+              data: { tasks, totalCount: allTasks.length },
             });
           },
         },
@@ -744,39 +884,40 @@ export class AssistantService {
           effect: "read",
           input: emptyInput,
           execute: () => {
-            record("get_latest_vitals");
-            const observations = patient
-              ? snapshot.observations
-                  .filter(
-                    (item) =>
-                      item.patientId === patient.id &&
-                      item.encounterId === patient.encounterId &&
-                      item.approvedAt !== null,
-                  )
-                  .slice(-12)
-                  .map(
-                    ({
-                      label,
-                      value,
-                      secondaryValue,
-                      unit,
-                      effectiveAt,
-                      approvedAt,
-                    }) => ({
-                      label,
-                      value,
-                      secondaryValue,
-                      unit,
-                      effectiveAt,
-                      status: approvedAt ? "independently-accepted" : "draft",
-                    }),
-                  )
+            const allObservations = patient
+              ? snapshot.observations.filter(
+                  (item) =>
+                    item.patientId === patient.id &&
+                    item.encounterId === patient.encounterId &&
+                    item.approvedAt !== null,
+                )
               : [];
+            const observations = allObservations
+              .slice(-12)
+              .map(
+                ({
+                  label,
+                  value,
+                  secondaryValue,
+                  unit,
+                  effectiveAt,
+                  approvedAt,
+                }) => ({
+                  label,
+                  value,
+                  secondaryValue,
+                  unit,
+                  effectiveAt,
+                  status: approvedAt ? "independently-accepted" : "draft",
+                }),
+              );
             return Promise.resolve({
               referenceId: `Observation/search/${snapshot.serverTime}`,
               freshness: snapshot.serverTime,
-              complete: patient !== null,
-              data: { observations },
+              complete:
+                patient !== null &&
+                allObservations.length <= observations.length,
+              data: { observations, totalCount: allObservations.length },
             });
           },
         },
@@ -788,7 +929,6 @@ export class AssistantService {
           effect: "read",
           input: emptyInput,
           execute: () => {
-            record("get_handover");
             return Promise.resolve({
               referenceId: request.workingContext!.workdayHandover
                 ? `WorkdayHandover/${request.workingContext!.workdayHandover.shiftKey}`
@@ -809,15 +949,14 @@ export class AssistantService {
           effect: "read",
           input: emptyInput,
           execute: () => {
-            record("get_team_inbox");
-            const communications = snapshot.communications
-              .filter(
-                (item) =>
-                  (!patient ||
-                    (item.patientId === patient.id &&
-                      item.encounterId === patient.encounterId)) &&
-                  item.state !== "closed",
-              )
+            const allCommunications = snapshot.communications.filter(
+              (item) =>
+                (!patient ||
+                  (item.patientId === patient.id &&
+                    item.encounterId === patient.encounterId)) &&
+                item.state !== "closed",
+            );
+            const communications = allCommunications
               .slice(0, 20)
               .map(
                 ({
@@ -839,8 +978,8 @@ export class AssistantService {
             return Promise.resolve({
               referenceId: `Communication/search/${snapshot.serverTime}`,
               freshness: snapshot.serverTime,
-              complete: true,
-              data: { communications },
+              complete: allCommunications.length <= communications.length,
+              data: { communications, totalCount: allCommunications.length },
             });
           },
         },
@@ -852,7 +991,6 @@ export class AssistantService {
           effect: "read",
           input: emptyInput,
           execute: () => {
-            record("get_sync_status");
             if (patient)
               return Promise.resolve({
                 referenceId: `ProviderSync/patient-scope-unavailable/${patient.id}`,
@@ -866,9 +1004,10 @@ export class AssistantService {
             return Promise.resolve({
               referenceId: `ProviderSync/${snapshot.serverTime}`,
               freshness: snapshot.serverTime,
-              complete: true,
+              complete: snapshot.outbox.length <= 20,
               data: {
                 summary: snapshot.syncSummary,
+                totalCount: snapshot.outbox.length,
                 deliveries: snapshot.outbox
                   .slice(0, 20)
                   .map(
@@ -901,7 +1040,6 @@ export class AssistantService {
           input: workflowSkillInput,
           execute: (input) => {
             const { skillId } = workflowSkillInput.parse(input);
-            record("load_workflow_skill");
             const skill = loadApprovedWorkflowSkill(runtimeSitePack, {
               roleProfileId: request.workingContext!.roleProfileId!,
               workflowId: request.workingContext!.workflowId!,
@@ -918,40 +1056,13 @@ export class AssistantService {
         ...(canPrepareCareUpdate
           ? [
               {
-                name: "prepare_care_update",
-                version: 1,
+                name: "prepare_clinical_draft",
+                version: 2,
                 description:
-                  "Prepare, but never execute, the minimum faithful review for a naturally worded care report or requested workflow change. The server binds the exact current employee message, patient, encounter, role and conversation; input must be empty. Use this only when the employee is reporting work or asking to prepare a change, then return draft-ready with the exact referenceId.",
+                  "Prepare, but never execute, a typed review from the employee's natural report. Pass the complete AssistantProposal as proposalJson. Preserve negation, uncertainty, occurrence time, partial/deferred work and corrections. Include only explicitly requested actions. The server independently binds sources, recipient authority and safety fields.",
                 effect: "draft" as const,
-                input: emptyInput,
-                execute: async (
-                  _input: unknown,
-                  _context: unknown,
-                  signal: AbortSignal,
-                ) => {
-                  record("prepare_care_update");
-                  const prepared = await this.models.planCareUpdate(
-                    prompt,
-                    modelContext,
-                    signal,
-                  );
-                  agentPreparedCarePlan = prepared;
-                  const referenceId = prepared.plan
-                    ? `DraftPreparation/care-update/${prepared.plan.requestId}`
-                    : `DraftPreparation/care-update/unresolved-${randomUUID()}`;
-                  agentPreparedCareReferenceId = referenceId;
-                  return {
-                    referenceId,
-                    complete: prepared.plan !== null,
-                    data: {
-                      kind: "care-update-review",
-                      complete: prepared.plan !== null,
-                      actionCount: prepared.plan?.actions.length ?? 0,
-                      ambiguityCount: prepared.plan?.ambiguities.length ?? 0,
-                      degraded: prepared.degraded,
-                    },
-                  };
-                },
+                input: draftInput,
+                execute: prepareDraft,
               },
             ]
           : []),
@@ -1013,31 +1124,26 @@ export class AssistantService {
           "get_team_inbox",
           ...(!patient ? ["get_sync_status"] : []),
           "load_workflow_skill",
-          ...(canPrepareCareUpdate ? ["prepare_care_update"] : []),
+          ...(canPrepareCareUpdate ? ["prepare_clinical_draft"] : []),
         ],
         ...(request.signal ? { signal: request.signal } : {}),
       });
-      const routeByTool: Partial<
-        Record<string, IntentClassification["intent"]>
-      > = {
-        get_patient_summary: "patient-summary",
-        get_open_tasks: "open-tasks",
-        get_latest_vitals: "latest-vitals",
-        get_handover: "handover",
-        get_team_inbox: "team-inbox",
-        get_sync_status: "sync-status",
-        prepare_care_update: "care-update",
-      };
-      const selectedIntent = [...selectedTools]
-        .reverse()
-        .map((name) => routeByTool[name])
-        .find((intent): intent is IntentClassification["intent"] =>
-          Boolean(intent),
-        );
-      if (selectedIntent) {
-        agentSelectedIntent = selectedIntent;
-        safeIntent = selectedIntent;
-      }
+      if (
+        agentRun.status === "draft-ready" &&
+        agentPreparedCareReferenceId !== null &&
+        agentRun.draftReferenceId === agentPreparedCareReferenceId
+      )
+        safeIntent = "care-update";
+      else if (
+        [
+          "answer",
+          "clarification-needed",
+          "no-action",
+          "safe-handoff",
+        ].includes(agentRun.status) &&
+        !requiresDedicatedClinicalWorkflow(prompt)
+      )
+        safeIntent = "unknown";
     }
     const classification: IntentClassification = {
       ...classified,
@@ -1088,34 +1194,14 @@ export class AssistantService {
       warnings.push(
         "Der begrenzte Agentenlauf wurde nicht abgeschlossen; angezeigt wird ausschliesslich die sichere deterministische Ansicht.",
       );
-    const groundedAgentLead: Partial<
-      Record<IntentClassification["intent"], string>
-    > = {
-      "patient-summary":
-        "Hier ist die aktuelle Übersicht aus dem bewusst gewählten Patientenkontext.",
-      "open-tasks":
-        "Hier sind die derzeit offenen Arbeiten aus deinem freigegebenen Kontext.",
-      "latest-vitals":
-        "Hier sind die bestätigten Werte; neuere Entwürfe bleiben getrennt sichtbar.",
-      handover:
-        "Hier ist dein aktueller operationaler Übergabe- und Verantwortungsstand.",
-      "team-inbox":
-        "Hier sind die offenen Teamfragen im aktuellen Gesprächskontext.",
-      "sync-status":
-        "Hier ist der technische Zustell- und Abgleichstatus; er sagt nichts über Dienstanwesenheit aus.",
-    };
     const fallbackAgentLead = agentRun
-      ? agentRun.status === "answer" && agentRun.toolCalls > 0
-        ? agentSelectedIntent
-          ? groundedAgentLead[agentSelectedIntent]
-          : null
-        : agentRun.status === "clarification-needed"
-          ? "Ich brauche noch eine kurze Präzisierung, bevor ich den passenden freigegebenen Kontext öffne."
-          : agentRun.status === "no-action"
-            ? "Verstanden. Es wurde keine Aktion vorbereitet oder ausgeführt."
-            : agentRun.status === "safe-handoff"
-              ? "Diese Anfrage braucht den dafür vorgesehenen sicheren Arbeitsablauf."
-              : null
+      ? agentRun.status === "clarification-needed"
+        ? "Ich brauche noch eine kurze Präzisierung, bevor ich den passenden freigegebenen Kontext öffne."
+        : agentRun.status === "no-action"
+          ? "Verstanden. Es wurde keine Aktion vorbereitet oder ausgeführt."
+          : agentRun.status === "safe-handoff"
+            ? "Diese Anfrage braucht den dafür vorgesehenen sicheren Arbeitsablauf."
+            : null
       : null;
     const requirePatient = () => {
       if (!patient)
@@ -1884,29 +1970,30 @@ export class AssistantService {
           ].includes(mentionedRecipients[0]!.role)
             ? mentionedRecipients[0]!
             : null;
-        const revisedPlan = request.workingContext?.previousCarePlan
-          ? reviseAssistantProposal(
-              JSON.parse(request.workingContext.previousCarePlan),
-              prompt,
-              {
-                inputModality: request.inputModality ?? "typed",
-                inputTimestamp: new Date().toISOString(),
-                ...(namedRecipient
-                  ? {
-                      namedRecipient: {
-                        label: namedRecipient.displayName,
-                        role: namedRecipient.role as
-                          | "registered-nurse"
-                          | "physician"
-                          | "pharmacy"
-                          | "physiotherapy"
-                          | "occupational-therapy",
-                      },
-                    }
-                  : {}),
-              },
-            )
-          : null;
+        const revisedPlan =
+          !agentDraftIsAccepted && request.workingContext?.previousCarePlan
+            ? reviseAssistantProposal(
+                JSON.parse(request.workingContext.previousCarePlan),
+                prompt,
+                {
+                  inputModality: request.inputModality ?? "typed",
+                  inputTimestamp: new Date().toISOString(),
+                  ...(namedRecipient
+                    ? {
+                        namedRecipient: {
+                          label: namedRecipient.displayName,
+                          role: namedRecipient.role as
+                            | "registered-nurse"
+                            | "physician"
+                            | "pharmacy"
+                            | "physiotherapy"
+                            | "occupational-therapy",
+                        },
+                      }
+                    : {}),
+                },
+              )
+            : null;
         const unboundPlan = revisedPlan ?? modelPlan.plan;
         const planned = {
           ...modelPlan,
@@ -2136,7 +2223,7 @@ export class AssistantService {
     }
 
     const useGeneratedCoworkerText = Boolean(
-      agentRun && generatedCoworkerTextIsSafe(agentRun, components),
+      agentRun && generatedCoworkerTextIsSafe(agentRun),
     );
     if (useGeneratedCoworkerText && agentRun) {
       if (classification.intent === "unknown")
@@ -2156,7 +2243,19 @@ export class AssistantService {
         warnings.push(
           "Die generierte Erläuterung wurde wegen fehlender oder widersprüchlicher Quellenbindung nicht angezeigt.",
         );
+    } else if (agentRun?.status === "answer" && agentRun.toolCalls > 0) {
+      components.unshift({
+        type: "AssistantText",
+        message:
+          "Die angefragten Daten wurden gelesen, aber die generierte Zusammenfassung war nicht vollständig durch die zitierten Datensätze belegt.",
+      });
+      warnings.push(
+        "Die generierte Erläuterung wurde wegen fehlender oder widersprüchlicher Quellenbindung nicht angezeigt.",
+      );
     }
+
+    const presentation = agentRun ? modelPresentation(agentRun) : null;
+    if (presentation) components.push(presentation);
 
     const validated = validateAssistantComponents(components);
     // Tool results render in one stable, measured order. A model is used for
@@ -2336,8 +2435,11 @@ export class AssistantService {
         return result;
       }
       case "care-update:draft": {
-        const plan = assistantProposalSchema.parse(
-          JSON.parse(intent.payload.plan ?? "null"),
+        validateDurableIntentPayload(intent);
+        const plan = verifyProposalSourceRecords(
+          assistantProposalSchema.parse(
+            JSON.parse(intent.payload.plan ?? "null"),
+          ),
         );
         const voiceTranscriptProvenance = (
           plan.voiceTranscriptProvenance ?? []

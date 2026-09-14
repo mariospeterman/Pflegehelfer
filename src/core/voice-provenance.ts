@@ -28,7 +28,7 @@ export const voiceTranscriptProvenanceSchema = z
     review: z
       .object({
         revision: z.literal(1),
-        transcript: z.string().trim().min(1).max(1200),
+        transcript: z.string().trim().min(1).max(8_000),
         transcriptHash: sha256Schema,
         reviewedAt: z.string().datetime(),
         corrected: z.boolean(),

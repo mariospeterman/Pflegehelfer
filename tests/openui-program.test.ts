@@ -1,7 +1,7 @@
 import { createParser } from "@openuidev/react-lang";
 import { describe, expect, it } from "vitest";
 import { ModelGateway } from "../src/ai/model-gateway.js";
-import { AssistantService } from "../src/core/assistant-service.js";
+import { AssistantService, toOpenUi } from "../src/core/assistant-service.js";
 import { PflegehelferService } from "../src/core/service.js";
 import { clinicalAssistantLibrary } from "../src/pwa/assistant/clinical-library.js";
 
@@ -47,6 +47,32 @@ describe("constrained OpenUI program", () => {
     expect(parsed.meta.errors).toEqual([
       expect.objectContaining({ code: "unknown-component" }),
     ]);
+  });
+
+  it("round-trips the optional evidence table and chart primitives", () => {
+    const program = toOpenUi([
+      {
+        type: "EvidenceTable",
+        title: "Offene Aufgaben",
+        columns: ["Zimmer", "Aufgabe"],
+        rows: [["207", "Mobilisation"]],
+        complete: true,
+        sourceLabel: "Task/search/v4",
+      },
+      {
+        type: "EvidenceChart",
+        title: "Pulsverlauf",
+        points: [{ x: "08:00", y: 72, label: "Puls" }],
+        complete: false,
+        sourceLabel: "Observation/search/v7 · Ausschnitt",
+      },
+    ]);
+    const parsed = createParser(clinicalAssistantLibrary.toJSONSchema()).parse(
+      program,
+    );
+    expect(parsed.meta.errors).toEqual([]);
+    expect(parsed.meta.unresolved).toEqual([]);
+    expect(parsed.root?.typeName).toBe("ClinicalStack");
   });
 
   it("round-trips the structured physician team inbox", async () => {

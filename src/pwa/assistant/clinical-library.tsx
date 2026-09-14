@@ -767,6 +767,101 @@ const SyncSummaryCard = defineComponent({
   ),
 });
 
+const EvidenceTable = defineComponent({
+  name: "EvidenceTable",
+  description: "Optional compact comparison of exact authorized result rows.",
+  props: z
+    .object({
+      title: z.string().max(120),
+      columns: z.array(z.string().max(80)).min(1).max(6),
+      rows: z.array(z.array(z.string().max(240)).min(1).max(6)).max(20),
+      complete: z.boolean(),
+      source: z.string().max(240),
+    })
+    .strict(),
+  component: ({ props: { title, columns, rows, complete, source } }) => (
+    <figure className="assistant-card evidence-view">
+      <figcaption>
+        <strong>{title}</strong>
+        {!complete && <span>Ausschnitt</span>}
+      </figcaption>
+      <div className="evidence-table-scroll">
+        <table>
+          <thead>
+            <tr>
+              {columns.map((column) => (
+                <th key={column}>{column}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, rowIndex) => (
+              <tr key={rowIndex}>
+                {columns.map((column, columnIndex) => (
+                  <td key={`${column}-${columnIndex}`}>
+                    {row[columnIndex] ?? "—"}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <footer>{source}</footer>
+    </figure>
+  ),
+});
+
+const EvidenceChart = defineComponent({
+  name: "EvidenceChart",
+  description:
+    "Optional accessible plot of an exact timestamped numeric series.",
+  props: z
+    .object({
+      title: z.string().max(120),
+      points: z
+        .array(
+          z
+            .object({
+              x: z.string().max(120),
+              y: z.number(),
+              label: z.string().max(120),
+            })
+            .strict(),
+        )
+        .max(20),
+      complete: z.boolean(),
+      source: z.string().max(240),
+    })
+    .strict(),
+  component: ({ props: { title, points, complete, source } }) => {
+    const maximum = Math.max(1, ...points.map(({ y }) => Math.abs(y)));
+    return (
+      <figure className="assistant-card evidence-view">
+        <figcaption>
+          <strong>{title}</strong>
+          {!complete && <span>Ausschnitt</span>}
+        </figcaption>
+        <ol className="evidence-bars" aria-label={title}>
+          {points.map((point, index) => (
+            <li key={`${point.x}-${index}`}>
+              <span>{point.label}</span>
+              <i
+                style={{
+                  width: `${Math.max(2, (Math.abs(point.y) / maximum) * 100)}%`,
+                }}
+              />
+              <strong>{point.y}</strong>
+              <small>{point.x}</small>
+            </li>
+          ))}
+        </ol>
+        <footer>{source}</footer>
+      </figure>
+    );
+  },
+});
+
 const ClinicalStack = defineComponent({
   name: "ClinicalStack",
   description: "Bounded vertical group of approved clinical components.",
@@ -784,6 +879,8 @@ const ClinicalStack = defineComponent({
             HandoverDeltaCard.ref,
             TeamInboxCard.ref,
             SyncSummaryCard.ref,
+            EvidenceTable.ref,
+            EvidenceChart.ref,
             MedicationReadOnlyCard.ref,
             PolicyAnswerCard.ref,
             UnknownStateCard.ref,
@@ -816,6 +913,8 @@ export const clinicalAssistantLibrary = createLibrary({
     HandoverDeltaCard,
     TeamInboxCard,
     SyncSummaryCard,
+    EvidenceTable,
+    EvidenceChart,
     MedicationReadOnlyCard,
     PolicyAnswerCard,
     UnknownStateCard,

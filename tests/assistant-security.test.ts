@@ -712,6 +712,31 @@ describe("assistant action gateway", () => {
     expect(clinical.snapshot("u-nurse").notes).toHaveLength(before + 1);
   });
 
+  it("rejects a tampered persisted clinical proposal before authority is reissued", async () => {
+    const { assistant } = fixture();
+    const response = await assistant.query("u-nurse", {
+      prompt: "Luca mobilisiert.",
+      patientId: "p-luca",
+      purpose: "direct-care",
+    });
+    const record = assistant.durableIntentRecord(
+      draftAction(response).intentToken,
+    );
+    if (!record) throw new Error("Expected durable authority record");
+    const tampered = structuredClone(record);
+    const plan = JSON.parse(tampered.payload.plan ?? "null") as {
+      actions: Array<{ type: string; structuredText?: string }>;
+    };
+    const note = plan.actions.find(({ type }) => type === "note-proposal");
+    if (!note) throw new Error("Expected note proposal");
+    note.structuredText = "Insulin 20 IE verabreicht.";
+    tampered.payload.plan = JSON.stringify(plan);
+
+    expect(() => assistant.reissueDurableIntent("u-nurse", tampered)).toThrow(
+      /Fachworkflow|CLINICAL_PLAN/,
+    );
+  });
+
   it("rejects authoritative patient-version drift after issue", async () => {
     const { assistant, clinical } = fixture();
     const response = await assistant.query("u-nurse", {

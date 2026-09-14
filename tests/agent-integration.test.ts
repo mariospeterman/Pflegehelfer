@@ -51,7 +51,7 @@ describe("runtime-guided assistant agent", () => {
             kind: "answer",
             toolName: null,
             input: null,
-            text: "Deine Übergabe ist bereit; zwei Punkte sind noch offen.",
+            text: "Offen: 2.",
             draftReferenceId: null,
             sourceReferenceIds: [
               `RuntimeInstruction/nursing-early/${runtimeSitePack.instructions["nursing-early"]!.sha256}`,
@@ -131,10 +131,8 @@ describe("runtime-guided assistant agent", () => {
     expect(lead?.type).toBe("AssistantText");
     if (lead?.type !== "AssistantText")
       throw new Error("Missing grounded lead");
-    expect(lead.message).toContain("zwei Punkte sind noch offen");
-    expect(response.components).toContainEqual(
-      expect.objectContaining({ type: "HandoverChecklist", openCount: 2 }),
-    );
+    expect(lead.message).toContain("Offen: 2");
+    expect(response.components).toHaveLength(1);
     const agentSystemText = (
       bodies[0]!.input as Array<{
         role: string;
@@ -295,26 +293,27 @@ describe("runtime-guided assistant agent", () => {
         const format = (body.text as { format?: { name?: string } } | undefined)
           ?.format?.name;
         if (format) seenFormats.push(format);
+        const latestToolReference = JSON.stringify(body).match(
+          /DraftPreparation\/care-update\/request-[a-f0-9]+/,
+        )?.[0];
         const output =
-          format === "assistant_proposal_v3"
-            ? fixturePlan
-            : agentTurn++ === 0
-              ? {
-                  kind: "tool-call",
-                  toolName: "prepare_care_update",
-                  input: {},
-                  text: null,
-                  draftReferenceId: null,
-                  sourceReferenceIds: [],
-                }
-              : {
-                  kind: "draft-ready",
-                  toolName: null,
-                  input: null,
-                  text: "Ich habe deine Aussage als prüfbaren Entwurf vorbereitet.",
-                  draftReferenceId: `DraftPreparation/care-update/${fixturePlan.requestId}`,
-                  sourceReferenceIds: [],
-                };
+          agentTurn++ === 0
+            ? {
+                kind: "tool-call",
+                toolName: "prepare_clinical_draft",
+                input: { proposalJson: JSON.stringify(fixturePlan) },
+                text: null,
+                draftReferenceId: null,
+                sourceReferenceIds: [],
+              }
+            : {
+                kind: "draft-ready",
+                toolName: null,
+                input: null,
+                text: "Ich habe deine Aussage als prüfbaren Entwurf vorbereitet.",
+                draftReferenceId: latestToolReference,
+                sourceReferenceIds: [],
+              };
         return Promise.resolve(
           new Response(
             JSON.stringify({ output_text: JSON.stringify(output) }),
@@ -370,7 +369,7 @@ describe("runtime-guided assistant agent", () => {
     expect(response.runtime.agent?.trace).toContainEqual(
       expect.objectContaining({
         kind: "tool",
-        tool: "prepare_care_update",
+        tool: "prepare_clinical_draft",
         status: "ok",
       }),
     );
@@ -384,7 +383,6 @@ describe("runtime-guided assistant agent", () => {
     expect(draft.preview).toContain(prompt);
     expect(seenFormats).toEqual([
       "pflegehelfer_agent_decision_v1",
-      "assistant_proposal_v3",
       "pflegehelfer_agent_decision_v1",
     ]);
     expect(clinical.snapshot("u-nurse").notes).toHaveLength(initialNotes);

@@ -591,7 +591,7 @@ function WorkdayCard({
                 <textarea
                   value={evidence}
                   rows={2}
-                  maxLength={1200}
+                  maxLength={8000}
                   placeholder="Beobachtung oder Durchführung festhalten…"
                   onChange={(event) => setEvidence(event.target.value)}
                 />
@@ -2014,7 +2014,7 @@ export function AssistantSurface({
             <textarea
               aria-label="Nachricht an Pflegehelfer"
               value={prompt}
-              maxLength={1200}
+              maxLength={8000}
               rows={1}
               placeholder={
                 patient

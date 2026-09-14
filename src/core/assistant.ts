@@ -160,6 +160,35 @@ export const assistantComponentSchema = z.discriminatedUnion("type", [
     .strict(),
   z
     .object({
+      type: z.literal("EvidenceTable"),
+      title: z.string().trim().min(1).max(120),
+      columns: z.array(z.string().trim().min(1).max(80)).min(1).max(6),
+      rows: z.array(z.array(z.string().trim().max(240)).min(1).max(6)).max(20),
+      complete: z.boolean(),
+      sourceLabel: z.string().trim().min(1).max(180),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("EvidenceChart"),
+      title: z.string().trim().min(1).max(120),
+      points: z
+        .array(
+          z
+            .object({
+              x: z.string().trim().min(1).max(120),
+              y: z.number().finite(),
+              label: z.string().trim().min(1).max(120),
+            })
+            .strict(),
+        )
+        .max(20),
+      complete: z.boolean(),
+      sourceLabel: z.string().trim().min(1).max(180),
+    })
+    .strict(),
+  z
+    .object({
       type: z.literal("DraftAction"),
       kind: z.enum([
         "nursing-note",

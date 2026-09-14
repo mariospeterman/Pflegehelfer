@@ -771,12 +771,13 @@ export class InMemoryOperationalStore implements OperationalStore {
     threadId: string,
   ): Promise<string | null> {
     const candidates = [...this.authorities.values()].filter(
-      ({ record, consumed }) =>
+      ({ record, consumed, threadId: authorityThreadId }) =>
         !consumed &&
         record.actorId === actorId &&
         record.patientId === patientId &&
         record.encounterId === encounterId &&
         record.command === "care-update:draft" &&
+        authorityThreadId === threadId &&
         this.memoryThreads.get(threadId)?.actorId === actorId,
     );
     return Promise.resolve(candidates.at(-1)?.record.payload.plan ?? null);

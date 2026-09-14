@@ -199,7 +199,7 @@ const reconciliationBody = z.object({
 });
 const assistantQueryBody = z
   .object({
-    prompt: z.string().trim().min(2).max(1200),
+    prompt: z.string().trim().min(2).max(8_000),
     patientId: z.string().nullable(),
     purpose: purposeSchema.optional(),
     inputModality: z.enum(["typed", "voice"]).default("typed"),

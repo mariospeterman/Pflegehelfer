@@ -48,6 +48,57 @@ export interface AgentToolResult {
   complete: boolean;
 }
 
+export interface AgentEvidenceRecord extends AgentToolResult {
+  toolName: string;
+}
+
+export interface AgentEvidenceClaim {
+  referenceId: string;
+  /** Dot-separated path inside the referenced tool result's data object. */
+  path: string;
+  value: string | number | boolean | null;
+}
+
+export type AgentPresentationSpec =
+  | { kind: "text" }
+  | {
+      kind: "table";
+      sourceReferenceId: string;
+      title: string;
+      collectionPath: string;
+      columns: Array<{ path: string; label: string }>;
+    }
+  | {
+      kind: "chart";
+      sourceReferenceId: string;
+      title: string;
+      collectionPath: string;
+      xPath: string;
+      yPath: string;
+      labelPath: string;
+    };
+
+/** The exact non-executable presentation primitives registered by the PWA. */
+export const agentPresentationCatalog = [
+  {
+    kind: "text",
+    component: "AssistantMessage",
+    description: "Use for a sufficient short natural answer; no card required.",
+  },
+  {
+    kind: "table",
+    component: "EvidenceTable",
+    description:
+      "Use for comparing several rows from one cited authorized result.",
+  },
+  {
+    kind: "chart",
+    component: "EvidenceChart",
+    description:
+      "Use only for a timestamped numeric series from one cited authorized result.",
+  },
+] as const;
+
 export interface AgentTool<Schema extends z.ZodType = z.ZodType> {
   name: string;
   version: number;
@@ -80,12 +131,16 @@ export type AgentModelDecision =
       text: string;
       /** Exact references emitted by successful tools during this run. */
       sourceReferenceIds?: string[];
+      evidenceClaims?: AgentEvidenceClaim[];
+      presentation?: AgentPresentationSpec;
     }
   | {
       kind: "draft-ready";
       text: string;
       draftReferenceId: string;
       sourceReferenceIds?: string[];
+      evidenceClaims?: AgentEvidenceClaim[];
+      presentation?: AgentPresentationSpec;
     };
 
 export interface AgentModelTurn {
@@ -129,6 +184,10 @@ export interface AgentRunResult {
   trace: AgentTraceEvent[];
   toolCalls: number;
   sourceReferenceIds?: string[];
+  evidenceClaims?: AgentEvidenceClaim[];
+  presentation?: AgentPresentationSpec;
+  /** Immutable successful results from this run; independent of rendered UI. */
+  evidenceRecords?: AgentEvidenceRecord[];
 }
 
 export class AgentToolError extends Error {
@@ -204,6 +263,23 @@ function hashInput(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
+function evidenceValueAt(data: unknown, path: string): unknown {
+  if (!/^[A-Za-z][A-Za-z0-9_]*(?:\.\d+|\.[A-Za-z][A-Za-z0-9_]*)*$/.test(path))
+    return undefined;
+  return path.split(".").reduce<unknown>((current, segment) => {
+    if (Array.isArray(current) && /^\d+$/.test(segment))
+      return current[Number(segment)];
+    if (
+      current !== null &&
+      typeof current === "object" &&
+      !Array.isArray(current) &&
+      Object.prototype.hasOwnProperty.call(current, segment)
+    )
+      return (current as Record<string, unknown>)[segment];
+    return undefined;
+  }, data);
+}
+
 function terminalStatus(
   decision: Exclude<AgentModelDecision, { kind: "tool-call" }>,
 ): AgentTerminalStatus {
@@ -257,11 +333,12 @@ export class BoundedAgentRuntime {
           role: turn.role,
           content: turn.text.slice(0, 400),
         })),
-      { role: "user", content: input.request.slice(0, 4_000) },
+      { role: "user", content: input.request.slice(0, 8_000) },
     ];
     const calls = new Map<string, number>();
     const draftReferences = new Set<string>();
     const toolReferences = new Set<string>();
+    const evidenceRecords = new Map<string, AgentEvidenceRecord>();
     const controller = new AbortController();
     const timeout = setTimeout(
       () => controller.abort(new Error("AGENT_DEADLINE_EXCEEDED")),
@@ -320,10 +397,26 @@ export class BoundedAgentRuntime {
           const inventedReference = citedReferences.find(
             (referenceId) => !toolReferences.has(referenceId),
           );
+          const invalidClaim = (decision.evidenceClaims ?? []).find((claim) => {
+            const record = evidenceRecords.get(claim.referenceId);
+            return (
+              !record ||
+              !citedReferences.includes(claim.referenceId) ||
+              !Object.is(evidenceValueAt(record.data, claim.path), claim.value)
+            );
+          });
+          const presentationReference =
+            decision.presentation && decision.presentation.kind !== "text"
+              ? decision.presentation.sourceReferenceId
+              : null;
           if (
             (decision.kind === "draft-ready" &&
               !draftReferences.has(decision.draftReferenceId)) ||
             inventedReference !== undefined ||
+            invalidClaim !== undefined ||
+            (presentationReference !== null &&
+              (!toolReferences.has(presentationReference) ||
+                !citedReferences.includes(presentationReference))) ||
             (decision.kind === "answer" &&
               toolCalls > 0 &&
               citedReferences.length === 0)
@@ -359,6 +452,15 @@ export class BoundedAgentRuntime {
             ...(citedReferences.length > 0
               ? { sourceReferenceIds: citedReferences }
               : {}),
+            ...((decision.evidenceClaims?.length ?? 0) > 0
+              ? { evidenceClaims: decision.evidenceClaims }
+              : {}),
+            ...(decision.presentation
+              ? { presentation: decision.presentation }
+              : {}),
+            evidenceRecords: [...evidenceRecords.values()].map((record) =>
+              structuredClone(record),
+            ),
             trace,
             toolCalls,
           };
@@ -425,6 +527,10 @@ export class BoundedAgentRuntime {
           )
             draftReferences.add(result.referenceId);
           toolReferences.add(result.referenceId);
+          evidenceRecords.set(result.referenceId, {
+            ...structuredClone(result),
+            toolName: decision.toolName,
+          });
           trace.push({
             sequence: trace.length + 1,
             kind: "tool",

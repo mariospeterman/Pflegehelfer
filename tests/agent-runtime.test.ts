@@ -219,6 +219,87 @@ describe("bounded agent runtime", () => {
     }
   });
 
+  it("keeps evidence independent of presentation and validates optional table/chart references", async () => {
+    for (const presentation of [
+      { kind: "text" as const },
+      {
+        kind: "table" as const,
+        sourceReferenceId: "questions:v4",
+        title: "Offene Fragen",
+        collectionPath: "items",
+        columns: [{ path: "label", label: "Frage" }],
+      },
+      {
+        kind: "chart" as const,
+        sourceReferenceId: "questions:v4",
+        title: "Verlauf",
+        collectionPath: "items",
+        xPath: "time",
+        yPath: "value",
+        labelPath: "label",
+      },
+    ]) {
+      const runtime = new BoundedAgentRuntime(
+        fixtureModel([
+          { kind: "tool-call", toolName: "get_open_questions", input: {} },
+          {
+            kind: "answer",
+            text: "Aktuell: 1.",
+            sourceReferenceIds: ["questions:v4"],
+            evidenceClaims: [
+              { referenceId: "questions:v4", path: "pending", value: 1 },
+            ],
+            presentation,
+          },
+        ]),
+        registry(),
+      );
+      const result = await runtime.run({
+        request: "Zeige die aktuelle Sicht.",
+        context,
+        allowedTools: ["get_open_questions"],
+      });
+      expect(result).toMatchObject({
+        status: "answer",
+        presentation,
+        evidenceClaims: [
+          { referenceId: "questions:v4", path: "pending", value: 1 },
+        ],
+      });
+      expect(result.evidenceRecords).toEqual([
+        expect.objectContaining({
+          toolName: "get_open_questions",
+          referenceId: "questions:v4",
+          data: { pending: 1 },
+        }),
+      ]);
+    }
+
+    const rejected = await new BoundedAgentRuntime(
+      fixtureModel([
+        { kind: "tool-call", toolName: "get_open_questions", input: {} },
+        {
+          kind: "answer",
+          text: "Aktuell: 1.",
+          sourceReferenceIds: ["questions:v4"],
+          presentation: {
+            kind: "table",
+            sourceReferenceId: "invented:v1",
+            title: "Erfunden",
+            collectionPath: "items",
+            columns: [{ path: "label", label: "Frage" }],
+          },
+        },
+      ]),
+      registry(),
+    ).run({
+      request: "Zeige die aktuelle Sicht.",
+      context,
+      allowedTools: ["get_open_questions"],
+    });
+    expect(rejected.status).toBe("safe-handoff");
+  });
+
   it("stops repeated identical calls and enforces the call budget", async () => {
     const runtime = new BoundedAgentRuntime(
       fixtureModel([

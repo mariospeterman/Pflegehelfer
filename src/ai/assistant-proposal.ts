@@ -10,7 +10,7 @@ const sourceSpanSchema = z
   .object({
     start: z.number().int().min(0).max(8000),
     end: z.number().int().min(1).max(8000),
-    quote: z.string().min(1).max(1200),
+    quote: z.string().min(1).max(8000),
   })
   .strict();
 
@@ -53,7 +53,8 @@ export const clinicalActionSchema = z.discriminatedUnion("type", [
     .object({
       ...common,
       type: z.literal("note-proposal"),
-      structuredText: z.string().trim().min(3).max(1200),
+      structuredText: z.string().trim().min(3).max(8000),
+      wording: z.enum(["verbatim", "professional-draft"]).default("verbatim"),
       reportingStatus: reportingStatusSchema,
       completionStatus: z.enum([
         "completed",
@@ -416,6 +417,8 @@ export function verifyProposalSourceRecords(input: unknown): AssistantProposal {
   for (const item of referenced) {
     if (!item.sourceRecordIds?.length)
       throw new Error("CLINICAL_PLAN_SOURCE_RECORD_MISSING");
+    if (item.sourceRecordIds.some((id) => !records.has(id)))
+      throw new Error("CLINICAL_PLAN_SOURCE_RECORD_UNKNOWN");
     const matches = item.sourceRecordIds.some((id) => {
       const record = records.get(id);
       return (
@@ -426,14 +429,40 @@ export function verifyProposalSourceRecords(input: unknown): AssistantProposal {
     });
     if (!matches) throw new Error("CLINICAL_PLAN_SOURCE_RECORD_SPAN_MISMATCH");
   }
-  for (const action of plan.actions)
+  for (const action of plan.actions) {
     if (
-      action.type === "note-proposal" &&
-      action.structuredText !== action.sourceSpan.quote &&
-      ((action.sourceRecordIds?.length ?? 0) < 2 ||
-        plan.corrections.length === 0)
+      action.type !== "note-proposal" ||
+      action.structuredText === action.sourceSpan.quote
     )
-      throw new Error("CLINICAL_PLAN_REWRITTEN_NOTE_WITHOUT_PROVENANCE");
+      continue;
+    if (action.wording !== "professional-draft")
+      throw new Error("CLINICAL_PLAN_REWRITTEN_NOTE_NOT_DECLARED");
+    const sourceText = (action.sourceRecordIds ?? [])
+      .map((id) => records.get(id)!.text)
+      .join("\n");
+    const proposedNumbers =
+      action.structuredText.match(/\d+(?:[.,/]\d+)*/g) ?? [];
+    if (proposedNumbers.some((value) => !sourceText.includes(value)))
+      throw new Error("CLINICAL_PLAN_REWRITTEN_NOTE_NUMBER_UNGROUNDED");
+    for (const marker of [
+      "insulin",
+      "marcumar",
+      "morphin",
+      "heparin",
+      "allerg",
+      "diagnos",
+      "blutdruck",
+      "puls",
+      "temperatur",
+      "sättigung",
+      "gewicht",
+    ])
+      if (
+        action.structuredText.toLocaleLowerCase("de-CH").includes(marker) &&
+        !sourceText.toLocaleLowerCase("de-CH").includes(marker)
+      )
+        throw new Error("CLINICAL_PLAN_REWRITTEN_NOTE_CONTENT_UNGROUNDED");
+  }
   return plan;
 }
 
@@ -991,7 +1020,7 @@ export function deterministicAssistantProposal(
   prompt: string,
   options: ClinicalCompilerOptions = {},
 ): AssistantProposal | null {
-  const source = prompt.slice(0, 1200).trim();
+  const source = prompt.slice(0, 8_000).trim();
   if (source.length < 3) return null;
   const inputTimestamp = options.inputTimestamp ?? new Date().toISOString();
   const inputSource = proposalSourceRecord(
@@ -2039,6 +2068,7 @@ export function deterministicAssistantProposal(
     addAction({
       type: "note-proposal",
       structuredText: source,
+      wording: "verbatim",
       reportingStatus: status,
       completionStatus: notPerformed
         ? "not-performed"
@@ -2142,7 +2172,7 @@ export function reviseAssistantProposal(
   } = {},
 ): AssistantProposal | null {
   const previous = assistantProposalSchema.safeParse(previousInput);
-  const source = prompt.slice(0, 1200).trim();
+  const source = prompt.slice(0, 8_000).trim();
   const isRevision =
     /\b(?:korrektur|stattdessen|eher|nur|doch|noch\s+nichts)\b/i.test(source);
   if (!previous.success || !isRevision)
@@ -2245,6 +2275,7 @@ export function reviseAssistantProposal(
           ),
           `${priorFluid.certainty === "uncertain" ? "etwa " : ""}${nextValue} ml`,
         );
+        note.wording = "professional-draft";
         note.sourceRecordIds = [
           ...(note.sourceRecordIds ?? []),
           currentSource.id,
@@ -2652,6 +2683,238 @@ function validateModelAction(
   }
 }
 
+export interface AgentProposalVerificationOptions {
+  inputTimestamp: string;
+  inputModality: "typed" | "voice";
+  previous?: AssistantProposal | null;
+  allowedRecipients?: Array<{
+    label: string;
+    role:
+      | "registered-nurse"
+      | "physician"
+      | "pharmacy"
+      | "physiotherapy"
+      | "occupational-therapy";
+  }>;
+}
+
+function numericTokens(value: string): string[] {
+  return value.match(/\d+(?:[.,/]\d+)*/g) ?? [];
+}
+
+/**
+ * Validates a proposal produced directly by the bounded agent's typed draft
+ * tool. Unlike the legacy compiler comparison this does not require stock
+ * German wording. It binds every selector to server-captured source records,
+ * re-derives safety-sensitive fields and leaves final authority to review.
+ */
+export function verifyAgentProposal(
+  currentInput: string,
+  input: unknown,
+  options: AgentProposalVerificationOptions,
+): AssistantProposal {
+  const candidate = assistantProposalSchema.parse(input);
+  const previous = options.previous
+    ? verifyProposalSourceRecords(options.previous)
+    : null;
+  const currentSource = proposalSourceRecord(
+    currentInput,
+    options.inputTimestamp,
+    options.inputModality,
+  );
+  const records = new Map(
+    [...(previous?.sourceRecords ?? []), currentSource].map((record) => [
+      record.id,
+      record,
+    ]),
+  );
+  const plan = structuredClone(candidate);
+  plan.sourceRecords = [...records.values()].slice(-20);
+  plan.inputTimestamp = currentSource.capturedAt;
+  plan.inputModality = options.inputModality;
+
+  const sourcedItems: Array<{
+    sourceSpan: { start: number; end: number; quote: string };
+    sourceRecordIds?: string[] | undefined;
+  }> = [
+    ...plan.understoodFacts,
+    ...plan.workPerformed,
+    ...plan.observations,
+    ...plan.taskChanges,
+    ...plan.communications,
+    ...plan.workflowActions,
+    ...plan.evidence.filter(
+      (
+        item,
+      ): item is typeof item & {
+        sourceSpan: NonNullable<typeof item.sourceSpan>;
+      } => item.sourceSpan !== null,
+    ),
+    ...plan.actions,
+    ...plan.corrections,
+  ];
+  for (const item of sourcedItems) {
+    const selected = (item.sourceRecordIds ?? [])
+      .map((id) => records.get(id))
+      .filter((record): record is NonNullable<typeof record> =>
+        Boolean(record),
+      );
+    const exact = [...records.values()].filter(
+      (record) =>
+        item.sourceSpan.end > item.sourceSpan.start &&
+        record.text.slice(item.sourceSpan.start, item.sourceSpan.end) ===
+          item.sourceSpan.quote,
+    );
+    if (exact.length === 0)
+      throw new Error("CLINICAL_PLAN_SOURCE_SPAN_MISMATCH");
+    const retained =
+      "structuredText" in item &&
+      (item as Extract<ExecutableAssistantAction, { type: "note-proposal" }>)
+        .wording === "professional-draft"
+        ? [...selected, ...exact]
+        : exact;
+    item.sourceRecordIds = retained
+      .map((record) => record.id)
+      .filter((id, index, values) => values.indexOf(id) === index)
+      .slice(0, 8);
+  }
+
+  for (const action of plan.actions) {
+    if (!action.requestedByUser)
+      throw new Error("CLINICAL_PLAN_ACTION_NOT_REQUESTED");
+    const grounded = action.sourceSpan.quote;
+    const primarySource = (action.sourceRecordIds ?? [])
+      .map((id) => records.get(id))
+      .find(
+        (record) =>
+          record &&
+          record.text.slice(action.sourceSpan.start, action.sourceSpan.end) ===
+            grounded,
+      );
+    if (!primarySource)
+      throw new Error("CLINICAL_PLAN_ACTION_SOURCE_NOT_RESOLVED");
+    if (hasLocalNegation(primarySource.text, action.sourceSpan.start, grounded))
+      throw new Error("CLINICAL_PLAN_NEGATED_ACTION");
+    if (
+      action.type !== "note-proposal" &&
+      requiresDedicatedClinicalWorkflow(grounded)
+    )
+      throw new Error("CLINICAL_PLAN_DEDICATED_WORKFLOW_REQUIRED");
+    if (action.type === "note-proposal") {
+      const expectedStatus = reportingStatus(
+        semanticContextAt(primarySource.text, action.sourceSpan.start),
+      );
+      if (action.reportingStatus !== expectedStatus)
+        throw new Error("CLINICAL_PLAN_REPORTING_STATUS_MISMATCH");
+      if (
+        action.completionStatus === "completed" &&
+        /\b(?:teilweise|zum\s+teil|nicht|keine?)\b/i.test(grounded)
+      )
+        throw new Error("CLINICAL_PLAN_COMPLETION_CONTRADICTION");
+    } else if (action.type === "observation-proposal") {
+      const expectedUnit = {
+        "blood-pressure": "mmHg",
+        temperature: "°C",
+        "oxygen-saturation": "%",
+        pulse: "/min",
+        weight: "kg",
+      }[action.code];
+      if (
+        action.unit !== expectedUnit ||
+        !observationGrounded(grounded, action) ||
+        action.reportingStatus !==
+          reportingStatus(
+            semanticContextAt(primarySource.text, action.sourceSpan.start),
+          )
+      )
+        throw new Error("CLINICAL_PLAN_OBSERVATION_NOT_GROUNDED");
+    } else if (action.type === "communication-proposal") {
+      const source = (action.sourceRecordIds ?? [])
+        .map((id) => records.get(id)!.text)
+        .join("\n");
+      const allowed = (options.allowedRecipients ?? []).filter(
+        (recipient) =>
+          recipient.role === action.recipientRole &&
+          recipient.label
+            .replace(/^Dr\.\s*/i, "")
+            .split(/\s+/)
+            .some((part) =>
+              new RegExp(
+                `(?:^|[^\\p{L}])${part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:$|[^\\p{L}])`,
+                "iu",
+              ).test(source),
+            ),
+      );
+      const physicianQueue =
+        action.recipientRole === "physician" &&
+        /\b(?:arzt|ärztin|ärztlich(?:e|en|er)?\s+dienst)\b/i.test(source);
+      if (allowed.length === 1) action.recipientLabel = allowed[0]!.label;
+      else if (physicianQueue) action.recipientLabel = "Ärztlicher Dienst";
+      else throw new Error("CLINICAL_PLAN_RECIPIENT_NOT_RESOLVED");
+      action.dueInMinutes = dueMinutes(grounded);
+      action.priority = hasAffirmedUrgency(grounded) ? "urgent" : "routine";
+    } else if (action.type === "task-proposal") {
+      action.dueInMinutes = dueMinutes(grounded);
+      action.priority = hasAffirmedUrgency(grounded) ? "urgent" : "routine";
+    } else {
+      if (
+        !/\b(?:pausieren|pause)\b/i.test(grounded) ||
+        !new RegExp(`\\bzimmer\\s+${action.targetRoom}\\b`, "i").test(grounded)
+      )
+        throw new Error("CLINICAL_PLAN_WORKFLOW_NOT_GROUNDED");
+    }
+
+    const sourceText = (action.sourceRecordIds ?? [])
+      .map((id) => records.get(id)!.text)
+      .join("\n");
+    const modelText =
+      action.type === "note-proposal"
+        ? action.structuredText
+        : action.type === "observation-proposal"
+          ? `${action.value}${action.secondaryValue === null ? "" : `/${action.secondaryValue}`} ${action.unit}`
+          : action.type === "communication-proposal"
+            ? `${action.request}\n${action.reason}`
+            : action.type === "task-proposal"
+              ? `${action.title}\n${action.reason}`
+              : action.reason;
+    if (numericTokens(modelText).some((value) => !sourceText.includes(value)))
+      throw new Error("CLINICAL_PLAN_ACTION_NUMBER_UNGROUNDED");
+  }
+
+  const oldActionIds = new Map(
+    plan.actions.map((action, index) => [action.id, `action-${index + 1}`]),
+  );
+  plan.actions.forEach((action, index) => {
+    action.id = `action-${index + 1}`;
+    action.dependencies = action.dependencies.map((id) => {
+      const resolved = oldActionIds.get(id);
+      if (!resolved) throw new Error("CLINICAL_PLAN_DEPENDENCY_NOT_GROUNDED");
+      return resolved;
+    });
+  });
+  plan.observations.forEach((observation) => {
+    observation.actionId = observation.actionId
+      ? (oldActionIds.get(observation.actionId) ?? null)
+      : null;
+  });
+  plan.requestId = `request-${createHash("sha256")
+    .update(
+      JSON.stringify({
+        sources: plan.sourceRecords.map((record) => record.contentHash),
+        actions: plan.actions,
+      }),
+    )
+    .digest("hex")
+    .slice(0, 16)}`;
+  plan.summary =
+    plan.actions.length > 0
+      ? `${plan.actions.length} prüfbare Änderung${plan.actions.length === 1 ? "" : "en"} verstanden`
+      : plan.ambiguities.length > 0
+        ? "Eine kurze Rückfrage ist nötig"
+        : "Verstanden; keine Änderung angefordert";
+  return verifyProposalSourceRecords(plan);
+}
+
 export function verifyModelProposalAgainstDeterministicCompiler(
   prompt: string,
   input: unknown,
@@ -2667,7 +2930,7 @@ export function verifyModelProposalAgainstDeterministicCompiler(
   const verifiedSource =
     compiled?.sourceRecords?.[0] ??
     proposalSourceRecord(
-      prompt.slice(0, 1200).trim(),
+      prompt.slice(0, 8_000).trim(),
       metadata.inputTimestamp,
       metadata.inputModality,
     );
@@ -2748,7 +3011,7 @@ export function verifyModelProposalAgainstDeterministicCompiler(
     )
   )
     throw new Error("CLINICAL_PLAN_DEPENDENCY_NOT_GROUNDED");
-  return {
+  return verifyProposalSourceRecords({
     ...candidate,
     requestId: metadata.requestId,
     inputModality: metadata.inputModality,
@@ -2781,6 +3044,7 @@ export function verifyModelProposalAgainstDeterministicCompiler(
       ...bindCurrentSource(work),
       activity: work.sourceSpan.quote,
     })),
+    observations: candidate.observations.map(bindCurrentSource),
     taskChanges: (compiled?.taskChanges ?? []).map((change) => ({
       ...bindCurrentSource(change),
       taskLabel: change.sourceSpan.quote,
@@ -2811,5 +3075,5 @@ export function verifyModelProposalAgainstDeterministicCompiler(
             "Eine Angabe ist noch nicht eindeutig. Bitte formuliere sie kurz präziser.",
           ]
         : [],
-  };
+  });
 }

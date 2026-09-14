@@ -939,6 +939,20 @@ describe("conversational AssistantProposal compiler regressions", () => {
     ).toBe(false);
   });
 
+  it("preserves a late no-action instruction beyond the former 1200 character boundary", () => {
+    const prompt = `${"Unveränderte Übergabeinformation. ".repeat(45)}Arzt nicht informieren, keine weitere Kontrolle.`;
+    expect(prompt.length).toBeGreaterThan(1200);
+    const plan = deterministicAssistantProposal(prompt);
+    expect(plan?.sourceRecords?.[0]?.text).toBe(prompt);
+    expect(
+      plan?.actions.some(
+        (action) =>
+          action.type === "communication-proposal" ||
+          action.type === "task-proposal",
+      ),
+    ).toBe(false);
+  });
+
   it.each([
     "Keinesfalls in 30 Minuten nachmessen.",
     "Nie in 30 Minuten nachmessen.",
