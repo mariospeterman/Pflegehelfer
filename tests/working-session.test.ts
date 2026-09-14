@@ -207,17 +207,15 @@ describe("versioned working session", () => {
       },
     });
     expect(streamed.statusCode).toBe(200);
-    expect(streamed.headers["content-type"]).toContain("application/x-ndjson");
+    expect(streamed.headers["content-type"]).toContain("text/event-stream");
     const frames = streamed.body
       .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line) as { type: string; response?: unknown });
-    expect(frames[0]).toMatchObject({
-      type: "start",
-      response: { components: [], openUi: "" },
-    });
-    expect(frames.some((frame) => frame.type === "openui")).toBe(true);
-    expect(frames.at(-1)?.type).toBe("complete");
+      .split("\n\n")
+      .filter((line) => line.startsWith("data: ") && line !== "data: [DONE]")
+      .map((line) => JSON.parse(line.slice(6)) as { type: string });
+    expect(frames[0]).toMatchObject({ type: "start" });
+    expect(frames.some((frame) => frame.type === "text-delta")).toBe(true);
+    expect(frames.at(-1)?.type).toBe("finish");
 
     const restored = await app.inject({
       method: "GET",

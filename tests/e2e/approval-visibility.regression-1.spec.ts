@@ -39,7 +39,9 @@ test("the current approval remains above the fixed composer", async ({
   await expect
     .poll(async () => {
       const approvalBox = await approval.boundingBox();
-      const promptBox = await page.locator(".quick-prompts").boundingBox();
+      const promptBox = await page
+        .locator(".clinical-composer-wrap")
+        .boundingBox();
       if (!approvalBox || !promptBox) return false;
       return approvalBox.y + approvalBox.height <= promptBox.y;
     })

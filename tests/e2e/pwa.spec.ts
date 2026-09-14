@@ -74,7 +74,7 @@ test("is one responsive conversation with drawer context and no module dashboard
     await expect(page.locator(".context-panel")).toBeVisible();
     const targets = await page
       .locator(
-        ".context-panel button:visible, .assistant-composer button:visible",
+        ".context-panel button:visible, .clinical-composer button:visible",
       )
       .evaluateAll((elements) =>
         elements.map((element) => element.getBoundingClientRect().height),
@@ -93,9 +93,11 @@ test("streams source-linked GenUI and restores the same thread and patient after
   );
   await ask(page, "Letzte Vitalwerte");
   const response = await stream;
-  expect(response.headers()["content-type"]).toContain("application/x-ndjson");
+  expect(response.headers()["content-type"]).toContain("text/event-stream");
   await expect(page.locator(".vital-trend-card").first()).toBeVisible();
-  await expect(page.locator(".assistant-evidence code").first()).toBeAttached();
+  await expect(page.locator(".vital-trend-card footer").first()).toContainText(
+    /device-gateway|Observation|Messwert|FHIR/i,
+  );
   await page.reload();
   await expect(page.getByLabel("Aktiver Patientenkontext")).toContainText(
     "Anna Beispiel",
@@ -323,6 +325,100 @@ test("offline state is explicit and blocks chat submission", async ({
   await context.setOffline(false);
 });
 
+test("voice capture stays patient-bound and requires explicit transcript review", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "desktop",
+    "Synthetic MediaRecorder behavior is viewport-independent and runs once.",
+  );
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        getUserMedia: () =>
+          Promise.resolve({
+            getTracks: () => [{ stop: () => undefined }],
+          }),
+      },
+    });
+    class TestMediaRecorder {
+      state = "inactive";
+      mimeType = "audio/webm";
+      ondataavailable: ((event: { data: Blob }) => void) | null = null;
+      onstop: (() => void) | null = null;
+      start() {
+        this.state = "recording";
+      }
+      stop() {
+        this.state = "inactive";
+        this.ondataavailable?.({
+          data: new Blob(["synthetic-audio"], { type: this.mimeType }),
+        });
+        this.onstop?.();
+      }
+    }
+    Object.defineProperty(window, "MediaRecorder", {
+      configurable: true,
+      value: TestMediaRecorder,
+    });
+  });
+  await page.route("**/api/v1/ai/status", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        asr: {
+          ready: true,
+          acceptance: "accepted",
+          message: "Synthetischer Audiotest bestätigt.",
+        },
+      }),
+    }),
+  );
+  await page.route("**/api/v1/assistant/transcribe", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        transcription: {
+          text: "Mobilisation später.",
+          criticalEntities: [],
+        },
+        voiceReceiptId: "synthetic-voice-receipt",
+      }),
+    }),
+  );
+  await page.reload();
+  await choosePatient(page);
+
+  await page.getByLabel("Sprachnachricht aufnehmen").click();
+  await expect(page.getByLabel("Aufnahme stoppen")).toBeVisible();
+  await openDrawer(page);
+  await expect(
+    page
+      .locator(".patient-context-list button")
+      .filter({ hasText: "Luca Demo" }),
+  ).toBeDisabled();
+  await expect(page.getByLabel("Aktiver Patientenkontext")).toContainText(
+    "Anna Beispiel",
+  );
+
+  await page.getByLabel("Aufnahme stoppen").click({ force: true });
+  await expect(page.getByText("Sprachtranskript prüfen")).toBeVisible();
+  await page.getByRole("button", { name: "Nachricht senden" }).click();
+  await expect(
+    page.getByText(/Transkript und hervorgehobene kritische Angaben/),
+  ).toBeVisible();
+
+  const reviewed = page.getByLabel("Transkript und Patientenkontext geprüft");
+  await reviewed.check();
+  await page
+    .getByLabel("Nachricht an Pflegehelfer")
+    .fill("Mobilisation erst nach dem Rundgang.");
+  await expect(reviewed).not.toBeChecked();
+});
+
 test("keyboard focus and accessible landmarks remain usable", async ({
   page,
 }) => {
@@ -362,7 +458,7 @@ test("large text and a reduced keyboard viewport keep the composer usable", asyn
     height: 560,
   });
   await expect(composer).toBeVisible();
-  const bounds = await page.locator(".assistant-composer").boundingBox();
+  const bounds = await page.locator(".clinical-composer-wrap").boundingBox();
   expect(bounds).not.toBeNull();
   expect(bounds!.y).toBeGreaterThanOrEqual(0);
   expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(560);

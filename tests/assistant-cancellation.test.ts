@@ -182,7 +182,7 @@ describe("assistant request cancellation", () => {
 
   it.each([
     ["/api/v1/assistant/query", 500],
-    ["/api/v1/assistant/query/stream", 200],
+    ["/api/v1/assistant/query/stream", 503],
   ])(
     "revokes durable authority when conversation persistence fails at %s",
     async (url, expectedStatus) => {

@@ -354,9 +354,39 @@ describe("runtime-guided assistant agent", () => {
     expect(response.components).toEqual([
       {
         type: "AssistantText",
+        message: "Gern — was möchtest du als Nächstes ansehen?",
+      },
+    ]);
+    expect(response.evidence).toEqual([]);
+  });
+
+  it("withholds source-free patient claims in the general conversation", async () => {
+    const gateway = fixtureGateway(() => ({
+      kind: "conversation",
+      toolName: null,
+      input: null,
+      text: "Luca ist schmerzfrei und kann selbstständig gehen.",
+      draftReferenceId: null,
+      sourceReferenceIds: [],
+      evidenceClaims: [],
+    }));
+    const response = await new AssistantService(
+      new PflegehelferService(),
+      gateway,
+    ).query("u-nurse", {
+      prompt: "Wie geht es Luca?",
+      patientId: null,
+      workingContext: workingContext(null),
+    });
+
+    expect(response.components).toEqual([
+      {
+        type: "AssistantText",
         message: "Gern. Wobei soll ich dich unterstützen?",
       },
     ]);
+    expect(JSON.stringify(response)).not.toContain("schmerzfrei");
+    expect(JSON.stringify(response)).not.toContain("selbstständig gehen");
     expect(response.evidence).toEqual([]);
   });
 
@@ -444,7 +474,8 @@ describe("runtime-guided assistant agent", () => {
     expect(JSON.stringify(clarified)).not.toContain("läuft selbstständig");
     expect(clarified.components[0]).toEqual({
       type: "AssistantText",
-      message: "Welche Angabe soll ich dazu kurz klären?",
+      message:
+        "Ich brauche noch eine kurze Präzisierung, bevor ich den passenden freigegebenen Kontext öffne.",
     });
   });
 
@@ -485,7 +516,7 @@ describe("runtime-guided assistant agent", () => {
     });
     expect(response.components[0]).toEqual({
       type: "AssistantText",
-      message: "Welche Angabe soll ich dazu kurz klären?",
+      message: "Möchtest du die Risiken oder die Pflegeziele zuerst ansehen?",
     });
     expect(response.evidence[0]?.resourceId).toMatch(
       /^Patient\/p-luca\/_history\//,

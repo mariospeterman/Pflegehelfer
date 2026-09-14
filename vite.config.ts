@@ -1,8 +1,27 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { resolveBuildIdentity } from "./scripts/build-identity.mjs";
+
+const buildIdentity = resolveBuildIdentity();
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    {
+      name: "pflegehelfer-build-identity",
+      generateBundle() {
+        this.emitFile({
+          type: "asset",
+          fileName: "build-info.json",
+          source: `${JSON.stringify({ surface: "pwa", ...buildIdentity }, null, 2)}\n`,
+        });
+      },
+    },
+  ],
+  define: {
+    __PFH_BUILD_ID__: JSON.stringify(buildIdentity.buildId),
+    __PFH_BUILD_SHA__: JSON.stringify(buildIdentity.sourceSha),
+  },
   resolve: {
     alias: {
       // The browser entry auto-mounts OpenUI's development inspector. The

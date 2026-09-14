@@ -1,7 +1,7 @@
 # Pflegehelfer production architecture
 
 Status: canonical target architecture
-Last verified: 2026-09-13
+Last verified: 2026-09-14
 
 This is the single architectural source of truth. Product behaviour is in `PRODUCT_EXPERIENCE.md`; configurable journeys are in `WORKFLOWS.md`. ADRs explain decisions but do not override this document.
 
@@ -89,7 +89,13 @@ They reuse the same conversation engine and never create a separate dashboard. A
 
 ## GenUI and model boundary
 
-OpenUI uses pinned `@openuidev/react-lang`. Rendering is progressive over a real HTTP stream; no timer imitates streaming.
+The conversation shell uses pinned `@openuidev/react-ui`,
+`@openuidev/react-headless` and `@openuidev/react-lang`. Its transport is the
+Vercel AI SDK v6 `UIMessage` SSE protocol. The OpenUI `AgentInterface` is
+composed inside Pflegehelfer's existing PWA, while a custom `ChatStorage`
+adapter loads only the active, already-authorized server thread. Browser-local
+history is not an authority. Rendering is progressive over a real HTTP stream;
+no timer imitates streaming.
 
 There are two catalogs:
 
@@ -101,12 +107,16 @@ Processing order:
 1. Authenticate; resolve organization, role, session, thread, patient context and purpose.
 2. Resolve the immutable instruction pack and the actor's explicit role-profile/station/workflow binding.
 3. For natural conversation, let one bounded model choose from request-specific typed read tools or the one generic clinical-draft tool, observe each authorized result and either choose another tool or stop. The free-language path has no separate intent-enum call, no last-tool response router and no nested extraction-model call. The model may submit typed meaning and source selectors, but cannot supply identity, patient/encounter authority or provenance: the server captures the exact current request and scope and rebinds exact spans to immutable records. Budgets cap turns, calls, time, repeats and result bytes. SQL, shell, arbitrary HTTP, approval, publish and final-write tools do not exist in the registry.
-4. Retain successful tool results in a request-local immutable evidence registry independent of rendered components. The model sees only run-local opaque result handles plus bounded facts and freshness; durable resource IDs, versions, hashes and row provenance stay server-side. Natural text is the default. The model selects exact scalar claims and may optionally choose a table or chart from the exact presentation catalog. Deterministic code renders displayed record facts as same-row atoms and hydrates only registered server components from one cited result. Harmless source-free acknowledgements and clarification prompts are server-owned. Invented/missing references, unsupported claims, executable links/tokens and claims of completed writes fail closed; model-written clinical prose never becomes the displayed fact or evidence authority. Tool results are marked untrusted data and remain thread/patient/encounter scoped.
+4. Retain successful tool results in a request-local immutable evidence registry independent of rendered components. The model sees only run-local opaque result handles plus bounded facts and freshness; durable resource IDs, versions, hashes and row provenance stay server-side. Natural text is the default. In the general, non-patient conversation, bounded source-free model wording may be shown as the actual answer. Patient facts, measurements, work state and clinical claims are rendered only from selected exact authorized results. The model may optionally choose a table or chart from the presentation catalog. Deterministic code renders record facts as same-row atoms and hydrates only registered server components from one cited result. Invented/missing references, unsupported claims, executable links/tokens and claims of completed writes fail closed; model-written clinical prose never becomes the clinical fact or evidence authority. Tool results are marked untrusted data and remain thread/patient/encounter scoped.
 5. For documentation or work changes, `prepare_clinical_draft` receives a generic typed `AssistantProposal` containing understood facts, work performed, observations, task changes, communications, workflow actions, ambiguities and evidence. Deterministic code independently validates every executable sub-schema, exact source span, negation/currentness, recipient, value/unit and workflow boundary, creates server-owned identifiers/hashes and replaces model-supplied provenance. Restored, reissued and executed durable proposals repeat source/safety validation before authority is honored.
-6. Stream non-executable OpenUI fragments, validate catalog/bounds/context/evidence/workflow/policy, persist the validated proposal and only then issue server-side review authority.
+6. Persist the completed response in its exact authorized thread before exposing
+   it on the Vercel UI stream. Stream only non-executable OpenUI text; validate
+   catalog/bounds/context/evidence/workflow/policy and issue server-side review
+   authority only for the persisted reviewed proposal. A persistence failure is
+   an HTTP error before stream start, not a successful-looking partial answer.
 7. Send the final authoritative frame that can open fixed server-controlled review. AI-disabled or failed-agent mode explicitly reports degradation and offers direct records/work controls plus verbatim draft capture; it does not claim general language understanding.
 
-Malformed, incomplete, unsupported or disconnected streams create no intent or clinical mutation. The deterministic composer is a first-class fallback, not a pretend LLM. AI-disabled mode preserves critical workflows.
+Malformed, incomplete, unsupported or disconnected streams create no intent or clinical mutation. The deterministic direct-record path is a first-class fallback, not a pretend LLM. AI-disabled mode preserves handover, workday and review controls.
 
 ## Deterministic safety
 

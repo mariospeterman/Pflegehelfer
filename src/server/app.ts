@@ -5,6 +5,7 @@ import type { Writable } from "node:stream";
 import fastifyStatic from "@fastify/static";
 import fastifyMultipart from "@fastify/multipart";
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
+import { createUIMessageStream, pipeUIMessageStreamToResponse } from "ai";
 import { z } from "zod";
 import {
   AssistantService,
@@ -57,6 +58,7 @@ import {
 } from "../infrastructure/operational-store.js";
 import type { WorkdayCommand } from "../core/workday.js";
 import type { RuntimeProfileConfiguration } from "./runtime-profile.js";
+import { runtimeBuildInfo } from "./build-info.js";
 
 const roleSchema = z.enum([
   "care-assistant",
@@ -1168,6 +1170,7 @@ export function buildApp(
     service: "pflegehelfer-api",
     time: new Date().toISOString(),
   }));
+  app.get("/api/v1/build-info", () => runtimeBuildInfo());
   app.get("/ready", async (_request, reply) => {
     await Promise.all([persistenceQueue, assistantAuditQueue]);
     const auditValid = service.audit.verify();
@@ -1250,6 +1253,7 @@ export function buildApp(
         operationalStore.deliveryDiagnostics(),
       ]);
     return {
+      build: runtimeBuildInfo(),
       profile: runtime.profile,
       profileMatchesRuntime:
         workspace.mode === runtime.storageMode &&
@@ -2566,26 +2570,6 @@ export function buildApp(
         requestId: request.id,
       });
     }
-    reply.hijack();
-    reply.raw.statusCode = 200;
-    reply.raw.setHeader("content-type", "application/x-ndjson; charset=utf-8");
-    reply.raw.setHeader("cache-control", "no-store, no-transform");
-    reply.raw.setHeader("x-content-type-options", "nosniff");
-    const write = (frame: unknown) =>
-      reply.raw.write(`${JSON.stringify(frame)}\n`);
-    write({
-      type: "start",
-      response: { ...response, components: [], openUi: "" },
-    });
-    // Partial presentation never carries executable authority. The complete
-    // frame exposes the live review authority only after its thread record is durable.
-    const lines = archiveAssistantResponse(response).openUi.split("\n");
-    for (const [index, line] of lines.entries()) {
-      write({
-        type: "openui",
-        chunk: `${index === 0 ? "" : "\n"}${line}`,
-      });
-    }
     try {
       await operationalStore.appendConversationTurn(
         actorId,
@@ -2608,21 +2592,49 @@ export function buildApp(
       );
     } catch {
       await revokeAuthorities();
-      write({
-        type: "error",
-        message:
-          "Der Gesprächszustand konnte nicht sicher gespeichert werden. Es wurde keine Aktion freigeschaltet.",
-      });
-      reply.raw.end();
-      return;
+      throw new DomainError(
+        "INVALID_STATE",
+        "Der Gesprächszustand konnte nicht sicher gespeichert werden. Es wurde keine Aktion freigeschaltet.",
+        503,
+      );
     }
     if (inferenceController.signal.aborted || transportDisconnected()) {
       await revokeAfterDisconnect();
       reply.raw.end();
       return;
     }
-    write({ type: "complete", response });
-    reply.raw.end();
+    // OpenUI's Vercel adapter consumes the AI SDK v6 UIMessage protocol. The
+    // model result and any review authority are fully validated and durable
+    // before the first renderable byte is exposed. Chunks are real transport
+    // chunks, with no timer pretending a completed response is still running.
+    const contentId = `openui-${response.id}`;
+    const uiStream = createUIMessageStream({
+      generateId: () => response.id,
+      execute: ({ writer }) => {
+        writer.write({ type: "start", messageId: response.id });
+        writer.write({ type: "text-start", id: contentId });
+        const lines = response.openUi.split("\n");
+        for (const [index, line] of lines.entries())
+          writer.write({
+            type: "text-delta",
+            id: contentId,
+            delta: `${index === 0 ? "" : "\n"}${line}`,
+          });
+        writer.write({ type: "text-end", id: contentId });
+        writer.write({ type: "finish", finishReason: "stop" });
+      },
+      onError: () =>
+        "Die Assistenzantwort konnte nicht sicher übertragen werden.",
+    });
+    reply.hijack();
+    await pipeUIMessageStreamToResponse({
+      response: reply.raw,
+      stream: uiStream,
+      headers: {
+        "cache-control": "no-store, no-transform",
+        "x-content-type-options": "nosniff",
+      },
+    });
   });
   app.post("/api/v1/assistant/intents/:token/execute", async (request) => {
     const { token } = z.object({ token: z.uuid() }).parse(request.params);

@@ -306,6 +306,51 @@ with available credit and approved synthetic testing, or start an accepted
 local OpenAI-compatible model/ASR/TTS runtime with pinned artifact digests.
 Then rerun the non-writing acceptance routes and the exact three-turn corpus.
 
+## Conversation replacement release baseline — 2026-09-14
+
+The staged replacement preserves the existing backend authorities and replaces
+the bespoke conversation surface with OpenUI `AgentInterface`, an allowlisted
+clinical renderer, one custom composer and Vercel AI SDK v6 `UIMessage` SSE.
+History is loaded from the authorized server thread; the request route ignores
+client-supplied assistant/tool history, persists the turn before the first
+renderable byte and archives stale draft actions. Voice capture is bound to the
+active patient/encounter/thread, has a size/time ceiling, aborts on context
+change and requires transcript-wide human confirmation after every edit.
+
+The same increment adds `GET /api/v1/build-info`. The compiled API records its
+build identity in `dist/api-build-info.json`; Vite embeds the PWA identity and
+emits `dist/pwa/build-info.json`. The endpoint returns only those safe
+identifiers and their match state. Operator-only `GET /api/v1/diagnostics`
+continues to report PostgreSQL, Medplum, delivery worker/providers, model, ASR
+and TTS independently, now with the same build block. A final clean build after
+commit must show matching, non-dirty identities for the exact remote SHA.
+
+Verification on the pre-publication worktree:
+
+- both TypeScript checks and the targeted diagnostics API suite pass;
+- the complete unit/integration suite passed 426 enabled tests with
+  25 declared environment/runtime skips;
+- the complete Playwright matrix passed 67 cases with 23 deliberate
+  viewport/feature skips across five projects, including the guarded voice
+  flow on desktop;
+- production build, security, operations, staged diff check and maintained
+  staged-secret scanning passed; the measured main bundle was 2,365.62 kB
+  minified / 688.25 kB gzip and remains G7 optimization work;
+- full Git-history scanning reports only the exact allowlisted synthetic canary
+  introduced at `930c3565` to test audit-log redaction. The allowlist binds its
+  commit, path, rule and line; repository history contains no `.env` or
+  `.env.demo` revision;
+- the operational PostgreSQL credential was rotated locally and verified by a
+  successful new connection plus rejection of the former credential, without
+  logging or committing either value;
+- OpenAI key revocation/rotation and account usage review remain **unpassed**
+  pending authenticated platform access. No connected-AI claim depends on or
+  reuses the reported exposed credential.
+
+The exact committed and remote SHA, clean artifact identities and final command
+results belong in the release handoff. This evidence does not advance the
+remaining PARTIAL G gates or any institutional/vendor approval.
+
 ## Resume commands
 
 ```sh

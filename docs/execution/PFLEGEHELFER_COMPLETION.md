@@ -621,6 +621,81 @@ Provide the exact runtime MD paths and edit/preview/publish commands, one demons
 
 **Do not relabel partial work as a new roadmap or claim the product is complete because the test count increased. The final proof is a natural conversation that completes real reviewed work, with useful adaptive UI and reliable records underneath.**
 
+## 22. Binding release-closure continuation
+
+The 14 September 2026 release-closure instruction is merged here rather than
+maintained as another architecture or roadmap. It does not replace any G0–G7,
+MD/AG/CT/WF/TX/AI/VA/UI or C1–C16 requirement above.
+
+### Publish the inspectable baseline independently
+
+The OpenUI/Vercel AI SDK conversation replacement, its pinned lockfile, tests
+and truthful documentation may be committed and published independently of an
+OpenAI account sign-in. Publication never closes a credential incident and
+must not use a reported exposed credential. Secret scans operate on names,
+digests and redacted findings only. Record database rotation, OpenAI
+revocation/rotation, usage review and connected acceptance as separate facts.
+
+Every release candidate exposes one non-secret build diagnostic. It identifies
+the exact API and PWA source SHA/build ID, says whether they match, and keeps
+persistence, model/audio and provider readiness as separate component states.
+The shipped PWA artifact—not a source-code assumption—supplies the PWA
+identity. A `/models` response, a configured key or matching build identifiers
+do not prove model competence, durable storage or provider acceptance.
+
+### Preserve the replacement and remove parallel authorities
+
+Do not start another frontend or agent framework migration. Keep one custom
+composer, one server-owned conversation history, one AgentInterface/OpenUI
+renderer and one Vercel AI SDK UIMessage stream. Persist an authorized turn
+before its first renderable byte. Treat client/tool messages, source handles,
+component names and prior action controls as untrusted; re-authorize on the
+server and expose only the latest actionable revision. Cancellation, tab
+switches, reload and restart must not leak, revive or cross-bind a response.
+
+The model authors ordinary conversation and specific question-only
+clarifications. Deterministic code authorizes tools, resolves exact source
+atoms, validates reviewed meaning and executes accepted effects. Do not add a
+new source-word grammar or fixed-German response tree to make tests green.
+Provider prose, browser state and a human click are not independent occurrence
+evidence.
+
+Maintain an explicit removal/migration inventory while retiring the former
+surface, last-tool response routing and duplicate mutation authorities. A
+compatibility adapter may remain only when its caller, sunset condition and
+non-authoritative status are documented and tested. Remove obsolete code only
+after the new path has parity and durable recovery evidence.
+
+### Execute closure in the existing order
+
+1. Publish a secret-free, inspectable G0/G5 baseline with exact remote SHA and
+   matching build identities.
+2. Prove the G1/G4/G7 conversational slice with an accepted real model, two
+   unrelated synthetic patients, authorized reads, natural prose, a specific
+   clarification, optional GenUI, a corrected draft, human approval,
+   persistence/read-back and reload.
+3. Complete the G1/G2/G3 working-day journey through provider import,
+   handover, interruption/rollback/resume, collaboration, deferral, shift
+   transfer and process restart, including failures before and after local
+   commit.
+4. Finish G3/G5 shared workspaces, library, governed Markdown publication,
+   second-site configuration, test OIDC/RLS and immediate revocation.
+5. Close G1/G5/G6/G7 analytics, direct-action convergence, multi-instance
+   operation, migrations/restore/retention/egress, visual/performance evidence,
+   CI and an isolated clean-checkout proof.
+
+For final proof, provision clean own stores plus an independent stateful fake
+provider and run real-store suites sequentially where their fixture resets
+conflict. Classify every skip and report unit/fixture, PostgreSQL, Medplum,
+provider, browser and connected model/audio evidence separately. Continue
+internal work when an external account, vendor or institutional approval is
+blocked.
+
+Every handoff reports six independent states: source published/reviewable;
+conversation replacement implemented; connected AI/audio accepted; complete
+synthetic product; institutional read-only pilot approved; controlled real
+provider-write pilot approved. Never collapse those into one completion label.
+
 ## Official reference register
 
 The source-audit findings above come from the repository at the named SHA; the requirements are the requested target, not claims that they are implemented. Consult exact installed-version official documentation during development. The sources below support engineering/role/privacy principles, not certification.

@@ -318,6 +318,29 @@ describe("purpose-specific BFF", () => {
     expect(typeof diagnostics.components.tts.mode).toBe("string");
   });
 
+  it("reports safe API and PWA build identities without runtime secrets", async () => {
+    const app = buildApp(undefined, { demoMode: true });
+    apps.push(app);
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/v1/build-info",
+    });
+    expect(response.statusCode).toBe(200);
+    const info = response.json<{
+      api: { sourceSha: string | null; buildId: string };
+      pwa: { sourceSha: string | null; buildId: string };
+      matchingSource: boolean | null;
+    }>();
+    expect(info.api.buildId).toMatch(
+      /^pfh-(?:[0-9a-f]{12}(?:\.dirty)?|unavailable)$/,
+    );
+    expect(info.pwa.buildId).toMatch(
+      /^pfh-(?:[0-9a-f]{12}(?:\.dirty)?|unavailable)$/,
+    );
+    expect([true, false, null]).toContain(info.matchingSource);
+    expect(JSON.stringify(info)).not.toMatch(/api[_-]?key|password|token/i);
+  });
+
   it("never returns canonical clinical commands from operator endpoints", async () => {
     const app = buildApp(undefined, { demoMode: true });
     apps.push(app);
