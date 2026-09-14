@@ -1126,13 +1126,11 @@ export function App() {
             <span
               className={`connection-state ${connected ? "connected" : "offline"}${workday?.providerState === "pending" ? " pending" : ""}`}
               title={syncTitle}
+              aria-label={syncTitle}
             >
               <i />
-              <span
-                className="sync-label"
-                data-compact-label={syncCompactLabel}
-              >
-                {syncLabel}
+              <span className="sync-label" aria-hidden="true">
+                {syncCompactLabel}
               </span>
             </span>
             {snapshot.workspaceLinks && patient && (

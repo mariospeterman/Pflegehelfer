@@ -97,10 +97,13 @@ integrated-browser run then approved the same sentence and showed room 207,
 `/tmp/pfh-integrated-atomic-interruption-complete-390.png`.
 
 The full suite also exposed a transport cancellation race: a response `finish`
-could hide an earlier socket disconnect after the first pre-insert revocation.
-The disconnect state is now irreversible, so a post-insert revocation always
-runs. The five cancellation cases passed ten consecutive runs, followed by the
-full 411-test repository verification.
+could hide a socket disconnect concurrent with durable insertion. Disconnect
+state is irreversible and the route now checks request/socket destruction
+before and after authority insertion, after conversation persistence and at
+response completion. The five cancellation cases passed ten consecutive
+focused runs plus the loaded full regression. The current default suite passes
+424 tests with 25 explicit real-runtime skips; formatting, zero-warning lint,
+both TypeScript checks and both production builds pass.
 
 The live scenario accepted the following three turns in one Luca conversation:
 
@@ -141,14 +144,26 @@ the corrected offsets can be retried. Lineage is retained in the proposal,
 accepted note, conversation and Medplum `DocumentReference` attachment; audio
 bytes are never persisted.
 
-The bounded agent now permits natural terminal prose only when tool-backed
-answers cite exact result references emitted during that run. Missing or
-invented references, authority claims, URLs/tokens and unsupported numbers are
-withheld while server-grounded components remain usable. No-model operation is
-labelled degraded and offers verbatim review. The latest pending review is
-restored after refresh by a fresh short-lived token for the same proposal;
-parallel tokens consume that proposal only once. The focused mobile 390 px
-Playwright regression passed in 1.3 minutes.
+The bounded agent no longer forces German content words to occur in source or
+card JSON, and server code does not trust model-selected terminal labels as a
+semantic safety boundary. The model may select exact run-local references,
+scalar claims and an optional bounded presentation. Server code renders
+source-free acknowledgement/clarification text and every displayed clinical
+fact atom. Task subject/title/state and observation
+label/value/secondary-value/unit/occurrence-time/independent-acceptance status
+are indivisible; model prose cannot swap them or relabel historical retrieval
+as current. Team-message atoms retain their patient subject. The model sees
+only opaque run-local result handles, bounded facts and freshness. Durable
+resource IDs, versions, hashes and row provenance remain server-side. Each
+archived source retains exact claims, source version, retrieval time,
+completeness, stable row resource/version/provider provenance, a digest of the
+complete immutable run result and a second digest over the persisted archive,
+whether or not a card was rendered. Model-selected tables use
+fixed per-tool server recipes over fully claimed rows; charts additionally
+require an exact time/value recipe and one homogeneous label/unit series.
+Formal held-out clinical-language/model-swap
+evaluation remains open. No-model operation is labelled degraded and offers
+verbatim review.
 
 At `35ba60e`, the bounded loop uses one general non-executable
 `prepare_clinical_draft` tool rather than the old empty-input
@@ -204,6 +219,16 @@ The live idempotency probe executed the same URL, body and command ID twice.
 Both responses were byte-identical; accepted-command and projection counts
 increased once, not twice.
 
+The interruption acceptance now also installs a transaction-scoped test
+trigger that fails the client-context rebind only after PostgreSQL can see the
+old episode paused with its original draft and the spontaneous episode active.
+The failed command leaves the original episode/segment/session/tab/thread,
+proposal, one-use authority, receipt, accepted command, audit/event and both
+delivery queues unchanged. After removing the trigger, the same token, command
+ID and body succeeds; a simulated lost-response retry returns the same receipt
+without a second episode or queue job. Omitted pause text preserves, rather
+than clears, an existing draft in both operational-store implementations.
+
 ## Actual AI/audio acceptance
 
 The configured synthetic hosted profile re-attempted its model contract on
@@ -218,6 +243,19 @@ evidence only:
 - ASR acceptance: **not passed**;
 - TTS acceptance: **attempted; HTTP 503 / not passed**.
 
+The local endpoint was also tested on 2026-09-14. Ollama 0.12.3 listed the
+pinned `qwen2.5:0.5b` digest and generated an ordinary text response through
+its native and OpenAI-compatible endpoints. The original full JSON-Schema
+request closed the local connection; the documented JSON-mode compatibility
+path reached the model, but the model echoed the request object rather than a
+valid terminal decision and strict server validation rejected it. The larger
+installed `llama3:latest` model likewise did not produce an accepted
+Pflegehelfer contract. This proves local transport only, not model competence:
+
+- local LLM connectivity: **passed**;
+- local Pflegehelfer agent/schema acceptance: **not passed**;
+- full held-out multi-turn natural-coworker acceptance: **not passed**.
+
 ## Browser acceptance evidence
 
 The integrated PWA (not the memory profile) was inspected at 390×844,
@@ -229,8 +267,12 @@ at 768×1024 its lower edge was 994 px. Every visible interactive control
 measured at least 44 px high. A 150% root-font-size plus reduced 560-px
 keyboard viewport regression is part of the Playwright suite.
 
-The full memory-profile Playwright regression at `977e3ae` passes 66 tests with 19
-deliberate project skips. It exposed a fast patient-transition busy-state race:
+The full memory-profile Playwright regression was repeated on the current
+acceptance-recovery worktree and passes 66 tests with 19 deliberate project
+skips across all five configured viewports. It also rejected duplicate
+responsive sync-label text; the final pill now has one visible compact status
+and one full accessible delivery description. Earlier testing exposed a fast
+patient-transition busy-state race:
 selection updated React state before the transition conversation read
 completed, so the refresh generation invalidated its own cleanup. Selection
 is now committed only after transition reads finish. The six directly affected
@@ -282,6 +324,6 @@ stores or if any environment-gated suite is skipped.
 Real-store suites reset the same demo institution and must be run one file at a
 time. Running them in parallel causes cross-test deletion/lease races and is
 not valid acceptance evidence. On 2026-09-14 the atomic acceptance test (1),
-operational store (14), provider worker (3), natural continuity (2), projection
+operational store (14), provider worker (3), natural continuity (3), projection
 ordering (1), synchronization summary (1) and Medplum concurrency (1) all
 passed sequentially against the live stores.

@@ -300,7 +300,26 @@ export function buildApp(
   const asr = new AsrGateway();
   const tts = new TtsGateway();
   const knowledge = new ApprovedKnowledgeService();
-  const assistant = new AssistantService(service, models, knowledge);
+  const assistant = new AssistantService(service, models, knowledge, {
+    getSyncStatus: async () => {
+      const diagnostics = await operationalStore.deliveryDiagnostics();
+      const capturedAt = new Date().toISOString();
+      const version = createHash("sha256")
+        .update(JSON.stringify(diagnostics))
+        .digest("hex");
+      return {
+        referenceId: `OperationalDeliveryDiagnostics/${version}`,
+        sourceVersion: version,
+        freshness: capturedAt,
+        complete: true,
+        data: {
+          acceptedCommands: diagnostics.acceptedCommands,
+          clinicalProjections: diagnostics.clinicalProjections,
+          providerDeliveries: diagnostics.providerDeliveries,
+        },
+      };
+    },
+  });
   const effectiveDataClass = () =>
     service.dataClass() === "synthetic-demo" &&
     service.providerProfile === "synthetic-simulator"
@@ -374,6 +393,9 @@ export function buildApp(
       dataClass: effectiveDataClass(),
       workdayHandover: workday
         ? {
+            id: workday.handover.id,
+            version: workday.handover.version,
+            contentHash: workday.handover.contentHash,
             shiftKey: workday.handover.shiftKey,
             status: workday.handover.status,
             acknowledgedCount: workday.handover.acknowledgedPatientIds.length,
@@ -2298,6 +2320,10 @@ export function buildApp(
     let disconnected = false;
     let generatedResponse: AssistantResponse | null = null;
     let revocation = Promise.resolve();
+    const transportDisconnected = () =>
+      request.raw.aborted ||
+      reply.raw.destroyed ||
+      request.raw.socket.destroyed;
     const revokeAuthorities = () => {
       if (generatedResponse) assistant.revokeResponseIntents(generatedResponse);
       const responseId = generatedResponse?.id;
@@ -2319,6 +2345,10 @@ export function buildApp(
       // handed to the transport. A short-lived client may already have a
       // destroyed socket at this point; treating that as an abort revokes a
       // valid review immediately after a normal HTTP response.
+      if (disconnected || transportDisconnected()) {
+        void revokeAfterDisconnect();
+        return;
+      }
       completed = true;
       request.raw.removeListener("aborted", abortInference);
       reply.raw.removeListener("close", abortInference);
@@ -2376,7 +2406,7 @@ export function buildApp(
       }),
     );
     generatedResponse = response;
-    if (inferenceController.signal.aborted) {
+    if (inferenceController.signal.aborted || transportDisconnected()) {
       await revokeAfterDisconnect();
       throw new DomainError(
         "INVALID_STATE",
@@ -2385,7 +2415,7 @@ export function buildApp(
       );
     }
     await persistResponseAuthorities(response, context);
-    if (inferenceController.signal.aborted) {
+    if (inferenceController.signal.aborted || transportDisconnected()) {
       await revokeAfterDisconnect();
       throw new DomainError(
         "INVALID_STATE",
@@ -2417,7 +2447,7 @@ export function buildApp(
       await revokeAuthorities();
       throw error;
     }
-    if (inferenceController.signal.aborted) {
+    if (inferenceController.signal.aborted || transportDisconnected()) {
       await revokeAfterDisconnect();
       throw new DomainError(
         "INVALID_STATE",
@@ -2436,6 +2466,10 @@ export function buildApp(
     let disconnected = false;
     let streamedResponse: AssistantResponse | null = null;
     let revocation = Promise.resolve();
+    const transportDisconnected = () =>
+      request.raw.aborted ||
+      reply.raw.destroyed ||
+      request.raw.socket.destroyed;
     const revokeAuthorities = () => {
       if (streamedResponse) assistant.revokeResponseIntents(streamedResponse);
       const responseId = streamedResponse?.id;
@@ -2453,6 +2487,10 @@ export function buildApp(
     };
     const abortInference = () => void revokeAfterDisconnect();
     const finishResponse = () => {
+      if (disconnected || transportDisconnected()) {
+        void revokeAfterDisconnect();
+        return;
+      }
       completed = true;
       request.raw.removeListener("aborted", abortInference);
       reply.raw.removeListener("close", abortInference);
@@ -2511,7 +2549,7 @@ export function buildApp(
       }),
     );
     streamedResponse = response;
-    if (inferenceController.signal.aborted) {
+    if (inferenceController.signal.aborted || transportDisconnected()) {
       await revokeAfterDisconnect();
       return reply.code(499).send({
         error: "INVALID_STATE",
@@ -2520,7 +2558,7 @@ export function buildApp(
       });
     }
     await persistResponseAuthorities(response, context);
-    if (inferenceController.signal.aborted) {
+    if (inferenceController.signal.aborted || transportDisconnected()) {
       await revokeAfterDisconnect();
       return reply.code(499).send({
         error: "INVALID_STATE",
@@ -2578,7 +2616,7 @@ export function buildApp(
       reply.raw.end();
       return;
     }
-    if (inferenceController.signal.aborted) {
+    if (inferenceController.signal.aborted || transportDisconnected()) {
       await revokeAfterDisconnect();
       reply.raw.end();
       return;

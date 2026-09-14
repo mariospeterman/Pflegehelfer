@@ -1056,7 +1056,8 @@ export class InMemoryOperationalStore implements OperationalStore {
       );
       if (!active) throw new Error("EPISODE_STATE_CONFLICT");
       active.state = "paused";
-      active.draftText = command.pausedDraftText?.slice(0, 1200) ?? "";
+      if (command.pausedDraftText !== undefined)
+        active.draftText = command.pausedDraftText.slice(0, 1200);
       session.episodes.push({
         id: randomUUID(),
         patientId: command.patientId,
@@ -3066,13 +3067,13 @@ export class PostgresOperationalStore
         );
       } else if (command.type === "interrupt-and-start") {
         const changed = await client.query(
-          `UPDATE work_episodes SET state='paused',draft_text=$4,row_version=row_version+1
+          `UPDATE work_episodes SET state='paused',draft_text=COALESCE($4,draft_text),row_version=row_version+1
            WHERE organization_id=$1 AND id=$2 AND actor_id=$3 AND state='active' RETURNING id`,
           [
             organizationId,
             command.episodeId,
             actorId,
-            command.pausedDraftText?.slice(0, 1200) ?? "",
+            command.pausedDraftText?.slice(0, 1200) ?? null,
           ],
         );
         if (!changed.rowCount) throw new Error("EPISODE_STATE_CONFLICT");
@@ -3126,13 +3127,13 @@ export class PostgresOperationalStore
           [organizationId, command.episodeId, command.reason],
         );
         await client.query(
-          `UPDATE work_episodes SET draft_text=$4
+          `UPDATE work_episodes SET draft_text=COALESCE($4,draft_text)
            WHERE organization_id=$1 AND id=$2 AND actor_id=$3`,
           [
             organizationId,
             command.episodeId,
             actorId,
-            command.draftText?.slice(0, 1200) ?? "",
+            command.draftText?.slice(0, 1200) ?? null,
           ],
         );
       } else if (command.type === "save-episode-draft") {
@@ -3950,7 +3951,7 @@ export class PostgresOperationalStore
         const command = input.workdayCommand;
         const changed = await client.query(
           `UPDATE work_episodes
-           SET state='paused',draft_text=$7,row_version=row_version+1
+           SET state='paused',draft_text=COALESCE($7,draft_text),row_version=row_version+1
            WHERE organization_id=$1 AND id=$2 AND actor_id=$3
              AND session_id=$4 AND patient_id=$5 AND encounter_id=$6
              AND state='active'
@@ -3962,7 +3963,7 @@ export class PostgresOperationalStore
             input.sessionId,
             input.patientId,
             input.encounterId,
-            command.pausedDraftText?.slice(0, 1200) ?? "",
+            command.pausedDraftText?.slice(0, 1200) ?? null,
           ],
         );
         if (!changed.rowCount) throw new Error("EPISODE_STATE_CONFLICT");

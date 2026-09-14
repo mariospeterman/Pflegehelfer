@@ -1668,10 +1668,6 @@ button:disabled {
     white-space: nowrap;
   }
   .sync-label {
-    font-size: 0;
-  }
-  .sync-label::after {
-    content: attr(data-compact-label);
     font-size: 10px;
   }
   .patient-safety-bar {

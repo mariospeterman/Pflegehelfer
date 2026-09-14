@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
   ModelGateway,
@@ -37,6 +37,7 @@ import {
   AuthorizedToolRegistry,
   BoundedAgentRuntime,
   type AgentRunResult,
+  type AgentToolResult,
 } from "../ai/agent-runtime.js";
 import {
   loadApprovedWorkflowSkill,
@@ -75,6 +76,9 @@ export interface AssistantRequest {
     actorRole: string;
     dataClass: "synthetic-demo" | "institution-local";
     workdayHandover?: {
+      id: string;
+      version: number;
+      contentHash: string;
       shiftKey: string;
       status: "open" | "transferred" | "acknowledged";
       acknowledgedCount: number;
@@ -113,7 +117,36 @@ export interface AssistantResponse {
   } | null;
   components: AssistantComponent[];
   openUi: string;
-  evidence: { resourceId: string; version: number; label: string }[];
+  evidence: {
+    resourceId: string;
+    version: number;
+    label: string;
+    sourceVersion?: string;
+    freshness?: string;
+    complete?: boolean;
+    claims?: Array<{
+      path: string;
+      value: string | number | boolean | null;
+    }>;
+    rowProvenance?: Array<{
+      path: string;
+      resourceId: string;
+      version: string;
+      patientId?: string;
+      encounterId?: string;
+      effectiveAt?: string;
+      provider?: string;
+    }>;
+    contextBinding?: {
+      sessionId: string;
+      threadId: string;
+      contextRevision: number;
+      patientId: string | null;
+      encounterId: string | null;
+    };
+    sourceDigest?: string;
+    digest?: string;
+  }[];
   warnings: string[];
 }
 
@@ -191,136 +224,425 @@ function cleanDraft(prompt: string): string {
     .slice(0, 1200);
 }
 
-function generatedCoworkerTextIsSafe(run: AgentRunResult): boolean {
-  if (
-    !["answer", "clarification-needed", "no-action"].includes(run.status) ||
-    run.text.trim().length === 0 ||
-    run.text.length > 1200
-  )
-    return false;
-  if (run.toolCalls === 0) return run.status !== "answer";
-  if (run.status !== "answer" || (run.sourceReferenceIds?.length ?? 0) === 0)
-    return false;
-  // Generated prose can explain tool results. It can never carry authority,
-  // executable links/tokens, or claim that a side effect already happened.
-  if (
-    /https?:\/\/|intentToken|bearer\s+[A-Za-z0-9._-]+/i.test(run.text) ||
-    /\b(?:ich|wir)\s+(?:habe|haben)\s+(?:dokumentiert|gesendet|freigegeben|abgeschlossen|synchronisiert|übertragen)\b/i.test(
-      run.text,
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value))
+    return `[${value.map((item) => canonicalJson(item)).join(",")}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
+    .join(",")}}`;
+}
+
+function formatEvidenceValue(value: string | number | boolean | null): string {
+  if (value === null) return "nicht angegeben";
+  if (typeof value === "boolean") return value ? "ja" : "nein";
+  if (typeof value === "number") return String(value).replace(".", ",");
+  return value;
+}
+
+function taskStateLabel(value: unknown): string {
+  const states: Record<string, string> = {
+    accepted: "offen",
+    ready: "bereit",
+    "in-progress": "in Arbeit",
+    paused: "pausiert",
+    completed: "erledigt",
+    cancelled: "abgebrochen",
+  };
+  return typeof value === "string" ? (states[value] ?? value) : "unbekannt";
+}
+
+function acceptedObservationStatus(value: unknown): string | null {
+  return value === "independently-accepted"
+    ? "unabhängig bestätigt"
+    : value === "accepted"
+      ? "freigegeben"
+      : value === "draft"
+        ? "noch nicht bestätigt"
+        : null;
+}
+
+function boundedAtomText(
+  atoms: readonly string[],
+  suffix: string,
+  maxLength = 1200,
+): string | null {
+  const omission = "Weitere belegte Angaben sind in den Quellen einsehbar.";
+  const selected: string[] = [];
+  let omitted = 0;
+  for (const atom of atoms) {
+    const candidate = [...selected, atom, suffix].filter(Boolean).join(" ");
+    if (candidate.length <= maxLength) selected.push(atom);
+    else omitted += 1;
+  }
+  if (omitted > 0) {
+    while (
+      selected.length > 0 &&
+      [...selected, omission, suffix].filter(Boolean).join(" ").length >
+        maxLength
     )
+      selected.pop();
+    if ([omission, suffix].filter(Boolean).join(" ").length <= maxLength)
+      selected.push(omission);
+  }
+  const result = [...selected, suffix].filter(Boolean).join(" ");
+  return result.length > 0 && result.length <= maxLength ? result : null;
+}
+
+/**
+ * The model selects exact evidence; it never authors displayed clinical facts.
+ * Rendering verified atoms here makes label/value/unit/time/status indivisible,
+ * so prose cannot swap two rows or turn retrieval time into occurrence time.
+ */
+function verifiedCoworkerText(run: AgentRunResult): string | null {
+  if (
+    !["conversation", "answer", "clarification-needed", "no-action"].includes(
+      run.status,
+    ) ||
+    run.text.trim().length === 0
   )
-    return false;
-  const cited = new Set(run.sourceReferenceIds);
+    return null;
+
+  if (run.toolCalls === 0) {
+    if (
+      (run.sourceReferenceIds?.length ?? 0) > 0 ||
+      (run.evidenceClaims?.length ?? 0) > 0 ||
+      (run.presentation && run.presentation.kind !== "text")
+    )
+      return null;
+    if (run.status === "conversation")
+      return "Gern. Wobei soll ich dich unterstützen?";
+    if (run.status === "clarification-needed")
+      return "Welche Angabe soll ich dazu kurz klären?";
+    if (run.status === "no-action")
+      return "Verstanden. Es wurde keine Aktion vorbereitet oder ausgeführt.";
+    return null;
+  }
+
+  if (run.status === "conversation") return null;
+  const cited = new Set(run.sourceReferenceIds ?? []);
+  if (cited.size === 0) return null;
   const evidenceRecords = (run.evidenceRecords ?? []).filter((record) =>
     cited.has(record.referenceId),
   );
-  if (evidenceRecords.length !== cited.size) return false;
-  const groundedView = JSON.stringify(
-    evidenceRecords.map(({ data, complete, freshness, sourceVersion }) => ({
-      data,
-      complete,
-      freshness: freshness ?? null,
-      sourceVersion: sourceVersion ?? null,
-    })),
+  if (evidenceRecords.length !== cited.size) return null;
+  const claims = run.evidenceClaims ?? [];
+  if (["answer", "no-action"].includes(run.status) && claims.length === 0)
+    return null;
+  if (
+    run.status === "answer" &&
+    [...cited].some(
+      (referenceId) =>
+        !claims.some((claim) => claim.referenceId === referenceId),
+    )
   )
-    .normalize("NFKC")
-    .toLocaleLowerCase("de-CH")
-    .replace(/\s+/g, " ");
-  const normalizedText = run.text
-    .normalize("NFKC")
-    .toLocaleLowerCase("de-CH")
-    .replace(
-      /\b(null|ein(?:e|en|er|es)?|zwei|drei|vier|fünf|sechs|sieben|acht|neun|zehn)\b/g,
-      (word) =>
-        String(
-          {
-            null: 0,
-            ein: 1,
-            eine: 1,
-            einen: 1,
-            einer: 1,
-            eines: 1,
-            zwei: 2,
-            drei: 3,
-            vier: 4,
-            fünf: 5,
-            sechs: 6,
-            sieben: 7,
-            acht: 8,
-            neun: 9,
-            zehn: 10,
-          }[word] ?? word,
-        ),
+    return null;
+  if (
+    claims.some((claim) => {
+      const record = evidenceRecords.find(
+        (candidate) => candidate.referenceId === claim.referenceId,
+      );
+      return (
+        !record ||
+        !cited.has(claim.referenceId) ||
+        !Object.is(valueAt(record.data, claim.path), claim.value)
+      );
+    })
+  )
+    return null;
+  const hasExactClaim = (referenceId: string, path: string): boolean =>
+    claims.some(
+      (candidate) =>
+        candidate.referenceId === referenceId && candidate.path === path,
     );
+  const renderedAtoms: string[] = [];
+  const consumed = new Set<string>();
+  const claimKey = (referenceId: string, path: string) =>
+    `${referenceId}\u0000${path}`;
+
+  // Measurements are rendered as indivisible server-owned atoms.
   if (
-    [...normalizedText.matchAll(/\b\d+(?:[.,/]\d+)?\b/g)].some(
-      (match) => !groundedView.includes(match[0]),
-    )
+    claims.some((claim) => {
+      const match = claim.path.match(/^(observations\.\d+)\./);
+      if (!match) return false;
+      const base = match[1]!;
+      const required = [
+        "label",
+        "value",
+        "secondaryValue",
+        "unit",
+        "effectiveAt",
+        "status",
+      ];
+      if (
+        required.some(
+          (field) => !hasExactClaim(claim.referenceId, `${base}.${field}`),
+        )
+      )
+        return true;
+      const record = evidenceRecords.find(
+        ({ referenceId }) => referenceId === claim.referenceId,
+      )!;
+      const row = valueAt(record.data, base);
+      const label = valueAt(row, "label");
+      const value = valueAt(row, "value");
+      const secondary = valueAt(row, "secondaryValue");
+      const unit = valueAt(row, "unit");
+      const effectiveAt = valueAt(row, "effectiveAt");
+      const status = acceptedObservationStatus(valueAt(row, "status"));
+      const provenance = record.rowProvenance?.find(
+        ({ path }) => path === base,
+      );
+      if (
+        typeof label !== "string" ||
+        typeof value !== "number" ||
+        (secondary !== null && typeof secondary !== "number") ||
+        typeof unit !== "string" ||
+        typeof effectiveAt !== "string" ||
+        status === null ||
+        !provenance?.resourceId ||
+        !provenance.version
+      )
+        return true;
+      for (const candidate of claims)
+        if (
+          candidate.referenceId === claim.referenceId &&
+          candidate.path.startsWith(`${base}.`)
+        )
+          consumed.add(claimKey(candidate.referenceId, candidate.path));
+      const displayValue = `${formatEvidenceValue(value)}${secondary === null ? "" : `/${formatEvidenceValue(secondary)}`}`;
+      const occurred = Number.isNaN(Date.parse(effectiveAt))
+        ? effectiveAt
+        : formatOrganizationTimestamp(effectiveAt);
+      const atom = `${label}: ${displayValue} ${unit} · gemessen am ${occurred} · ${status}.`;
+      if (!renderedAtoms.includes(atom)) renderedAtoms.push(atom);
+      return false;
+    })
   )
-    return false;
-  const unsupportedAbsoluteClaims = [
-    /\bschmerzfrei\b/,
-    /\bkeine(?:n|r|s)?\s+(?:bekannten?\s+)?allergien?\b/,
-    /\bsicher\s+keine\b/,
-    /\bunauffällig\b/,
-    /\bklinisch\s+stabil\b/,
-    /\bwerte?\s+(?:sind|ist)\s+normal\b/,
-  ];
+    return null;
+
+  // Task title and state are rendered from the same row.
   if (
-    unsupportedAbsoluteClaims.some(
-      (claim) => claim.test(normalizedText) && !claim.test(groundedView),
-    )
+    claims.some((claim) => {
+      const match = claim.path.match(/^(tasks\.\d+)\./);
+      if (!match) return false;
+      const base = match[1]!;
+      if (
+        !hasExactClaim(claim.referenceId, `${base}.title`) ||
+        !hasExactClaim(claim.referenceId, `${base}.state`) ||
+        !hasExactClaim(claim.referenceId, `${base}.patientLabel`)
+      )
+        return true;
+      const record = evidenceRecords.find(
+        ({ referenceId }) => referenceId === claim.referenceId,
+      )!;
+      const row = valueAt(record.data, base);
+      const title = valueAt(row, "title");
+      const state = valueAt(row, "state");
+      const patientLabel = valueAt(row, "patientLabel");
+      const provenance = record.rowProvenance?.find(
+        ({ path }) => path === base,
+      );
+      if (
+        typeof title !== "string" ||
+        typeof state !== "string" ||
+        typeof patientLabel !== "string" ||
+        !provenance?.resourceId ||
+        !provenance.version
+      )
+        return true;
+      for (const candidate of claims)
+        if (
+          candidate.referenceId === claim.referenceId &&
+          candidate.path.startsWith(`${base}.`)
+        )
+          consumed.add(claimKey(candidate.referenceId, candidate.path));
+      const atom = `${patientLabel} · ${title}: ${taskStateLabel(state)}.`;
+      if (!renderedAtoms.includes(atom)) renderedAtoms.push(atom);
+      return false;
+    })
   )
-    return false;
-  // Reject unsupported factual content conservatively. Natural connective
-  // language is allowed, but every content-bearing word must occur in the
-  // immutable cited tool records. This is intentionally stricter than the UI:
-  // a rendered card is never evidence authority.
-  const connectiveWords = new Set([
-    "aktuell",
-    "angefragt",
-    "angefragten",
-    "bestätigt",
-    "bestätigten",
-    "daten",
-    "deinem",
-    "deinen",
-    "deiner",
-    "derzeit",
-    "diese",
-    "diesen",
-    "direkt",
-    "findest",
-    "folgende",
-    "folgenden",
-    "freigegeben",
-    "freigegebenen",
-    "hier",
-    "informationen",
-    "kontext",
-    "laut",
-    "noch",
-    "offen",
-    "patientenkontext",
-    "quelle",
-    "quellen",
-    "sichtbar",
-    "stand",
-    "übersicht",
-    "vorliegen",
-  ]);
-  const groundedWords = new Set(groundedView.match(/[\p{L}\p{N}]+/gu) ?? []);
-  const unsupportedWord = (normalizedText.match(/[\p{L}\p{N}]+/gu) ?? [])
-    .filter((word) => word.length >= 5)
-    .find((word) => !groundedWords.has(word) && !connectiveWords.has(word));
-  if (unsupportedWord) return false;
-  return true;
+    return null;
+
+  // Team-message facts always retain the patient subject and durable source.
+  if (
+    claims.some((claim) => {
+      const match = claim.path.match(/^(communications\.\d+)\./);
+      if (!match) return false;
+      const base = match[1]!;
+      const required = ["patientLabel", "request", "recipientRole", "state"];
+      if (
+        required.some(
+          (field) => !hasExactClaim(claim.referenceId, `${base}.${field}`),
+        )
+      )
+        return true;
+      const record = evidenceRecords.find(
+        ({ referenceId }) => referenceId === claim.referenceId,
+      )!;
+      const row = valueAt(record.data, base);
+      const patientLabel = valueAt(row, "patientLabel");
+      const request = valueAt(row, "request");
+      const recipientRole = valueAt(row, "recipientRole");
+      const state = valueAt(row, "state");
+      const provenance = record.rowProvenance?.find(
+        ({ path }) => path === base,
+      );
+      if (
+        typeof patientLabel !== "string" ||
+        typeof request !== "string" ||
+        typeof recipientRole !== "string" ||
+        typeof state !== "string" ||
+        !provenance?.resourceId ||
+        !provenance.version
+      )
+        return true;
+      for (const candidate of claims)
+        if (
+          candidate.referenceId === claim.referenceId &&
+          candidate.path.startsWith(`${base}.`)
+        )
+          consumed.add(claimKey(candidate.referenceId, candidate.path));
+      const atom = `${patientLabel} · Nachricht an ${recipientRole}: ${request} · ${state}.`;
+      if (!renderedAtoms.includes(atom)) renderedAtoms.push(atom);
+      return false;
+    })
+  )
+    return null;
+
+  const fieldLabels: Record<string, string> = {
+    displayName: "Name",
+    room: "Zimmer",
+    openCount: "Offene Übergabepunkte",
+    acknowledgedCount: "Bestätigte Patientenkontexte",
+    assignedCount: "Zugewiesene Patientenkontexte",
+    summary: "Zusammenfassung",
+    totalCount: "Anzahl",
+    id: "Arbeitsablauf",
+    status: "Status",
+  };
+  for (const claim of claims) {
+    if (consumed.has(claimKey(claim.referenceId, claim.path))) continue;
+    const last = claim.path.split(".").at(-1)!;
+    const parent = claim.path.split(".").slice(-2, -1)[0];
+    const label =
+      parent === "risks"
+        ? "Risiko"
+        : parent === "careGoals"
+          ? "Pflegeziel"
+          : (fieldLabels[last] ?? last);
+    renderedAtoms.push(`${label}: ${formatEvidenceValue(claim.value)}.`);
+  }
+  if (renderedAtoms.length === 0 && run.status !== "clarification-needed")
+    return null;
+  const suffix =
+    run.status === "clarification-needed"
+      ? "Welche Angabe soll ich dazu kurz klären?"
+      : run.status === "no-action"
+        ? "Es wurde keine Aktion vorbereitet oder ausgeführt."
+        : "";
+  return boundedAtomText(renderedAtoms, suffix);
+}
+
+function generatedCoworkerSources(
+  run: AgentRunResult,
+  contextBinding: NonNullable<
+    AssistantResponse["evidence"][number]["contextBinding"]
+  >,
+): AssistantResponse["evidence"] {
+  const cited = new Set(run.sourceReferenceIds ?? []);
+  const labels: Record<string, string> = {
+    get_patient_summary: "Patientenübersicht",
+    get_open_tasks: "Aufgabenübersicht",
+    get_latest_vitals: "freigegebene Vitalwerte",
+    get_handover: "Übergabe",
+    get_team_inbox: "Team-Nachrichten",
+    get_sync_status: "Synchronisationsstatus",
+    search_approved_knowledge: "freigegebene Wissensquelle",
+  };
+  return (run.evidenceRecords ?? [])
+    .filter((record) => cited.has(record.referenceId))
+    .map((record) => {
+      const parsedVersion = Number.parseInt(record.sourceVersion ?? "", 10);
+      const claims = (run.evidenceClaims ?? [])
+        .filter(({ referenceId }) => referenceId === record.referenceId)
+        .map(({ path, value }) => ({ path, value }));
+      const selectedRowPaths = new Set(
+        claims.flatMap(({ path }) => {
+          const match = path.match(
+            /^((?:tasks|observations|communications|deliveries)\.\d+)\./,
+          );
+          return match ? [match[1]!] : [];
+        }),
+      );
+      const rowProvenance = (record.rowProvenance ?? []).filter(({ path }) =>
+        selectedRowPaths.has(path),
+      );
+      const durableReference = record.sourceReferenceId ?? record.referenceId;
+      const qualifier = [
+        labels[record.toolName] ?? "autorisierte Laufzeitquelle",
+        record.freshness ? `abgerufen am ${record.freshness}` : null,
+        record.complete ? "vollständig" : "Ausschnitt, nicht vollständig",
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      const archivedEvidence = {
+        resourceId: durableReference,
+        version: Number.isFinite(parsedVersion) ? parsedVersion : 0,
+        label: qualifier,
+        ...(record.sourceVersion
+          ? { sourceVersion: record.sourceVersion }
+          : {}),
+        ...(record.freshness ? { freshness: record.freshness } : {}),
+        complete: record.complete,
+        claims,
+        ...(rowProvenance.length > 0
+          ? { rowProvenance: structuredClone(rowProvenance) }
+          : {}),
+        contextBinding,
+        sourceDigest: createHash("sha256")
+          .update(
+            canonicalJson({
+              resourceId: durableReference,
+              toolName: record.toolName,
+              sourceVersion: record.sourceVersion ?? null,
+              freshness: record.freshness ?? null,
+              complete: record.complete,
+              data: record.data,
+              rowProvenance: record.rowProvenance ?? [],
+            }),
+          )
+          .digest("hex"),
+      };
+      return {
+        ...archivedEvidence,
+        digest: createHash("sha256")
+          .update(canonicalJson(archivedEvidence))
+          .digest("hex"),
+      };
+    });
+}
+
+export function verifyAssistantEvidenceDigest(
+  evidence: AssistantResponse["evidence"][number],
+): boolean {
+  if (!evidence.digest) return false;
+  const { digest, ...archivedEvidence } = evidence;
+  return (
+    createHash("sha256")
+      .update(canonicalJson(archivedEvidence))
+      .digest("hex") === digest
+  );
 }
 
 function valueAt(data: unknown, path: string): unknown {
-  if (!/^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*$/.test(path))
+  if (!/^[A-Za-z][A-Za-z0-9_]*(?:\.\d+|\.[A-Za-z][A-Za-z0-9_]*)*$/.test(path))
     return undefined;
   return path.split(".").reduce<unknown>((current, segment) => {
+    if (Array.isArray(current) && /^\d+$/.test(segment))
+      return current[Number(segment)];
     if (
       current !== null &&
       typeof current === "object" &&
@@ -351,39 +673,164 @@ function modelPresentation(run: AgentRunResult): AssistantComponent | null {
   );
   if (!record || !(run.sourceReferenceIds ?? []).includes(record.referenceId))
     return null;
-  const collection = valueAt(record.data, spec.collectionPath);
-  if (!Array.isArray(collection)) return null;
-  const sourceLabel = `${record.referenceId}${record.complete ? "" : " · Ausschnitt, nicht vollständig"}`;
+  const sourceLabel = `${record.sourceReferenceId ?? record.referenceId}${record.complete ? "" : " · Ausschnitt, nicht vollständig"}`;
+  const claimPaths = new Set(
+    (run.evidenceClaims ?? [])
+      .filter(({ referenceId }) => referenceId === record.referenceId)
+      .map(({ path }) => path),
+  );
+  const selectedRows = (
+    collectionPath: string,
+    requiredFields: readonly string[],
+  ): unknown[] | null => {
+    const candidateCollection = valueAt(record.data, collectionPath);
+    if (!Array.isArray(candidateCollection)) return null;
+    const collection: unknown[] = candidateCollection;
+    const indices = [
+      ...new Set(
+        [...claimPaths].flatMap((path) => {
+          const match = path.match(
+            new RegExp(`^${collectionPath.replaceAll(".", "\\.")}\\.(\\d+)\\.`),
+          );
+          return match ? [Number(match[1])] : [];
+        }),
+      ),
+    ].toSorted((left, right) => left - right);
+    const rows: unknown[] = indices.flatMap((index) => {
+      const base = `${collectionPath}.${index}`;
+      return requiredFields.every((field) => claimPaths.has(`${base}.${field}`))
+        ? [collection[index]]
+        : [];
+    });
+    return rows.length > 0 && rows.length === indices.length ? rows : null;
+  };
   if (spec.kind === "table") {
-    return {
-      type: "EvidenceTable",
-      title: spec.title,
-      columns: spec.columns.map(({ label }) => label),
-      rows: collection
-        .slice(0, 20)
-        .map((row) =>
-          spec.columns.map((column) =>
-            String(scalarAt(row, column.path) ?? "—"),
-          ),
-        ),
-      complete: record.complete && collection.length <= 20,
-      sourceLabel,
-    };
+    if (
+      record.toolName === "get_open_tasks" &&
+      spec.collectionPath === "tasks"
+    ) {
+      const rows = selectedRows("tasks", [
+        "patientLabel",
+        "title",
+        "state",
+        "dueAt",
+      ]);
+      if (!rows) return null;
+      return {
+        type: "EvidenceTable",
+        title: "Autorisierte Aufgabenübersicht",
+        columns: ["Patient", "Aufgabe", "Status", "Fällig"],
+        rows: rows.map((row) => [
+          String(scalarAt(row, "patientLabel") ?? "—"),
+          String(scalarAt(row, "title") ?? "—"),
+          taskStateLabel(scalarAt(row, "state")),
+          String(scalarAt(row, "dueAt") ?? "—"),
+        ]),
+        complete: false,
+        sourceLabel,
+      };
+    }
+    if (
+      record.toolName === "get_latest_vitals" &&
+      spec.collectionPath === "observations"
+    ) {
+      const rows = selectedRows("observations", [
+        "label",
+        "value",
+        "secondaryValue",
+        "unit",
+        "effectiveAt",
+        "status",
+      ]);
+      if (!rows) return null;
+      return {
+        type: "EvidenceTable",
+        title: "Autorisierte Messwertübersicht",
+        columns: ["Messwert", "Wert", "Einheit", "Gemessen am", "Status"],
+        rows: rows.map((row) => [
+          String(scalarAt(row, "label") ?? "—"),
+          `${formatEvidenceValue(scalarAt(row, "value"))}${scalarAt(row, "secondaryValue") === null ? "" : `/${formatEvidenceValue(scalarAt(row, "secondaryValue"))}`}`,
+          String(scalarAt(row, "unit") ?? "—"),
+          String(scalarAt(row, "effectiveAt") ?? "—"),
+          acceptedObservationStatus(scalarAt(row, "status")) ?? "—",
+        ]),
+        complete: false,
+        sourceLabel,
+      };
+    }
+    if (
+      record.toolName === "get_team_inbox" &&
+      spec.collectionPath === "communications"
+    ) {
+      const rows = selectedRows("communications", [
+        "patientLabel",
+        "request",
+        "recipientRole",
+        "state",
+        "dueAt",
+      ]);
+      if (!rows) return null;
+      return {
+        type: "EvidenceTable",
+        title: "Autorisierte Teamübersicht",
+        columns: ["Patient", "Nachricht", "Empfängerrolle", "Status", "Fällig"],
+        rows: rows.map((row) => [
+          String(scalarAt(row, "patientLabel") ?? "—"),
+          String(scalarAt(row, "request") ?? "—"),
+          String(scalarAt(row, "recipientRole") ?? "—"),
+          String(scalarAt(row, "state") ?? "—"),
+          String(scalarAt(row, "dueAt") ?? "—"),
+        ]),
+        complete: false,
+        sourceLabel,
+      };
+    }
+    return null;
   }
-  const points = collection.slice(0, 20).flatMap((row) => {
-    const x = scalarAt(row, spec.xPath);
-    const y = scalarAt(row, spec.yPath);
-    const label = scalarAt(row, spec.labelPath);
-    return typeof y === "number" && x !== null && label !== null
-      ? [{ x: String(x), y, label: String(label) }]
+  if (
+    record.toolName !== "get_latest_vitals" ||
+    spec.collectionPath !== "observations" ||
+    spec.xPath !== "effectiveAt" ||
+    spec.yPath !== "value" ||
+    spec.labelPath !== "label"
+  )
+    return null;
+  const rows = selectedRows("observations", [
+    "label",
+    "value",
+    "secondaryValue",
+    "unit",
+    "effectiveAt",
+    "status",
+  ]);
+  if (!rows) return null;
+  const label = scalarAt(rows[0], "label");
+  const unit = scalarAt(rows[0], "unit");
+  if (
+    typeof label !== "string" ||
+    typeof unit !== "string" ||
+    rows.some(
+      (row) =>
+        scalarAt(row, "label") !== label ||
+        scalarAt(row, "unit") !== unit ||
+        scalarAt(row, "secondaryValue") !== null,
+    )
+  )
+    return null;
+  const points = rows.flatMap((row) => {
+    const x = scalarAt(row, "effectiveAt");
+    const y = scalarAt(row, "value");
+    return typeof y === "number" && typeof x === "string"
+      ? [{ x, y, label }]
       : [];
   });
+  if (points.length !== rows.length) return null;
   return {
     type: "EvidenceChart",
-    title: spec.title,
+    title: `${label} (${unit}) · Verlauf nach Messzeitpunkt`,
     points,
-    complete: record.complete && collection.length <= 20,
-    sourceLabel,
+    complete: false,
+    sourceLabel: `${sourceLabel} · Einheit ${unit}`,
   };
 }
 
@@ -575,6 +1022,9 @@ export class AssistantService {
     private readonly clinical: PflegehelferService,
     private readonly models = new ModelGateway(),
     private readonly knowledge = new ApprovedKnowledgeService(),
+    private readonly runtimeReaders: {
+      getSyncStatus?: () => Promise<AgentToolResult>;
+    } = {},
   ) {}
 
   revokeResponseIntents(response: AssistantResponse): void {
@@ -819,7 +1269,8 @@ export class AssistantService {
           input: emptyInput,
           execute: () => {
             return Promise.resolve({
-              referenceId: patient
+              referenceId: `EvidenceResult/get_patient_summary/${randomUUID()}`,
+              sourceReferenceId: patient
                 ? `Patient/${patient.id}/_history/${patient.source.version}`
                 : "Patient/none",
               sourceVersion: patient ? String(patient.source.version) : "0",
@@ -844,16 +1295,27 @@ export class AssistantService {
           effect: "read",
           input: emptyInput,
           execute: () => {
-            const allTasks = snapshot.tasks.filter(
-              (task) =>
+            const allTasks = snapshot.tasks.filter((task) => {
+              const currentSubject = task.patientId
+                ? snapshot.patients.find(
+                    (candidate) => candidate.id === task.patientId,
+                  )
+                : null;
+              const currentEncounter =
+                task.patientId === null ||
+                (currentSubject != null &&
+                  task.encounterId === currentSubject.encounterId);
+              return (
+                currentEncounter &&
                 (!patient ||
                   (task.patientId === patient.id &&
                     task.encounterId === patient.encounterId)) &&
-                task.state !== "completed",
-            );
-            const tasks = allTasks
-              .slice(0, 20)
-              .map(({ patientId, title, reason, state, priority, dueAt }) => {
+                task.state !== "completed"
+              );
+            });
+            const selectedTasks = allTasks.slice(0, 20);
+            const tasks = selectedTasks.map(
+              ({ patientId, title, reason, state, priority, dueAt }) => {
                 const subject = snapshot.patients.find(
                   (candidate) => candidate.id === patientId,
                 );
@@ -867,11 +1329,22 @@ export class AssistantService {
                   priority,
                   dueAt,
                 };
-              });
+              },
+            );
             return Promise.resolve({
-              referenceId: `Task/search/${snapshot.serverTime}`,
+              referenceId: `EvidenceResult/get_open_tasks/${randomUUID()}`,
+              sourceReferenceId: `Task/search/${snapshot.serverTime}`,
               freshness: snapshot.serverTime,
               complete: allTasks.length <= tasks.length,
+              rowProvenance: selectedTasks.map((task, index) => ({
+                path: `tasks.${index}`,
+                resourceId: `Task/${task.id}`,
+                version: String(task.source.version),
+                ...(task.patientId ? { patientId: task.patientId } : {}),
+                ...(task.encounterId ? { encounterId: task.encounterId } : {}),
+                effectiveAt: task.dueAt,
+                provider: task.source.provider,
+              })),
               data: { tasks, totalCount: allTasks.length },
             });
           },
@@ -892,31 +1365,49 @@ export class AssistantService {
                     item.approvedAt !== null,
                 )
               : [];
-            const observations = allObservations
-              .slice(-12)
-              .map(
-                ({
-                  label,
-                  value,
-                  secondaryValue,
-                  unit,
-                  effectiveAt,
-                  approvedAt,
-                }) => ({
-                  label,
-                  value,
-                  secondaryValue,
-                  unit,
-                  effectiveAt,
-                  status: approvedAt ? "independently-accepted" : "draft",
-                }),
-              );
+            const selectedObservations = allObservations.slice(-12);
+            const observations = selectedObservations.map(
+              ({
+                label,
+                value,
+                secondaryValue,
+                unit,
+                effectiveAt,
+                approvedAt,
+                approvalPolicy,
+                approvals,
+              }) => ({
+                label,
+                value,
+                secondaryValue,
+                unit,
+                effectiveAt,
+                status:
+                  approvedAt &&
+                  ["high-assurance", "four-eyes"].includes(approvalPolicy) &&
+                  new Set(approvals).size >= 2
+                    ? "independently-accepted"
+                    : approvedAt
+                      ? "accepted"
+                      : "draft",
+              }),
+            );
             return Promise.resolve({
-              referenceId: `Observation/search/${snapshot.serverTime}`,
+              referenceId: `EvidenceResult/get_latest_vitals/${randomUUID()}`,
+              sourceReferenceId: `Observation/search/${snapshot.serverTime}`,
               freshness: snapshot.serverTime,
               complete:
                 patient !== null &&
                 allObservations.length <= observations.length,
+              rowProvenance: selectedObservations.map((observation, index) => ({
+                path: `observations.${index}`,
+                resourceId: `Observation/${observation.id}`,
+                version: String(observation.version),
+                patientId: observation.patientId,
+                encounterId: observation.encounterId,
+                effectiveAt: observation.effectiveAt,
+                provider: observation.source.provider,
+              })),
               data: { observations, totalCount: allObservations.length },
             });
           },
@@ -929,15 +1420,27 @@ export class AssistantService {
           effect: "read",
           input: emptyInput,
           execute: () => {
+            const handover = request.workingContext!.workdayHandover;
             return Promise.resolve({
-              referenceId: request.workingContext!.workdayHandover
-                ? `WorkdayHandover/${request.workingContext!.workdayHandover.shiftKey}`
+              referenceId: `EvidenceResult/get_handover/${randomUUID()}`,
+              sourceReferenceId: handover
+                ? `WorkdayHandover/${handover.id}/_history/${handover.version}`
                 : "WorkdayHandover/none",
+              sourceVersion: handover
+                ? `${handover.version}:${handover.contentHash}`
+                : "0",
               freshness: snapshot.serverTime,
-              complete: request.workingContext!.workdayHandover !== null,
-              data: request.workingContext!.workdayHandover ?? {
-                handover: "not-available-for-role",
-              },
+              complete: handover !== null,
+              data: handover
+                ? {
+                    shiftKey: handover.shiftKey,
+                    status: handover.status,
+                    acknowledgedCount: handover.acknowledgedCount,
+                    assignedCount: handover.assignedCount,
+                    openCount: handover.openCount,
+                    summary: handover.summary,
+                  }
+                : { handover: "not-available-for-role" },
             });
           },
         },
@@ -949,36 +1452,60 @@ export class AssistantService {
           effect: "read",
           input: emptyInput,
           execute: () => {
-            const allCommunications = snapshot.communications.filter(
-              (item) =>
+            const allCommunications = snapshot.communications.filter((item) => {
+              const currentSubject = snapshot.patients.find(
+                (candidate) => candidate.id === item.patientId,
+              );
+              return (
+                currentSubject !== undefined &&
+                item.encounterId === currentSubject.encounterId &&
                 (!patient ||
                   (item.patientId === patient.id &&
                     item.encounterId === patient.encounterId)) &&
-                item.state !== "closed",
-            );
-            const communications = allCommunications
-              .slice(0, 20)
-              .map(
-                ({
-                  request,
-                  reason,
-                  recipientRole,
-                  priority,
-                  dueAt,
-                  state,
-                }) => ({
-                  request,
-                  reason,
-                  recipientRole,
-                  priority,
-                  dueAt,
-                  state,
-                }),
+                item.state !== "closed"
               );
+            });
+            const selectedCommunications = allCommunications.slice(0, 20);
+            const communications = selectedCommunications.map(
+              ({
+                patientId,
+                request,
+                reason,
+                recipientRole,
+                priority,
+                dueAt,
+                state,
+              }) => ({
+                patientLabel:
+                  snapshot.patients.find(
+                    (candidate) => candidate.id === patientId,
+                  )?.displayName ?? "Allgemeiner Teamkontext",
+                request,
+                reason,
+                recipientRole,
+                priority,
+                dueAt,
+                state,
+              }),
+            );
             return Promise.resolve({
-              referenceId: `Communication/search/${snapshot.serverTime}`,
+              referenceId: `EvidenceResult/get_team_inbox/${randomUUID()}`,
+              sourceReferenceId: `Communication/search/${snapshot.serverTime}`,
               freshness: snapshot.serverTime,
               complete: allCommunications.length <= communications.length,
+              rowProvenance: selectedCommunications.map(
+                (communication, index) => ({
+                  path: `communications.${index}`,
+                  resourceId: `Communication/${communication.id}`,
+                  version: String(communication.source.version),
+                  patientId: communication.patientId,
+                  encounterId: communication.encounterId,
+                  ...(communication.dueAt
+                    ? { effectiveAt: communication.dueAt }
+                    : {}),
+                  provider: communication.source.provider,
+                }),
+              ),
               data: { communications, totalCount: allCommunications.length },
             });
           },
@@ -990,45 +1517,37 @@ export class AssistantService {
             "Read current provider-delivery and reconciliation status without changing it.",
           effect: "read",
           input: emptyInput,
-          execute: () => {
+          execute: async () => {
             if (patient)
-              return Promise.resolve({
-                referenceId: `ProviderSync/patient-scope-unavailable/${patient.id}`,
+              return {
+                referenceId: `EvidenceResult/get_sync_status/${randomUUID()}`,
+                sourceReferenceId: `ProviderSync/patient-scope-unavailable/${patient.id}`,
                 freshness: snapshot.serverTime,
                 complete: false,
                 data: {
                   status:
                     "patient-encounter-scoped delivery projection unavailable",
                 },
-              });
-            return Promise.resolve({
-              referenceId: `ProviderSync/${snapshot.serverTime}`,
+              };
+            if (this.runtimeReaders.getSyncStatus) {
+              const authoritative = await this.runtimeReaders.getSyncStatus();
+              return {
+                ...authoritative,
+                referenceId: `EvidenceResult/get_sync_status/${randomUUID()}`,
+                sourceReferenceId:
+                  authoritative.sourceReferenceId ?? authoritative.referenceId,
+              };
+            }
+            return {
+              referenceId: `EvidenceResult/get_sync_status/${randomUUID()}`,
+              sourceReferenceId: `ProviderSync/${snapshot.serverTime}`,
               freshness: snapshot.serverTime,
-              complete: snapshot.outbox.length <= 20,
+              complete: true,
               data: {
                 summary: snapshot.syncSummary,
                 totalCount: snapshot.outbox.length,
-                deliveries: snapshot.outbox
-                  .slice(0, 20)
-                  .map(
-                    ({
-                      aggregateType,
-                      provider,
-                      state,
-                      errorCode,
-                      errorClassification,
-                      createdAt,
-                    }) => ({
-                      aggregateType,
-                      provider,
-                      state,
-                      errorCode,
-                      errorClassification,
-                      createdAt,
-                    }),
-                  ),
               },
-            });
+            };
           },
         },
         {
@@ -1046,10 +1565,11 @@ export class AssistantService {
               workflowSkillId: skillId,
             });
             return Promise.resolve({
-              referenceId: `RuntimeInstruction/${skill.id}/${skill.sha256}`,
+              referenceId: `EvidenceResult/load_workflow_skill/${randomUUID()}`,
+              sourceReferenceId: `RuntimeInstruction/${skill.id}/${skill.sha256}`,
               sourceVersion: String(agentGuidance!.packVersion),
               complete: true,
-              data: { id: skill.id, sha256: skill.sha256, body: skill.body },
+              data: { id: skill.id, body: skill.body },
             });
           },
         },
@@ -1112,7 +1632,6 @@ export class AssistantService {
             skills: agentGuidance.availableSkills.map((skill) => ({
               id: skill.id,
               description: skill.description,
-              contentHash: runtimeSitePack.instructions[skill.id]!.sha256,
             })),
           },
         },
@@ -1136,6 +1655,7 @@ export class AssistantService {
         safeIntent = "care-update";
       else if (
         [
+          "conversation",
           "answer",
           "clarification-needed",
           "no-action",
@@ -1422,13 +1942,24 @@ export class AssistantService {
         break;
       }
       case "open-tasks": {
-        const tasks = snapshot.tasks.filter(
-          (task) =>
+        const tasks = snapshot.tasks.filter((task) => {
+          const currentSubject = task.patientId
+            ? snapshot.patients.find(
+                (candidate) => candidate.id === task.patientId,
+              )
+            : null;
+          const currentEncounter =
+            task.patientId === null ||
+            (currentSubject != null &&
+              task.encounterId === currentSubject.encounterId);
+          return (
+            currentEncounter &&
             task.state !== "completed" &&
             (!patient ||
               (task.patientId === patient.id &&
-                task.encounterId === patient.encounterId)),
-        );
+                task.encounterId === patient.encounterId))
+          );
+        });
         for (const task of tasks.slice(0, 8))
           evidence.push({
             resourceId: `Task/${task.id}`,
@@ -1556,13 +2087,19 @@ export class AssistantService {
         break;
       }
       case "team-inbox": {
-        const messages = snapshot.communications.filter(
-          (item) =>
+        const messages = snapshot.communications.filter((item) => {
+          const currentSubject = snapshot.patients.find(
+            (candidate) => candidate.id === item.patientId,
+          );
+          return (
+            currentSubject !== undefined &&
+            item.encounterId === currentSubject.encounterId &&
             item.state !== "closed" &&
             (!patient ||
               (item.patientId === patient.id &&
-                item.encounterId === patient.encounterId)),
-        );
+                item.encounterId === patient.encounterId))
+          );
+        });
         for (const item of messages.slice(0, 8))
           evidence.push({
             resourceId: `Communication/${item.id}`,
@@ -1642,21 +2179,56 @@ export class AssistantService {
           });
           break;
         }
-        const pending = snapshot.outbox.filter(
-          (item) => !isTerminalOutboxState(item.state),
-        );
+        const authoritative = this.runtimeReaders.getSyncStatus
+          ? await this.runtimeReaders.getSyncStatus()
+          : null;
+        const diagnosticData = authoritative?.data as
+          | {
+              clinicalProjections?: Record<string, number>;
+              providerDeliveries?: Record<string, number>;
+            }
+          | undefined;
+        const pending = diagnosticData
+          ? [
+              ...Object.entries(diagnosticData.clinicalProjections ?? {}),
+              ...Object.entries(diagnosticData.providerDeliveries ?? {}),
+            ].reduce(
+              (total, [state, count]) =>
+                ["delivered", "cancelled"].includes(state)
+                  ? total
+                  : total + count,
+              0,
+            )
+          : snapshot.outbox.filter((item) => !isTerminalOutboxState(item.state))
+              .length;
+        const conflicts = diagnosticData
+          ? (diagnosticData.clinicalProjections?.manual ?? 0) +
+            (diagnosticData.providerDeliveries?.manual ?? 0)
+          : snapshot.syncSummary.conflicts;
+        if (authoritative)
+          evidence.push({
+            resourceId: authoritative.referenceId,
+            version: 0,
+            label: `Operationaler Zustellstand · abgerufen am ${authoritative.freshness ?? "unbekannt"}`,
+            ...(authoritative.sourceVersion
+              ? { sourceVersion: authoritative.sourceVersion }
+              : {}),
+            ...(authoritative.freshness
+              ? { freshness: authoritative.freshness }
+              : {}),
+            complete: authoritative.complete,
+          });
         components.push({
           type: "SyncSummary",
           title: "Synchronisation und Abgleich",
-          pending: pending.length,
-          conflicts: snapshot.syncSummary.conflicts,
-          summary:
-            pending
-              .slice(0, 6)
-              .map((item) => `${item.provider} · ${item.state}`)
-              .join("\n") || "Alle aktuellen Übertragungen sind quittiert.",
-          sourceLabel:
-            snapshot.capabilityProfile === "synthetic-simulator"
+          pending,
+          conflicts,
+          summary: pending
+            ? `${pending} Zustellung(en) sind noch nicht terminal bestätigt.`
+            : "Alle aktuellen Übertragungen sind terminal quittiert.",
+          sourceLabel: authoritative
+            ? "Operationaler relationaler Zustellstand"
+            : snapshot.capabilityProfile === "synthetic-simulator"
               ? "Provider-Hub · Simulatorprofil"
               : "Provider-Hub · verifizierte Fähigkeiten",
         });
@@ -2222,18 +2794,33 @@ export class AssistantService {
         break;
     }
 
-    const useGeneratedCoworkerText = Boolean(
-      agentRun && generatedCoworkerTextIsSafe(agentRun),
-    );
-    if (useGeneratedCoworkerText && agentRun) {
+    const generatedCoworkerText = agentRun
+      ? verifiedCoworkerText(agentRun)
+      : null;
+    if (generatedCoworkerText && agentRun) {
       if (classification.intent === "unknown")
         for (let index = components.length - 1; index >= 0; index -= 1)
           if (components[index]?.type === "UnknownState")
             components.splice(index, 1);
       components.unshift({
         type: "AssistantText",
-        message: agentRun.text.trim(),
+        message: generatedCoworkerText,
       });
+      for (const source of generatedCoworkerSources(agentRun, {
+        sessionId: request.workingContext!.sessionId,
+        threadId: request.workingContext!.threadId,
+        contextRevision: request.workingContext!.contextRevision,
+        patientId: patient?.id ?? null,
+        encounterId: patient?.encounterId ?? null,
+      }))
+        if (
+          !evidence.some(
+            (item) =>
+              item.resourceId === source.resourceId &&
+              item.version === source.version,
+          )
+        )
+          evidence.push(source);
     } else if (fallbackAgentLead) {
       components.unshift({
         type: "AssistantText",
@@ -2254,7 +2841,8 @@ export class AssistantService {
       );
     }
 
-    const presentation = agentRun ? modelPresentation(agentRun) : null;
+    const presentation =
+      agentRun && generatedCoworkerText ? modelPresentation(agentRun) : null;
     if (presentation) components.push(presentation);
 
     const validated = validateAssistantComponents(components);

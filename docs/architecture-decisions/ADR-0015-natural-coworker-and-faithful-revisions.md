@@ -8,7 +8,7 @@ The existing bounded agent and proposal pipeline protected writes, but the appli
 
 ## Decision
 
-Pflegehelfer is a natural agentic coworker on top of a controlled execution system. A bounded model may choose authorized read or draft tools, answer and clarify naturally, and select useful coded GenUI. Tool-backed prose must cite exact result references emitted during that run. The model never receives or creates write authority.
+Pflegehelfer is a natural agentic coworker on top of a controlled execution system. A bounded model may choose authorized read or draft tools, select exact facts, request a clarification and select useful coded GenUI. The server renders displayed record facts from exact run-local claims; harmless source-free dialogue is server-owned. Model prose remains planning input and never becomes clinical fact or display authority. The model never receives durable source identifiers/versions or creates write authority.
 
 Every writable revision retains immutable hashed input records and references the records from which its meaning was derived. A merged note may differ from one quoted span only when an explicit correction and all contributing source records are retained and revalidated. The reviewed revision—not a later model response—is the content executed.
 
@@ -30,7 +30,7 @@ audio is not retained.
 
 ## Consequences
 
-- Grounded natural prose can improve when models improve without replacing the policy/command/provider layers.
+- Natural understanding, claim selection and presentation can improve when models improve without replacing the policy/command/provider layers.
 - Unsupported or uncited generated prose is withheld while server-grounded components remain usable.
 - Original input, source evidence, model interpretation, reviewed revision, accepted record and delivery evidence remain distinguishable.
 - Phrase-specific fallbacks remain temporary degraded-mode aids and cannot be reported as model acceptance.

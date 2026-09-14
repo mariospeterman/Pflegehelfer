@@ -37,7 +37,6 @@ const context: AgentRunContext = {
       {
         id: "nursing-late",
         description: "Late shift guidance",
-        contentHash: "b".repeat(64),
       },
     ],
   },

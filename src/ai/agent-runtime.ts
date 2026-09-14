@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 
 export type AgentTerminalStatus =
+  | "conversation"
   | "answer"
   | "clarification-needed"
   | "draft-ready"
@@ -36,16 +37,29 @@ export interface AgentRunContext {
     packVersion: string;
     packDigest: string;
     system: string[];
-    skills: Array<{ id: string; description: string; contentHash: string }>;
+    skills: Array<{ id: string; description: string }>;
   };
 }
 
 export interface AgentToolResult {
+  /** Opaque run-local handle shown to the model and used in its claims. */
   referenceId: string;
+  /** Durable source reference retained server-side and never serialized. */
+  sourceReferenceId?: string;
   data: unknown;
   sourceVersion?: string;
   freshness?: string;
   complete: boolean;
+  /** Server-only mapping from a result row to its durable source record. */
+  rowProvenance?: Array<{
+    path: string;
+    resourceId: string;
+    version: string;
+    patientId?: string;
+    encounterId?: string;
+    effectiveAt?: string;
+    provider?: string;
+  }>;
 }
 
 export interface AgentEvidenceRecord extends AgentToolResult {
@@ -127,7 +141,12 @@ export type AgentModelDecision =
       input: unknown;
     }
   | {
-      kind: "answer" | "clarification-needed" | "no-action" | "safe-handoff";
+      kind:
+        | "conversation"
+        | "answer"
+        | "clarification-needed"
+        | "no-action"
+        | "safe-handoff";
       text: string;
       /** Exact references emitted by successful tools during this run. */
       sourceReferenceIds?: string[];
@@ -157,7 +176,6 @@ export interface AgentModelAdapter {
     skills: readonly {
       id: string;
       description: string;
-      contentHash: string;
     }[];
     userRequest: string;
     turns: readonly AgentModelTurn[];
@@ -554,7 +572,6 @@ export class BoundedAgentRuntime {
               boundary: "UNTRUSTED_TOOL_DATA",
               referenceId: result.referenceId,
               complete: result.complete,
-              sourceVersion: result.sourceVersion ?? null,
               freshness: result.freshness ?? null,
               data: result.data,
             }),

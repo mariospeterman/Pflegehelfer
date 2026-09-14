@@ -21,8 +21,11 @@ source text from trusted server context, never from model arguments. No SQL,
 shell, unrestricted HTTP, policy publication, approval or final-write tool is
 registered.
 
-The model's terminal prose is not a clinical fact source. Read tools hydrate an
-authorized clinical projection and grounded GenUI lead. A draft tool may invoke
+The model's terminal prose is not a clinical fact source. Read tools expose
+run-local opaque handles and bounded facts; stable identifiers, versions,
+hashes and row provenance remain in the server evidence registry. The model
+selects exact claims and optional presentation, and deterministic code renders
+the grounded GenUI lead. A draft tool may invoke
 the generic typed proposal compiler, but it returns only an opaque reference
 and compact review metadata to the model. Independent validation, one-use
 review authority and human approval remain mandatory before any mutation.

@@ -244,6 +244,7 @@ describe("authorized model context boundary", () => {
   );
 
   it("runs a real, non-writing synthetic model contract test", async () => {
+    let localRequestBody: Record<string, unknown> | null = null;
     vi.stubGlobal(
       "fetch",
       vi.fn((_url: string, init?: RequestInit) => {
@@ -252,6 +253,7 @@ describe("authorized model context boundary", () => {
         const body = JSON.parse(init.body) as {
           messages: Array<{ role: string; content: string }>;
         };
+        localRequestBody = body;
         const prompt = body.messages.find(
           (message) => message.role === "user",
         )?.content;
@@ -285,5 +287,19 @@ describe("authorized model context boundary", () => {
       model: "local-test-model",
       dataBoundary: "local-network",
     });
+    expect(localRequestBody).toMatchObject({
+      response_format: { type: "json_object" },
+    });
+    expect(
+      (
+        localRequestBody as unknown as {
+          messages: Array<{ role: string; content: string }>;
+        }
+      ).messages.some(
+        ({ role, content }) =>
+          role === "system" &&
+          content.includes("Return one JSON object matching this exact schema"),
+      ),
+    ).toBe(true);
   });
 });

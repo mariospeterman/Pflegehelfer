@@ -57,7 +57,36 @@ interface AssistantResponse {
     }>;
   }>;
   openUi: string;
-  evidence: { resourceId: string; version: number; label: string }[];
+  evidence: {
+    resourceId: string;
+    version: number;
+    label: string;
+    sourceVersion?: string;
+    freshness?: string;
+    complete?: boolean;
+    claims?: Array<{
+      path: string;
+      value: string | number | boolean | null;
+    }>;
+    rowProvenance?: Array<{
+      path: string;
+      resourceId: string;
+      version: string;
+      patientId?: string;
+      encounterId?: string;
+      effectiveAt?: string;
+      provider?: string;
+    }>;
+    contextBinding?: {
+      sessionId: string;
+      threadId: string;
+      contextRevision: number;
+      patientId: string | null;
+      encounterId: string | null;
+    };
+    sourceDigest?: string;
+    digest?: string;
+  }[];
   warnings: string[];
 }
 
@@ -1867,8 +1896,13 @@ export function AssistantSurface({
                       </summary>
                       {message.response.evidence.map((item) => (
                         <div key={`${item.resourceId}:${item.version}`}>
-                          <code>{item.resourceId}</code> · v{item.version} ·{" "}
-                          {item.label}
+                          <code>{item.resourceId}</code>
+                          {item.sourceVersion
+                            ? ` · Version ${item.sourceVersion}`
+                            : item.version > 0
+                              ? ` · v${item.version}`
+                              : ""}{" "}
+                          · {item.label}
                         </div>
                       ))}
                     </details>

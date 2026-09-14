@@ -56,6 +56,19 @@ Reproduce and fix these remaining source-level findings, not assumed production 
 
 The task author read source and tests but did not execute the running app or reproduce the local results. GitHub Actions returned no runs for the audited head. Establish fresh evidence yourself.
 
+Current resolution note (2026-09-14): findings 1 and 3 were closed before this
+increment. Finding 2 is closed in the active display path without replacing it
+with another lexical entailment checker: the model selects exact run-local
+claims and optional bounded presentation, while deterministic code renders all
+displayed clinical fact atoms. Model-authored source-free clinical prose is
+never displayed. Measurement concept/value/unit/occurrence time/review status
+and task title/state render as indivisible same-row atoms. Evidence remains
+independent of cards and is archived with exact claims, server-only source
+metadata, a complete-result digest and a final archive digest. The model sees
+only opaque run-local handles plus bounded facts/freshness. Formal
+held-out/model-swap evaluation remains part of G4; all
+other numbered findings and G0–G7 partial gates remain binding.
+
 ## 2. Lock the product and terminology
 
 Pflegehelfer is a provider-agnostic staff coworker for documentation, retrieval, coordination, communication and organizational work. Normal staff use Pflegehelfer. Medplum remains infrastructure and a separately authorized expert inspection surface.
@@ -118,7 +131,7 @@ The runtime must:
 1. Resolve the authenticated principal, purpose, subject/audience, tab/session, patient/encounter when applicable and current approved instruction version.
 2. Load relevant guidance, recent permitted dialogue, pending proposal and source references—not every role file and every patient.
 3. Give the model the useful allowed tool subset and clearly describe tool effects and limitations.
-4. Validate tool name, arguments and current access before execution. Return bounded real data, source versions, occurrence/recorded/retrieved times, completeness and errors.
+4. Validate tool name, arguments and current access before execution. Return the model a run-local opaque handle plus bounded real data, occurrence/recorded/retrieved times, completeness and errors. Retain source identifiers, versions, hashes and row provenance only in the server evidence registry.
 5. Let the model decide whether it needs another read, clarification, a natural answer, optional visualization or a draft/revision.
 6. End the run when awaiting a person. Persist resumable work and release compute; do not poll a model while waiting for approval.
 
@@ -441,8 +454,8 @@ acceptance-recovery record.
 
 ### Runtime agent and tool contracts
 
-- AG-01: the approved skill body/hash reaches the model on demand; unrelated
-  roles and procedures do not.
+- AG-01: the approved skill body reaches the model on demand; its reviewed
+  hash/version remains server-side and unrelated roles and procedures do not.
 - AG-02: the model requests a read tool, observes its real response and can
   select a different next read or terminal outcome without an intent/card path.
 - AG-03: read-only questions produce no final mutation; drafts produce no

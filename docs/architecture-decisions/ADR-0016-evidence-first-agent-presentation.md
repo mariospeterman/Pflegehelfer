@@ -24,11 +24,15 @@ action; and creates the server-owned proposal/reference/hash.
 
 Successful tool results form an immutable request-local evidence registry.
 Evidence exists whether the response uses plain text, a table, a chart or no
-card. Plain conversational text is the default. Optional presentation is a
-non-executable specification selected only from the registered catalog and
-hydrated from one cited authorized result. A final answer cannot cite an
-invented result, and arbitrary model content never creates a component or
-intent token.
+card. The model receives only opaque run-local handles, bounded facts and
+freshness; durable resource IDs, versions, hashes and row provenance never
+cross that boundary. Plain conversational text is the default. The model
+selects exact scalar claims; deterministic code renders displayed record facts
+as indivisible same-row atoms and owns harmless source-free dialogue. Optional
+presentation is a non-executable specification selected only from the
+registered catalog and hydrated from one cited authorized result. A final
+answer cannot cite an invented result, and arbitrary model content never
+creates displayed clinical prose, a component or an intent token.
 
 There is no last-tool intent router and no nested extraction-model request. A
 draft becomes reviewable only when the model returns the exact reference
