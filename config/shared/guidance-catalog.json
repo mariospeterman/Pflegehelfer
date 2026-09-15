@@ -1,0 +1,435 @@
+{
+  "schemaVersion": 1,
+  "roles": [
+    {
+      "id": "pflegeassistenz-srk",
+      "label": "Pflegeassistenz SRK",
+      "capabilityRole": "care-assistant",
+      "workflowIds": ["nursing-day"],
+      "source": "shared",
+      "path": "shared/roles/pflegeassistenz-srk.md",
+      "sha256": "9bb59a80156c67abd2af716c7092b8e92ed845c08e75ed29d2b4017d45dcd5b1"
+    },
+    {
+      "id": "ags-eba",
+      "label": "Assistent/in Gesundheit und Soziales EBA",
+      "capabilityRole": "care-assistant",
+      "workflowIds": ["nursing-day"],
+      "source": "shared",
+      "path": "shared/roles/ags-eba.md",
+      "sha256": "b16b7fee676e5680a95b1e08ddca4c915acdb094733563900b3aed916f72b9b8"
+    },
+    {
+      "id": "fage-efz",
+      "label": "Fachperson Gesundheit EFZ",
+      "capabilityRole": "registered-nurse",
+      "workflowIds": ["nursing-day"],
+      "source": "shared",
+      "path": "shared/roles/fage-efz.md",
+      "sha256": "d9094b071403f11d7e27df5961471abf75432bc8b0c99bda0173c437ed7242d2"
+    },
+    {
+      "id": "pflege-hf",
+      "label": "Dipl. Pflegefachperson HF",
+      "capabilityRole": "registered-nurse",
+      "workflowIds": ["nursing-day"],
+      "source": "shared",
+      "path": "shared/roles/pflege-hf.md",
+      "sha256": "526da56466aefe7d473f1d63da210ecd643348b1ffb27552f74056b68c14ae02"
+    },
+    {
+      "id": "pflege-fh",
+      "label": "Pflegefachperson FH",
+      "capabilityRole": "registered-nurse",
+      "workflowIds": ["nursing-day"],
+      "source": "shared",
+      "path": "shared/roles/pflege-fh.md",
+      "sha256": "7c536d8671aae85ba60eae72a03b2491a89e478202190d1296362ed952348804"
+    },
+    {
+      "id": "pflege-teamleitung",
+      "label": "Pflege-Teamleitung / Schichtleitung",
+      "capabilityRole": "registered-nurse",
+      "workflowIds": ["nursing-day"],
+      "source": "shared",
+      "path": "shared/roles/pflege-teamleitung.md",
+      "sha256": "43d78f4e589bb1550da56fc465e3c0be51f8bae5987afc7bf496ccd415a85cbc"
+    },
+    {
+      "id": "arzt",
+      "label": "Ärztlicher Dienst",
+      "capabilityRole": "physician",
+      "workflowIds": ["physician-rounds"],
+      "source": "shared",
+      "path": "shared/roles/arzt.md",
+      "sha256": "27bf6ab7965074ffbbbd9944124eb0f3dd50d15b33da892075759d9a624547e6"
+    },
+    {
+      "id": "apotheker",
+      "label": "Apotheker/in",
+      "capabilityRole": "pharmacy",
+      "workflowIds": ["support-day"],
+      "source": "shared",
+      "path": "shared/roles/apotheker.md",
+      "sha256": "5578530b43abffe8bb3161195a1be8af7a25ddc6f3e3d93259b15b99ea8eb290"
+    },
+    {
+      "id": "pharma-assistenz",
+      "label": "Pharma-Assistent/in",
+      "capabilityRole": "pharmacy",
+      "workflowIds": ["support-day"],
+      "source": "shared",
+      "path": "shared/roles/pharma-assistenz.md",
+      "sha256": "f4b37649d9d85b4908b168b00881f1bf0998b413a21a9da496b94f17d1c5594b"
+    },
+    {
+      "id": "physiotherapie",
+      "label": "Physiotherapie",
+      "capabilityRole": "physiotherapy",
+      "workflowIds": ["support-day"],
+      "source": "shared",
+      "path": "shared/roles/physiotherapie.md",
+      "sha256": "ed6b994f4a1bc26b1151591cb66e8e3211fe9e70de1e1ca84871c10717f56715"
+    },
+    {
+      "id": "ergotherapie",
+      "label": "Ergotherapie",
+      "capabilityRole": "occupational-therapy",
+      "workflowIds": ["support-day"],
+      "source": "shared",
+      "path": "shared/roles/ergotherapie.md",
+      "sha256": "4131071a1e5fbdaa207c7fbb116fcb324669f3afcd06892b00fdfd39ebd57664"
+    },
+    {
+      "id": "logopaedie",
+      "label": "Logopädie",
+      "capabilityRole": "physiotherapy",
+      "workflowIds": ["support-day"],
+      "source": "shared",
+      "path": "shared/roles/logopaedie.md",
+      "sha256": "08682fa79764bc9c1add2d236c5098f6ce95996e99c024afe38fc022c16851b5"
+    },
+    {
+      "id": "ernaehrungsberatung",
+      "label": "Ernährungsberatung",
+      "capabilityRole": "physiotherapy",
+      "workflowIds": ["support-day"],
+      "source": "shared",
+      "path": "shared/roles/ernaehrungsberatung.md",
+      "sha256": "28c3c8d2a348d43df39a1406eda30be52400ff8ce99063f2240061179d95211c"
+    },
+    {
+      "id": "transport",
+      "label": "Transport",
+      "capabilityRole": "transport",
+      "workflowIds": ["support-day"],
+      "source": "shared",
+      "path": "shared/roles/transport.md",
+      "sha256": "56c72c948927b23f415a04dcb8c48f592e70518159b7f8ddb2bdc1ca006bf4eb"
+    },
+    {
+      "id": "service-hotellerie",
+      "label": "Service / Hotellerie",
+      "capabilityRole": "service",
+      "workflowIds": ["support-day"],
+      "source": "shared",
+      "path": "shared/roles/service-hotellerie.md",
+      "sha256": "b5e6ab581a546776a2bc6410b4e9eb1a4b7fdb5669dd93d7e6d4b438afdd729d"
+    },
+    {
+      "id": "reinigung",
+      "label": "Reinigung",
+      "capabilityRole": "service",
+      "workflowIds": ["support-day"],
+      "source": "shared",
+      "path": "shared/roles/reinigung.md",
+      "sha256": "9828712775da414048bb775c3c9361196a7cc43af06c82a37a42cba6e7e13060"
+    },
+    {
+      "id": "administration-eintritt",
+      "label": "Administration / Eintritt / Austritt",
+      "capabilityRole": "administration",
+      "workflowIds": ["support-day"],
+      "source": "shared",
+      "path": "shared/roles/administration-eintritt.md",
+      "sha256": "b85535ee29ecde0215ff347079ea1218bba0d6d2dfdb1073fe8df7f2b9860586"
+    },
+    {
+      "id": "abrechnung-versicherungskoordination",
+      "label": "Abrechnung / Versicherungskoordination",
+      "capabilityRole": "administration",
+      "workflowIds": ["support-day"],
+      "source": "shared",
+      "path": "shared/roles/abrechnung-versicherungskoordination.md",
+      "sha256": "583063cb3d6212b00161c3259f213357e3924d18d947c3af35728cb436a1eeeb"
+    },
+    {
+      "id": "heimleitung",
+      "label": "Heimleitung",
+      "capabilityRole": "management",
+      "workflowIds": ["support-day"],
+      "source": "shared",
+      "path": "shared/roles/heimleitung.md",
+      "sha256": "6b69acb3004735becf39d75566188bd80090a474776788356fdd49de384b34a0"
+    },
+    {
+      "id": "geschaeftsleitung",
+      "label": "Geschäftsleitung / CEO",
+      "capabilityRole": "management",
+      "workflowIds": ["support-day"],
+      "source": "shared",
+      "path": "shared/roles/geschaeftsleitung.md",
+      "sha256": "54e767f7ed88c355343e701c7eabe79563bd110cd57a0d0e0ab266a0d5988bf0"
+    },
+    {
+      "id": "finanzen-cfo",
+      "label": "Finanzen / CFO",
+      "capabilityRole": "management",
+      "workflowIds": ["support-day"],
+      "source": "shared",
+      "path": "shared/roles/finanzen-cfo.md",
+      "sha256": "0d8f473c383d9ebd49adfc0a8b25008b5a439ddd5a657667399502023a0d6add"
+    },
+    {
+      "id": "hr",
+      "label": "Human Resources",
+      "capabilityRole": "hr",
+      "workflowIds": ["support-day"],
+      "source": "shared",
+      "path": "shared/roles/hr.md",
+      "sha256": "f943c684b0698021b7338f4b2cac58b862b3a8d5a8802b010444760a65b66509"
+    },
+    {
+      "id": "berufsbildung",
+      "label": "Berufsbildung",
+      "capabilityRole": "hr",
+      "workflowIds": ["support-day"],
+      "source": "shared",
+      "path": "shared/roles/berufsbildung.md",
+      "sha256": "b413d2e992d42f481ee97cae7794350edd3d3648a73877aa31c0a898e8e56038"
+    },
+    {
+      "id": "qualitaet-patientensicherheit",
+      "label": "Qualität / Patientensicherheit",
+      "capabilityRole": "quality-safety",
+      "workflowIds": ["support-day"],
+      "source": "shared",
+      "path": "shared/roles/qualitaet-patientensicherheit.md",
+      "sha256": "b50f8a637f750dba203caed9d7ca0bdc2ed4eb57447169a7609c5025a4910cce"
+    },
+    {
+      "id": "it-integration",
+      "label": "IT / Integration",
+      "capabilityRole": "it",
+      "workflowIds": ["support-day"],
+      "source": "shared",
+      "path": "shared/roles/it-integration.md",
+      "sha256": "ac4d8edd39c60732ac17a01b3e514616ce06725f739d710f032a8eb3877c9c12"
+    }
+  ],
+  "workflows": [
+    {
+      "id": "nursing-night",
+      "name": "Nachtdienst Pflege",
+      "description": "Ruhiger, unterbrechungstoleranter Nachtdienst mit expliziter Morgenübergabe.",
+      "workflowId": "nursing-day",
+      "eligibleRoleProfiles": [
+        "pflegeassistenz-srk",
+        "ags-eba",
+        "fage-efz",
+        "pflege-hf",
+        "pflege-fh",
+        "pflege-teamleitung"
+      ],
+      "source": "shared",
+      "path": "shared/workflows/nursing-night/SKILL.md",
+      "sha256": "62faf14cd5e37f56afce91f498a32bc5047c01538627693b22285f838a6df34c"
+    },
+    {
+      "id": "physician-rounds",
+      "name": "Ärztliche Runde",
+      "description": "Quellengebundene Fragen, menschliche Entscheidungen und geschlossene Follow-ups.",
+      "workflowId": "physician-rounds",
+      "eligibleRoleProfiles": ["arzt"],
+      "source": "shared",
+      "path": "shared/workflows/physician-rounds/SKILL.md",
+      "sha256": "506ff90ce31085912d26fa06db3e40a495818ffc36f1dee460193d343e8b0a63"
+    },
+    {
+      "id": "pharmacy-review",
+      "name": "Pharmazeutischer Review",
+      "description": "Bestehende Medikationsquellen und Diskrepanzen ohne automatische Änderung.",
+      "workflowId": "support-day",
+      "eligibleRoleProfiles": ["apotheker"],
+      "source": "shared",
+      "path": "shared/workflows/pharmacy-review/SKILL.md",
+      "sha256": "d855d9abe33195c9a0ccd2ec6f15a33e5a50ed205215aea7d8ac7d1069f3bf45"
+    },
+    {
+      "id": "pharmacy-logistics",
+      "name": "Apothekenlogistik",
+      "description": "Bereitstellung, Ausnahme und Übergabe an autorisierte Apotheker.",
+      "workflowId": "support-day",
+      "eligibleRoleProfiles": ["apotheker", "pharma-assistenz"],
+      "source": "shared",
+      "path": "shared/workflows/pharmacy-logistics/SKILL.md",
+      "sha256": "a28b542a03f154991e51d75baac70716a853e12d24115ca7b6aa9dfe8245321a"
+    },
+    {
+      "id": "therapy-day",
+      "name": "Therapietag",
+      "description": "Termine, bestehende Ziele, berichtete Interventionen und Ergebnisse.",
+      "workflowId": "support-day",
+      "eligibleRoleProfiles": [
+        "physiotherapie",
+        "ergotherapie",
+        "logopaedie",
+        "ernaehrungsberatung"
+      ],
+      "source": "shared",
+      "path": "shared/workflows/therapy-day/SKILL.md",
+      "sha256": "36799829a4539cd2b78ecdab195f1ee8423c12e46522cd8705e469e22320f2a3"
+    },
+    {
+      "id": "transport-day",
+      "name": "Transporttag",
+      "description": "Minimaler Transportauftrag von Abholung bis Übergabe oder Ausnahme.",
+      "workflowId": "support-day",
+      "eligibleRoleProfiles": ["transport"],
+      "source": "shared",
+      "path": "shared/workflows/transport-day/SKILL.md",
+      "sha256": "123765a2d59f0aa0ea9ee3facbad7236b2ace27f21314d84a612b93a6a99f176"
+    },
+    {
+      "id": "service-day",
+      "name": "Service- und Hotellerietag",
+      "description": "Mahlzeiten-, Zimmer- und Serviceaufträge mit klaren Ausnahmen.",
+      "workflowId": "support-day",
+      "eligibleRoleProfiles": ["service-hotellerie"],
+      "source": "shared",
+      "path": "shared/workflows/service-day/SKILL.md",
+      "sha256": "5a4cf786ec5e89ad6354bcb0a7e85fa97247aed18c2b5c0872e573e3d0ece085"
+    },
+    {
+      "id": "cleaning-round",
+      "name": "Reinigungsrunde",
+      "description": "Raumarbeit, genehmigte Hygienehinweise und separate Raumfreigabe.",
+      "workflowId": "support-day",
+      "eligibleRoleProfiles": ["reinigung"],
+      "source": "shared",
+      "path": "shared/workflows/cleaning-round/SKILL.md",
+      "sha256": "c5a49d234f7e62b2cffd58ffcffa2a6b9a3a56a92dbff4cfa6771330d9af2250"
+    },
+    {
+      "id": "intake-discharge",
+      "name": "Eintritt und Austritt",
+      "description": "Administrativer Lückenreview ohne automatische klinische Signatur.",
+      "workflowId": "support-day",
+      "eligibleRoleProfiles": ["administration-eintritt"],
+      "source": "shared",
+      "path": "shared/workflows/intake-discharge/SKILL.md",
+      "sha256": "5446b94b8c5e7f7ec1b4afbe3ca0ad3163cbf51bf197d89871f8c14daf949777"
+    },
+    {
+      "id": "service-evidence-review",
+      "name": "Leistungsnachweis prüfen",
+      "description": "Vollständigkeits- und Duplikatprüfung vor genehmigtem Export.",
+      "workflowId": "support-day",
+      "eligibleRoleProfiles": [
+        "administration-eintritt",
+        "abrechnung-versicherungskoordination"
+      ],
+      "source": "shared",
+      "path": "shared/workflows/service-evidence-review/SKILL.md",
+      "sha256": "5f754d33da44b48dcd96e74dbcfa0c704b8936f3c3362c27576591a01db0ed2e"
+    },
+    {
+      "id": "team-lead-shift",
+      "name": "Schichtleitung",
+      "description": "Abdeckung und bewusste Delegation ohne private Mitarbeiterverläufe.",
+      "workflowId": "nursing-day",
+      "eligibleRoleProfiles": ["pflege-teamleitung"],
+      "source": "shared",
+      "path": "shared/workflows/team-lead-shift/SKILL.md",
+      "sha256": "ad3e4fa21cf897e41d64984a84ce508ce0f1876febbfe52760354f145cfbc676"
+    },
+    {
+      "id": "home-management-day",
+      "name": "Heimleitungstag",
+      "description": "Betriebsausnahmen, Eigentümer und Fortschrittsreview im Minimalprinzip.",
+      "workflowId": "support-day",
+      "eligibleRoleProfiles": ["heimleitung", "geschaeftsleitung"],
+      "source": "shared",
+      "path": "shared/workflows/home-management-day/SKILL.md",
+      "sha256": "9f18f06df2d62796d4ed086097d4755ed96f7070df1e9e37ac5ea8440c8372f5"
+    },
+    {
+      "id": "finance-review",
+      "name": "Finanzreview",
+      "description": "Aggregate Vollständigkeit und Abgleich ohne autonome Tarifentscheidung.",
+      "workflowId": "support-day",
+      "eligibleRoleProfiles": [
+        "abrechnung-versicherungskoordination",
+        "finanzen-cfo"
+      ],
+      "source": "shared",
+      "path": "shared/workflows/finance-review/SKILL.md",
+      "sha256": "b156a9d61a4ccf12fb5ead059d980c31feabd2c9b64eed4fd00f9ed21b4b6c36"
+    },
+    {
+      "id": "hr-onboarding-training",
+      "name": "HR Onboarding und Training",
+      "description": "Vertrauliche Personalprozesse und Qualifikationsfristen mit Humanentscheid.",
+      "workflowId": "support-day",
+      "eligibleRoleProfiles": ["hr"],
+      "source": "shared",
+      "path": "shared/workflows/hr-onboarding-training/SKILL.md",
+      "sha256": "4ea4e6bab1c9996ce107141bd1e5304403ffa97ad42c333d22ebb9b6b55b008f"
+    },
+    {
+      "id": "education-supervision",
+      "name": "Berufsbildung und Supervision",
+      "description": "Lernaufträge und Supervision mit getrennten Berechtigungen.",
+      "workflowId": "support-day",
+      "eligibleRoleProfiles": ["berufsbildung"],
+      "source": "shared",
+      "path": "shared/workflows/education-supervision/SKILL.md",
+      "sha256": "ba12f00f2adbcace52f28d96ed1dd86548533e97715a20a12e2c75b7ec4a666d"
+    },
+    {
+      "id": "quality-review",
+      "name": "Qualitätsreview",
+      "description": "Zweckgebundene Prüfung mit unveränderter Originalevidenz.",
+      "workflowId": "support-day",
+      "eligibleRoleProfiles": ["qualitaet-patientensicherheit"],
+      "source": "shared",
+      "path": "shared/workflows/quality-review/SKILL.md",
+      "sha256": "199cc662d6e3a1ef5cf5b73a034cc5c43770f5678ddbcc510d2babf4447b4439"
+    },
+    {
+      "id": "it-operations",
+      "name": "IT- und Integrationsbetrieb",
+      "description": "Servicezustand, fehlgeschlagene Jobs und receipt-gebundene Wiederherstellung.",
+      "workflowId": "support-day",
+      "eligibleRoleProfiles": ["it-integration"],
+      "source": "shared",
+      "path": "shared/workflows/it-operations/SKILL.md",
+      "sha256": "c1ee2927a82949fb28bf04fe9d950d3f283b51e29febc3dc1dbadda3b5e81bc4"
+    },
+    {
+      "id": "workflow-improvement",
+      "name": "Workflow verbessern",
+      "description": "Human geprüfter Diff, Pilot, Aktivierung für neue Sessions und Rollback.",
+      "workflowId": "support-day",
+      "eligibleRoleProfiles": [
+        "heimleitung",
+        "geschaeftsleitung",
+        "qualitaet-patientensicherheit",
+        "it-integration"
+      ],
+      "source": "shared",
+      "path": "shared/workflows/workflow-improvement/SKILL.md",
+      "sha256": "47bd316b383a03037a2e18fbecb7fd8b0023980e482468c9250d40fbe48ab7eb"
+    }
+  ]
+}
