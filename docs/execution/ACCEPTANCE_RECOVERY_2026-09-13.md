@@ -421,3 +421,10 @@ still contains the reported prior key; it was not printed or used. The user
 will install the replacement key manually through authorized account/secret
 access. Until a new key passes the full non-writing model journey without
 fallback, connected-model acceptance remains **unpassed**.
+
+Publication evidence: remote branch and PR head matched
+`684e44f4b969e339e58bf6fc9fba8b5114c0c638`; the rebuilt live API and PWA
+reported the same clean source SHA and build ID `pfh-684e44f4b969`. GitHub CI
+run `34929873156` then passed `verify`, security, the complete post-fix E2E
+matrix and operations from a clean checkout in 4m39s. A later evidence-only
+documentation commit does not change implementation SHA `690901a8`.
