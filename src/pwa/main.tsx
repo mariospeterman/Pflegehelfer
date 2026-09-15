@@ -8,7 +8,9 @@ document.documentElement.dataset.pfhBuildId = __PFH_BUILD_ID__;
 if (__PFH_BUILD_SHA__)
   document.documentElement.dataset.pfhBuildSha = __PFH_BUILD_SHA__;
 
-if ("serviceWorker" in navigator && import.meta.env.PROD) {
+const ephemeralTunnel = window.location.hostname.endsWith(".ngrok-free.app");
+
+if ("serviceWorker" in navigator && import.meta.env.PROD && !ephemeralTunnel) {
   window.addEventListener(
     "load",
     () => void navigator.serviceWorker.register("/sw.js"),
