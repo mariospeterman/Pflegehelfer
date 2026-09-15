@@ -372,3 +372,52 @@ not valid acceptance evidence. On 2026-09-14 the atomic acceptance test (1),
 operational store (14), provider worker (3), natural continuity (3), projection
 ordering (1), synchronization summary (1) and Medplum concurrency (1) all
 passed sequentially against the live stores.
+
+## Conversational acceptance closure — 2026-09-15
+
+Implementation SHA:
+`690901a8ab0509c1b55e2d23f9607a1c30ac4a2e`.
+
+This increment keeps the published OpenUI frontend and closes three narrower
+acceptance gaps. Model-authored dialogue is now separate from exact
+server-rendered clinical facts; contradictory or unsupported clinical wording
+is withheld without replacing faithful explanation or specific clarification.
+The AI SDK route emits real inference/tool/validation/persistence progress
+steps while final review authority stays unavailable until durable authority
+and conversation persistence succeed. Historical draft rendering now consumes
+explicit proposal revision/status returned by the operational store, and the
+client reloads that authority after a streamed turn instead of detecting a
+`DraftActionCard` substring.
+
+Verified evidence:
+
+- `pnpm verify`: formatting, zero-warning lint, both TypeScript configurations,
+  427 enabled tests with 25 declared environment skips, and production PWA/API
+  builds passed.
+- Sequential PostgreSQL suites: 7 files / 24 tests passed against PostgreSQL 16. The atomic acceptance test now asserts persisted proposal revision 1 and
+  `consumed` status in restored conversation history.
+- Real Medplum 5.1.37 stale-version transaction: 1/1 passed with
+  `PFH_STORAGE_MODE=medplum`; a run lacking that setting instantiated memory
+  storage and is not counted.
+- Independent stateful provider simulator authentication/read-back/restart:
+  1/1 passed. Relational provider worker delivery/read-back/recovery remained
+  included in the 24 PostgreSQL tests.
+- Integrated 390 px browser journey passed three conversational revisions,
+  one latest approval before reload, approval on the same page, and no approval
+  control after a second reload.
+- The memory-profile browser matrix reached 66 passes and 23 declared skips,
+  then found one restored named-recipient label regression. The repaired exact
+  recipient case and the final approval/reload case both passed on focused
+  desktop rerun. This is kept separate from integrated-store evidence and is
+  not described as one clean post-fix matrix run.
+- `verify:security`, `verify:ops` and `verify:airgap` passed. The source scan
+  found no embedded secrets.
+
+Runtime used for these journeys: `deterministic-clinical-router-v1`, OpenUI
+`0.9.13`, Vercel AI SDK `6.0.282`, PostgreSQL 16, Medplum 5.1.37 and the
+stateful synthetic provider simulator. The public demo process deliberately
+sets `OPENAI_API_KEY` empty and uses deterministic mode. The ignored local env
+still contains the reported prior key; it was not printed or used. The user
+will install the replacement key manually through authorized account/secret
+access. Until a new key passes the full non-writing model journey without
+fallback, connected-model acceptance remains **unpassed**.
