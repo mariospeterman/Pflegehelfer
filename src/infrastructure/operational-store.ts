@@ -182,6 +182,10 @@ export interface StoredConversationTurn {
   inputModality: "typed" | "voice";
   voiceTranscriptProvenance?: VoiceTranscriptProvenance[];
   executionStatus?: "locally-accepted";
+  proposalLifecycle?: {
+    revision: number;
+    status: "pending" | "superseded" | "consumed" | "expired";
+  };
   originPatientId?: string | null;
   originEncounterId?: string | null;
   originThreadId?: string;
@@ -548,6 +552,8 @@ export class InMemoryOperationalStore implements OperationalStore {
       reviewItems: Array<{ id: string; label: string; kind: string }>;
       clientContextId: string | null;
       consumed: boolean;
+      revision: number;
+      proposalStatus: "pending" | "superseded" | "consumed" | "expired";
     }
   >();
   private readonly voiceAuthorities = new Map<
@@ -759,10 +765,25 @@ export class InMemoryOperationalStore implements OperationalStore {
     const turns =
       this.memoryThreads.get(context?.threadId ?? session.threadId)?.turns ??
       [];
-    return structuredClone(
+    const scoped =
       patientId === undefined
         ? turns
-        : turns.filter((turn) => storedTurnPatientId(turn) === patientId),
+        : turns.filter((turn) => storedTurnPatientId(turn) === patientId);
+    return structuredClone(
+      scoped.map((turn) => {
+        const authority = [...this.authorities.values()].find(
+          (candidate) => candidate.responseId === turn.id,
+        );
+        return authority
+          ? {
+              ...turn,
+              proposalLifecycle: {
+                revision: authority.revision,
+                status: authority.proposalStatus,
+              },
+            }
+          : turn;
+      }),
     );
   }
   loadPendingCarePlan(
@@ -1299,16 +1320,18 @@ export class InMemoryOperationalStore implements OperationalStore {
           thread.contextRevision !== input.contextRevision)
     )
       return Promise.reject(new Error("ASSISTANT_CONTEXT_STALE"));
-    for (const authority of this.authorities.values())
-      if (
-        !authority.consumed &&
+    const related = [...this.authorities.values()].filter(
+      (authority) =>
         authority.record.actorId === input.record.actorId &&
         authority.threadId === input.threadId &&
         authority.record.patientId === input.record.patientId &&
-        authority.record.encounterId === input.record.encounterId &&
-        authority.responseId !== input.responseId
-      )
+        authority.record.encounterId === input.record.encounterId,
+    );
+    for (const authority of related)
+      if (!authority.consumed && authority.responseId !== input.responseId) {
         authority.consumed = true;
+        authority.proposalStatus = "superseded";
+      }
     if (!this.authorities.has(input.tokenHash))
       this.authorities.set(input.tokenHash, {
         record: structuredClone(input.record),
@@ -1323,6 +1346,8 @@ export class InMemoryOperationalStore implements OperationalStore {
         }>,
         clientContextId: input.clientContextId ?? null,
         consumed: false,
+        revision: Math.max(0, ...related.map(({ revision }) => revision)) + 1,
+        proposalStatus: "pending",
       });
     return Promise.resolve();
   }
@@ -1361,8 +1386,10 @@ export class InMemoryOperationalStore implements OperationalStore {
         candidate.record.actorId === authority.record.actorId &&
         candidate.threadId === authority.threadId &&
         candidate.responseId === authority.responseId
-      )
+      ) {
         candidate.consumed = true;
+        candidate.proposalStatus = "consumed";
+      }
     return Promise.resolve(true);
   }
   markIntentConversationAccepted(tokenHash: string): Promise<void> {
@@ -1409,8 +1436,10 @@ export class InMemoryOperationalStore implements OperationalStore {
         candidate.record.actorId === authority.record.actorId &&
         candidate.threadId === authority.threadId &&
         candidate.responseId === authority.responseId
-      )
+      ) {
         candidate.consumed = true;
+        candidate.proposalStatus = "consumed";
+      }
     const receipt: AcceptedCommandReceipt = {
       id: randomUUID(),
       statusCode: input.statusCode,
@@ -1640,8 +1669,10 @@ export class InMemoryOperationalStore implements OperationalStore {
   }
   releaseIntentAuthority(tokenHash: string): Promise<void> {
     const authority = this.authorities.get(tokenHash);
-    if (authority && authority.record.expiresAt >= Date.now())
+    if (authority && authority.record.expiresAt >= Date.now()) {
       authority.consumed = false;
+      authority.proposalStatus = "pending";
+    }
     return Promise.resolve();
   }
   revokeResponseAuthorities(
@@ -1652,8 +1683,10 @@ export class InMemoryOperationalStore implements OperationalStore {
       if (
         authority.record.actorId === actorId &&
         authority.responseId === responseId
-      )
+      ) {
         authority.consumed = true;
+        authority.proposalStatus = "expired";
+      }
     return Promise.resolve();
   }
   suspendActorAuthorities(actorId: string): Promise<void> {
@@ -2295,13 +2328,28 @@ export class PostgresOperationalStore
     const result = await this.pool.query<{
       content: StoredConversationTurn;
       created_at: Date;
+      proposal_revision: number | null;
+      proposal_status: "pending" | "superseded" | "consumed" | "expired" | null;
     }>(
-      `SELECT content, created_at FROM (
-         SELECT content, created_at, sequence FROM assistant_messages
+      `SELECT recent.content,recent.created_at,
+              proposal.revision AS proposal_revision,
+              proposal.status AS proposal_status
+       FROM (
+         SELECT organization_id,thread_id,id,content,created_at,sequence
+         FROM assistant_messages
          WHERE organization_id=$1 AND thread_id=$2 AND kind='assistant'
            AND ($3::boolean = false OR patient_id IS NOT DISTINCT FROM $4)
          ORDER BY sequence DESC LIMIT 80
-       ) recent ORDER BY sequence ASC`,
+       ) recent
+       LEFT JOIN LATERAL (
+         SELECT revision,status
+         FROM assistant_proposal_revisions
+         WHERE organization_id=recent.organization_id
+           AND thread_id=recent.thread_id
+           AND source_response_id=recent.id
+         ORDER BY revision DESC,created_at DESC LIMIT 1
+       ) proposal ON true
+       ORDER BY recent.sequence ASC`,
       [
         organizationId,
         context?.threadId ?? session.threadId,
@@ -2312,6 +2360,14 @@ export class PostgresOperationalStore
     return result.rows.map((row) => ({
       ...row.content,
       createdAt: row.content.createdAt ?? row.created_at.toISOString(),
+      ...(row.proposal_revision !== null && row.proposal_status
+        ? {
+            proposalLifecycle: {
+              revision: row.proposal_revision,
+              status: row.proposal_status,
+            },
+          }
+        : {}),
     }));
   }
   async loadPendingCarePlan(

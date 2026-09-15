@@ -268,8 +268,14 @@ describe("runtime-guided assistant agent", () => {
     expect(lead?.type).toBe("AssistantText");
     if (lead?.type !== "AssistantText")
       throw new Error("Missing grounded lead");
-    expect(lead.message).toContain("Offene Übergabepunkte: 2");
-    expect(response.components).toHaveLength(1);
+    expect(lead.message).toBe("Offen: 2.");
+    const facts = response.components[1];
+    expect(facts?.type).toBe("ClinicalFacts");
+    if (facts?.type !== "ClinicalFacts")
+      throw new Error("Missing exact clinical facts");
+    expect(facts.items).toContain("Offene Übergabepunkte: 2.");
+    expect(facts.sourceLabel).toBe("2 autorisierte Quellen");
+    expect(response.components).toHaveLength(2);
     expect(response.evidence.map(({ resourceId }) => resourceId)).toEqual([
       expect.stringMatching(/^RuntimeInstruction\/nursing-early\//),
       "WorkdayHandover/handover-test/_history/3",
@@ -623,9 +629,13 @@ describe("runtime-guided assistant agent", () => {
 
     expect(response.components[0]).toEqual({
       type: "AssistantText",
-      message: "207 · Luca Demo · Mobilisation mit Rollator: offen.",
+      message: "Die Mobilisation mit Rollator steht noch aus.",
     });
-    expect(response.components).toHaveLength(1);
+    expect(response.components[1]).toMatchObject({
+      type: "ClinicalFacts",
+      items: ["207 · Luca Demo · Mobilisation mit Rollator: offen."],
+    });
+    expect(response.components).toHaveLength(2);
     expect(response.evidence).toHaveLength(1);
     expect(response.evidence[0]?.resourceId).toMatch(/^Task\/search\//);
     expect(response.evidence[0]?.complete).toBe(true);
@@ -716,8 +726,15 @@ describe("runtime-guided assistant agent", () => {
       workingContext: workingContext(),
     });
 
-    expect(response.components).toHaveLength(1);
-    expect(response.components[0]?.type).toBe("AssistantText");
+    expect(response.components).toHaveLength(2);
+    expect(response.components[0]).toEqual({
+      type: "AssistantText",
+      message: "Für Luca Demo steht die Mobilisation mit Rollator noch aus.",
+    });
+    expect(response.components[1]).toMatchObject({
+      type: "ClinicalFacts",
+      sourceLabel: "2 autorisierte Quellen",
+    });
     expect(response.evidence.map(({ resourceId }) => resourceId)).toEqual([
       expect.stringMatching(/^Patient\/p-luca\/_history\//),
       expect.stringMatching(/^Task\/search\//),

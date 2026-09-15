@@ -342,7 +342,21 @@ export class BoundedAgentRuntime {
     context: AgentRunContext;
     allowedTools: readonly string[];
     signal?: AbortSignal;
+    onProgress?: (event: {
+      stage: "model" | "tool" | "validation";
+      toolName?: string;
+    }) => void;
   }): Promise<AgentRunResult> {
+    const reportProgress = (event: {
+      stage: "model" | "tool" | "validation";
+      toolName?: string;
+    }) => {
+      try {
+        input.onProgress?.(event);
+      } catch {
+        // Progress is advisory; it must never affect the bounded decision.
+      }
+    };
     const trace: AgentTraceEvent[] = [];
     const turns: AgentModelTurn[] = [
       ...input.context.workingContext.recentConversation
@@ -376,6 +390,7 @@ export class BoundedAgentRuntime {
             toolCalls,
           };
         const started = performance.now();
+        reportProgress({ stage: "model" });
         let decision: AgentModelDecision;
         try {
           decision = await this.model.next({
@@ -411,6 +426,7 @@ export class BoundedAgentRuntime {
           latencyMs: Math.round(performance.now() - started),
         });
         if (decision.kind !== "tool-call") {
+          reportProgress({ stage: "validation" });
           const citedReferences = decision.sourceReferenceIds ?? [];
           const inventedReference = citedReferences.find(
             (referenceId) => !toolReferences.has(referenceId),
@@ -524,6 +540,7 @@ export class BoundedAgentRuntime {
             toolCalls,
           };
         const toolStarted = performance.now();
+        reportProgress({ stage: "tool", toolName: decision.toolName });
         try {
           const result = await this.registry.execute(
             input.allowedTools,

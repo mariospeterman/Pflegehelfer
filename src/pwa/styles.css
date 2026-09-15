@@ -1069,6 +1069,19 @@ input:focus-visible {
   color: var(--muted);
   font-size: 10px;
 }
+.clinical-facts-card {
+  border-left: 3px solid color-mix(in srgb, var(--blue) 58%, var(--line));
+  background: color-mix(in srgb, var(--blue-soft) 42%, var(--surface));
+}
+.clinical-facts-card ul {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 20px;
+}
+.clinical-facts-card li {
+  line-height: 1.45;
+}
 .workflow-opening-card {
   background: linear-gradient(145deg, var(--surface), var(--blue-soft));
   border-color: color-mix(in srgb, var(--blue) 23%, var(--line));

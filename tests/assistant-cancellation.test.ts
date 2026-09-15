@@ -182,7 +182,7 @@ describe("assistant request cancellation", () => {
 
   it.each([
     ["/api/v1/assistant/query", 500],
-    ["/api/v1/assistant/query/stream", 503],
+    ["/api/v1/assistant/query/stream", 200],
   ])(
     "revokes durable authority when conversation persistence fails at %s",
     async (url, expectedStatus) => {
@@ -234,6 +234,10 @@ describe("assistant request cancellation", () => {
       });
 
       expect(response.statusCode).toBe(expectedStatus);
+      if (url.endsWith("/stream"))
+        expect(response.body).toContain(
+          "Die Assistenzantwort konnte nicht sicher übertragen werden.",
+        );
       expect(stored).toBeDefined();
       const authority = stored!;
       await expect(

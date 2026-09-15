@@ -129,7 +129,11 @@ describe.runIf(Boolean(databaseUrl))("atomic local command acceptance", () => {
       await expect(
         store.loadConversation("u-assistant", "care-assistant", "p-luca"),
       ).resolves.toMatchObject([
-        { id: responseId, executionStatus: "locally-accepted" },
+        {
+          id: responseId,
+          executionStatus: "locally-accepted",
+          proposalLifecycle: { revision: 1, status: "consumed" },
+        },
       ]);
       await expect(
         store.loadIntentAuthority({

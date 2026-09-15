@@ -20,6 +20,10 @@ interface ConversationResponse {
       components: Array<{ type: string; message?: string }>;
     };
     executionStatus?: "locally-accepted";
+    proposalLifecycle?: {
+      revision: number;
+      status: "pending" | "superseded" | "consumed" | "expired";
+    };
     createdAt?: string;
   }>;
   conversations: Array<{
@@ -135,18 +139,20 @@ export function createConversationStorage(userId: string): ChatStorage {
           {
             role: "assistant",
             id: turn.id,
+            ...(turn.proposalLifecycle
+              ? {
+                  name: `pflegehelfer-proposal:${turn.proposalLifecycle.status}:${turn.proposalLifecycle.revision}`,
+                }
+              : {}),
             content:
+              turn.proposalLifecycle?.status === "consumed" ||
               turn.executionStatus === "locally-accepted"
                 ? completedOpenUi
-                : pending?.responseId === turn.id
+                : turn.proposalLifecycle?.status === "pending" &&
+                    pending?.responseId === turn.id
                   ? pending.response.openUi
-                  : turn.response.components.some(
-                        (component) =>
-                          component.type === "SafetyAlert" &&
-                          component.message?.startsWith(
-                            "Diese frühere offene Änderung ist nicht mehr ausführbar.",
-                          ),
-                      )
+                  : turn.proposalLifecycle &&
+                      turn.proposalLifecycle.status !== "pending"
                     ? supersededOpenUi
                     : turn.response.openUi,
           },

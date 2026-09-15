@@ -1618,17 +1618,26 @@ export function buildApp(
           : freshRecord.command === "communication:draft"
             ? "physician-question"
             : "task";
+      const isCommunication = freshRecord.command === "communication:draft";
+      const recipientLabel =
+        freshRecord.payload.recipientLabel ??
+        freshRecord.payload.recipientRole ??
+        "freigegebenes Teammitglied";
       component = {
         type: "DraftAction",
         kind,
-        title: `Offene Prüfung · ${patient.displayName}`,
+        title: isCommunication
+          ? `Nachricht an ${recipientLabel} · ${patient.displayName}`
+          : `Offene Prüfung · ${patient.displayName}`,
         preview: (
           freshRecord.payload.structuredText ??
           freshRecord.payload.request ??
           freshRecord.payload.title ??
           "Offener Entwurf"
         ).slice(0, 1200),
-        actionLabel: "Erneut prüfen und übernehmen",
+        actionLabel: isCommunication
+          ? "Frage prüfen und senden"
+          : "Erneut prüfen und übernehmen",
         intentToken,
         sourceLabel:
           "Gespeicherter Entwurf · nach Aktualisierung erneut autorisiert",
@@ -2470,6 +2479,7 @@ export function buildApp(
     let disconnected = false;
     let streamedResponse: AssistantResponse | null = null;
     let revocation = Promise.resolve();
+    let authorityPersistence = Promise.resolve();
     const transportDisconnected = () =>
       request.raw.aborted ||
       reply.raw.destroyed ||
@@ -2478,9 +2488,11 @@ export function buildApp(
       if (streamedResponse) assistant.revokeResponseIntents(streamedResponse);
       const responseId = streamedResponse?.id;
       if (responseId)
-        revocation = revocation.then(() =>
-          operationalStore.revokeResponseAuthorities(actorId, responseId),
-        );
+        revocation = revocation
+          .then(() => authorityPersistence.catch(() => undefined))
+          .then(() =>
+            operationalStore.revokeResponseAuthorities(actorId, responseId),
+          );
       return revocation;
     };
     const revokeAfterDisconnect = () => {
@@ -2540,88 +2552,119 @@ export function buildApp(
       context,
       previousCarePlan,
     );
-    const response = await runAssistantQuery(() =>
-      assistant.query(actorId, {
-        prompt: body.prompt,
-        patientId: body.patientId,
-        inputModality: body.inputModality,
-        voiceTranscriptConfirmed: body.voiceTranscriptConfirmed ?? false,
-        ...(voiceTranscriptProvenance ? { voiceTranscriptProvenance } : {}),
-        signal: inferenceController.signal,
-        workingContext,
-        ...(body.purpose ? { purpose: body.purpose } : {}),
-      }),
-    );
-    streamedResponse = response;
-    if (inferenceController.signal.aborted || transportDisconnected()) {
-      await revokeAfterDisconnect();
-      return reply.code(499).send({
-        error: "INVALID_STATE",
-        message: "Assistenzanfrage wurde abgebrochen.",
-        requestId: request.id,
-      });
-    }
-    await persistResponseAuthorities(response, context);
-    if (inferenceController.signal.aborted || transportDisconnected()) {
-      await revokeAfterDisconnect();
-      return reply.code(499).send({
-        error: "INVALID_STATE",
-        message: "Assistenzanfrage wurde abgebrochen.",
-        requestId: request.id,
-      });
-    }
-    try {
-      await operationalStore.appendConversationTurn(
-        actorId,
-        actor.role,
-        {
-          id: response.id,
-          prompt: body.prompt,
-          response: archiveAssistantResponse(response),
-          createdAt: new Date().toISOString(),
-          inputModality: body.inputModality,
-          ...(voiceTranscriptProvenance
-            ? { voiceTranscriptProvenance: [voiceTranscriptProvenance] }
-            : {}),
-          originPatientId: body.patientId,
-          originEncounterId: context.encounterId,
-          originThreadId: context.threadId,
-          originContextRevision: context.contextRevision,
-        },
-        context,
-      );
-    } catch {
-      await revokeAuthorities();
-      throw new DomainError(
-        "INVALID_STATE",
-        "Der Gesprächszustand konnte nicht sicher gespeichert werden. Es wurde keine Aktion freigeschaltet.",
-        503,
-      );
-    }
-    if (inferenceController.signal.aborted || transportDisconnected()) {
-      await revokeAfterDisconnect();
-      reply.raw.end();
-      return;
-    }
-    // OpenUI's Vercel adapter consumes the AI SDK v6 UIMessage protocol. The
-    // model result and any review authority are fully validated and durable
-    // before the first renderable byte is exposed. Chunks are real transport
-    // chunks, with no timer pretending a completed response is still running.
-    const contentId = `openui-${response.id}`;
     const uiStream = createUIMessageStream({
-      generateId: () => response.id,
-      execute: ({ writer }) => {
-        writer.write({ type: "start", messageId: response.id });
-        writer.write({ type: "text-start", id: contentId });
-        const lines = response.openUi.split("\n");
-        for (const [index, line] of lines.entries())
-          writer.write({
-            type: "text-delta",
-            id: contentId,
-            delta: `${index === 0 ? "" : "\n"}${line}`,
-          });
-        writer.write({ type: "text-end", id: contentId });
-        writer.write({ type: "finish", finishReason: "stop" });
+      generateId: () => randomUUID(),
+      execute: async ({ writer }) => {
+        const streamId = randomUUID();
+        let progressSequence = 0;
+        let previousProgress = "";
+        const emitMessage = (id: string, openUi: string) => {
+          writer.write({ type: "start-step" });
+          writer.write({ type: "text-start", id });
+          for (const [index, line] of openUi.split("\n").entries())
+            writer.write({
+              type: "text-delta",
+              id,
+              delta: `${index === 0 ? "" : "\n"}${line}`,
+            });
+          writer.write({ type: "text-end", id });
+          writer.write({ type: "finish-step" });
+        };
+        const emitProgress = (message: string) => {
+          if (message === previousProgress) return;
+          previousProgress = message;
+          progressSequence += 1;
+          emitMessage(
+            `progress-${streamId}-${progressSequence}`,
+            toOpenUi([{ type: "AssistantText", message }]),
+          );
+        };
+
+        writer.write({ type: "start", messageId: streamId });
+        emitProgress("Ich prüfe den freigegebenen Gesprächskontext …");
+        try {
+          const response = await runAssistantQuery(() =>
+            assistant.query(actorId, {
+              prompt: body.prompt,
+              patientId: body.patientId,
+              inputModality: body.inputModality,
+              voiceTranscriptConfirmed: body.voiceTranscriptConfirmed ?? false,
+              ...(voiceTranscriptProvenance
+                ? { voiceTranscriptProvenance }
+                : {}),
+              signal: inferenceController.signal,
+              workingContext,
+              onProgress: ({ stage, toolName }) => {
+                if (stage === "tool")
+                  emitProgress(
+                    toolName === "prepare_clinical_draft"
+                      ? "Ich bereite die Angaben für deine Prüfung vor …"
+                      : "Ich lese die autorisierten Angaben …",
+                  );
+                if (stage === "validation")
+                  emitProgress("Ich gleiche Antwort und Quellen ab …");
+              },
+              ...(body.purpose ? { purpose: body.purpose } : {}),
+            }),
+          );
+          streamedResponse = response;
+          if (inferenceController.signal.aborted || transportDisconnected()) {
+            await revokeAfterDisconnect();
+            return;
+          }
+          emitProgress(
+            response.components.some(
+              (component) => component.type === "DraftAction",
+            )
+              ? "Die Prüfung ist abgeschlossen; ich sichere den neuesten Entwurf …"
+              : "Die Prüfung ist abgeschlossen; ich sichere die Antwort …",
+          );
+          authorityPersistence = persistResponseAuthorities(response, context);
+          await authorityPersistence;
+          if (inferenceController.signal.aborted || transportDisconnected()) {
+            await revokeAfterDisconnect();
+            return;
+          }
+          try {
+            await operationalStore.appendConversationTurn(
+              actorId,
+              actor.role,
+              {
+                id: response.id,
+                prompt: body.prompt,
+                response: archiveAssistantResponse(response),
+                createdAt: new Date().toISOString(),
+                inputModality: body.inputModality,
+                ...(voiceTranscriptProvenance
+                  ? { voiceTranscriptProvenance: [voiceTranscriptProvenance] }
+                  : {}),
+                originPatientId: body.patientId,
+                originEncounterId: context.encounterId,
+                originThreadId: context.threadId,
+                originContextRevision: context.contextRevision,
+              },
+              context,
+            );
+          } catch {
+            await revokeAuthorities();
+            throw new DomainError(
+              "INVALID_STATE",
+              "Der Gesprächszustand konnte nicht sicher gespeichert werden. Es wurde keine Aktion freigeschaltet.",
+              503,
+            );
+          }
+          if (inferenceController.signal.aborted || transportDisconnected()) {
+            await revokeAfterDisconnect();
+            return;
+          }
+          // A DraftAction is emitted only after validation, durable proposal
+          // preparation and server-owned conversation persistence succeed.
+          emitMessage(`openui-${response.id}`, response.openUi);
+          writer.write({ type: "finish", finishReason: "stop" });
+        } catch (error) {
+          await revokeAuthorities();
+          throw error;
+        }
       },
       onError: () =>
         "Die Assistenzantwort konnte nicht sicher übertragen werden.",

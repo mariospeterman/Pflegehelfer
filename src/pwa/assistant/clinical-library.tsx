@@ -467,6 +467,31 @@ const UnknownStateCard = defineComponent({
   ),
 });
 
+const ClinicalFactsCard = defineComponent({
+  name: "ClinicalFactsCard",
+  description:
+    "Exact server-rendered clinical facts kept separate from conversational explanation.",
+  props: z
+    .object({
+      items: z.array(z.string().trim().min(1).max(1200)).min(1).max(20),
+      source: z.string().trim().min(1).max(180),
+    })
+    .strict(),
+  component: ({ props: { items, source } }) => (
+    <article className="assistant-card clinical-facts-card">
+      <header>
+        <span>Belegte Angaben</span>
+      </header>
+      <ul>
+        {items.map((item) => (
+          <li key={item}>{item}</li>
+        ))}
+      </ul>
+      <footer>{source}</footer>
+    </article>
+  ),
+});
+
 const SafetyNotice = defineComponent({
   name: "SafetyNotice",
   description: "Non-dismissible clinical safety or availability notice.",
@@ -886,6 +911,7 @@ const ClinicalStack = defineComponent({
             UnknownStateCard.ref,
             SafetyNotice.ref,
             DraftActionCard.ref,
+            ClinicalFactsCard.ref,
           ]),
         )
         .max(12),
@@ -920,6 +946,7 @@ export const clinicalAssistantLibrary = createLibrary({
     UnknownStateCard,
     SafetyNotice,
     DraftActionCard,
+    ClinicalFactsCard,
   ],
   root: "ClinicalStack",
 });

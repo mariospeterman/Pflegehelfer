@@ -212,9 +212,20 @@ describe("versioned working session", () => {
       .trim()
       .split("\n\n")
       .filter((line) => line.startsWith("data: ") && line !== "data: [DONE]")
-      .map((line) => JSON.parse(line.slice(6)) as { type: string });
+      .map(
+        (line) => JSON.parse(line.slice(6)) as { type: string; delta?: string },
+      );
     expect(frames[0]).toMatchObject({ type: "start" });
     expect(frames.some((frame) => frame.type === "text-delta")).toBe(true);
+    const deltas = frames
+      .filter((frame) => frame.type === "text-delta")
+      .map((frame) => frame.delta ?? "");
+    expect(deltas.join("\n")).toContain(
+      "Ich prüfe den freigegebenen Gesprächskontext",
+    );
+    expect(
+      frames.filter((frame) => frame.type === "start-step").length,
+    ).toBeGreaterThanOrEqual(2);
     expect(frames.at(-1)?.type).toBe("finish");
 
     const restored = await app.inject({

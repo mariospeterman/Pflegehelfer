@@ -19,6 +19,13 @@ export const assistantComponentSchema = z.discriminatedUnion("type", [
     .strict(),
   z
     .object({
+      type: z.literal("ClinicalFacts"),
+      items: z.array(boundedText).min(1).max(20),
+      sourceLabel: z.string().trim().min(1).max(180),
+    })
+    .strict(),
+  z
+    .object({
       type: z.literal("PatientPicker"),
       title: z.string().trim().min(1).max(120),
       message: boundedText,

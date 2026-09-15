@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AgentInterface } from "@openuidev/react-ui";
-import { useThreadList, type UserMessage } from "@openuidev/react-headless";
+import {
+  useThread,
+  useThreadList,
+  type ChatStorage,
+  type UserMessage,
+} from "@openuidev/react-headless";
 import type { Patient } from "../../core/types";
 import type { WorkdayCommand, WorkdayView } from "../../core/workday";
 import { clinicalAssistantLibrary } from "./clinical-library";
@@ -80,6 +85,44 @@ function AuthorizedThreadBootstrap() {
     if (!isLoadingThreads && !selectedThreadId && threads[0])
       selectThread(threads[0].id);
   }, [isLoadingThreads, selectThread, selectedThreadId, threads]);
+
+  return null;
+}
+
+function AuthoritativeConversationRefresh({
+  storage,
+  onError,
+}: {
+  storage: ChatStorage;
+  onError: (message: string) => void;
+}) {
+  const { isRunning, setMessages } = useThread();
+  const { selectedThreadId } = useThreadList();
+  const wasRunning = useRef(false);
+
+  useEffect(() => {
+    if (isRunning) {
+      wasRunning.current = true;
+      return;
+    }
+    if (!wasRunning.current || !selectedThreadId) return;
+    wasRunning.current = false;
+    let active = true;
+    void storage.thread
+      .getMessages(selectedThreadId)
+      .then((messages) => {
+        if (active) setMessages(messages);
+      })
+      .catch(() => {
+        if (active)
+          onError(
+            "Der bestätigte Gesprächsstand konnte nicht neu geladen werden.",
+          );
+      });
+    return () => {
+      active = false;
+    };
+  }, [isRunning, onError, selectedThreadId, setMessages, storage]);
 
   return null;
 }
@@ -196,6 +239,10 @@ export function AssistantSurface({
           <AgentInterface.Sidebar />
           <AgentInterface.Route path="clinical-conversation">
             <AuthorizedThreadBootstrap />
+            <AuthoritativeConversationRefresh
+              storage={storage}
+              onError={setError}
+            />
             <AgentInterface.MobileHeader
               menuButton={false}
               newChatButton={false}

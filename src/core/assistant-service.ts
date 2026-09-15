@@ -53,6 +53,10 @@ export interface AssistantRequest {
   voiceTranscriptConfirmed?: boolean;
   voiceTranscriptProvenance?: VoiceTranscriptProvenance;
   signal?: AbortSignal;
+  onProgress?: (event: {
+    stage: "model" | "tool" | "validation";
+    toolName?: string;
+  }) => void;
   workingContext?: {
     organizationId: string;
     sessionId: string;
@@ -174,6 +178,8 @@ export function toOpenUi(components: AssistantComponent[]): string {
     switch (component.type) {
       case "AssistantText":
         return `${name} = AssistantMessage(${q(component.message)})`;
+      case "ClinicalFacts":
+        return `${name} = ClinicalFactsCard(${JSON.stringify(component.items)}, ${q(component.sourceLabel)})`;
       case "PatientPicker":
         return `${name} = PatientPicker(${q(component.title)}, ${q(component.message)}, ${JSON.stringify(component.patients)})`;
       case "PatientSummary":
@@ -309,18 +315,63 @@ function boundedClarificationQuestion(text: string): string | null {
   return question;
 }
 
+function verifiedNaturalDialogue(
+  text: string,
+  atoms: readonly string[],
+): string {
+  const dialogue = text.trim().slice(0, 1_200);
+  const normalizedDialogue = dialogue.toLocaleLowerCase("de-CH");
+  const normalizedFacts = atoms.join(" ").toLocaleLowerCase("de-CH");
+  const clinicalConcepts = [
+    "blutdruck",
+    "temperatur",
+    "puls",
+    "sauerstoff",
+    "atemfrequenz",
+    "gewicht",
+    "blutzucker",
+  ];
+  const introducesDifferentConcept = clinicalConcepts.some(
+    (concept) =>
+      normalizedDialogue.includes(concept) &&
+      !normalizedFacts.includes(concept),
+  );
+  const turnsOccurrenceIntoCurrent =
+    atoms.some((atom) => atom.includes("gemessen am")) &&
+    /\b(?:aktuell|jetzt|derzeit|momentan)\b/iu.test(dialogue);
+  const changesOpenTaskToCompleted =
+    atoms.some((atom) =>
+      /: (?:offen|angenommen|in Arbeit|wartend)\./u.test(atom),
+    ) && /\b(?:abgeschlossen|erledigt|vollständig erledigt)\b/iu.test(dialogue);
+  const changesCompletedTaskToOpen =
+    atoms.some((atom) => /: abgeschlossen\./u.test(atom)) &&
+    /\b(?:offen|steht noch aus|nicht erledigt)\b/iu.test(dialogue);
+  const unsupportedMeasurementWording =
+    /\b\d+(?:[.,]\d+)?\s*grad\b/iu.test(dialogue) &&
+    !/\b\d+(?:[.,]\d+)?\s*grad\b/iu.test(normalizedFacts);
+  if (
+    introducesDifferentConcept ||
+    turnsOccurrenceIntoCurrent ||
+    changesOpenTaskToCompleted ||
+    changesCompletedTaskToOpen ||
+    unsupportedMeasurementWording
+  )
+    return "Die belegten Angaben stehen getrennt und unverändert darunter.";
+  return dialogue;
+}
+
 /**
  * The model selects exact evidence; it never authors displayed clinical facts.
  * Rendering verified atoms here makes label/value/unit/time/status indivisible,
  * so prose cannot swap two rows or turn retrieval time into occurrence time.
  */
-function verifiedCoworkerText(
+function verifiedCoworkerContent(
   run: AgentRunResult,
   options: {
     allowSourceFreeModelText: boolean;
     protectedPatientTerms: readonly string[];
   },
-): string | null {
+): { dialogue: string; clinicalFacts: string[] } | null {
   if (
     !["conversation", "answer", "clarification-needed", "no-action"].includes(
       run.status,
@@ -347,14 +398,24 @@ function verifiedCoworkerText(
           "iu",
         ).test(text),
       );
-      return mentionsPatient ? null : text;
+      return mentionsPatient ? null : { dialogue: text, clinicalFacts: [] };
     }
     if (run.status === "conversation")
-      return "Gern. Wobei soll ich dich unterstützen?";
+      return {
+        dialogue: "Gern. Wobei soll ich dich unterstützen?",
+        clinicalFacts: [],
+      };
     if (run.status === "clarification-needed")
-      return "Welche Angabe soll ich dazu kurz klären?";
+      return {
+        dialogue: "Welche Angabe soll ich dazu kurz klären?",
+        clinicalFacts: [],
+      };
     if (run.status === "no-action")
-      return "Verstanden. Es wurde keine Aktion vorbereitet oder ausgeführt.";
+      return {
+        dialogue:
+          "Verstanden. Es wurde keine Aktion vorbereitet oder ausgeführt.",
+        clinicalFacts: [],
+      };
     return null;
   }
 
@@ -575,12 +636,24 @@ function verifiedCoworkerText(
   if (renderedAtoms.length === 0 && run.status !== "clarification-needed")
     return null;
   if (run.status === "clarification-needed")
-    return boundedClarificationQuestion(run.text);
+    return boundedClarificationQuestion(run.text)
+      ? {
+          dialogue: boundedClarificationQuestion(run.text)!,
+          clinicalFacts: [],
+        }
+      : null;
   const suffix =
     run.status === "no-action"
       ? "Es wurde keine Aktion vorbereitet oder ausgeführt."
       : "";
-  return boundedAtomText(renderedAtoms, suffix);
+  const dialogue = verifiedNaturalDialogue(run.text, renderedAtoms);
+  const facts = boundedAtomText(renderedAtoms, suffix);
+  return dialogue && facts
+    ? {
+        dialogue: suffix ? `${dialogue} ${suffix}` : dialogue,
+        clinicalFacts: renderedAtoms,
+      }
+    : null;
 }
 
 function generatedCoworkerSources(
@@ -1683,6 +1756,7 @@ export class AssistantService {
           ...(canPrepareCareUpdate ? ["prepare_clinical_draft"] : []),
         ],
         ...(request.signal ? { signal: request.signal } : {}),
+        ...(request.onProgress ? { onProgress: request.onProgress } : {}),
       });
       if (
         agentRun.status === "draft-ready" &&
@@ -2849,8 +2923,8 @@ export class AssistantService {
           break;
       }
 
-    const generatedCoworkerText = agentRun
-      ? verifiedCoworkerText(agentRun, {
+    const generatedCoworkerContent = agentRun
+      ? verifiedCoworkerContent(agentRun, {
           allowSourceFreeModelText: patient === null,
           protectedPatientTerms: snapshot.patients.flatMap((candidate) => [
             candidate.displayName,
@@ -2861,15 +2935,21 @@ export class AssistantService {
           ]),
         })
       : null;
-    if (generatedCoworkerText && agentRun) {
+    if (generatedCoworkerContent && agentRun) {
       if (classification.intent === "unknown")
         for (let index = components.length - 1; index >= 0; index -= 1)
           if (components[index]?.type === "UnknownState")
             components.splice(index, 1);
       components.unshift({
         type: "AssistantText",
-        message: generatedCoworkerText,
+        message: generatedCoworkerContent.dialogue,
       });
+      if (generatedCoworkerContent.clinicalFacts.length > 0)
+        components.splice(1, 0, {
+          type: "ClinicalFacts",
+          items: generatedCoworkerContent.clinicalFacts,
+          sourceLabel: `${new Set(agentRun.sourceReferenceIds ?? []).size} autorisierte Quelle${new Set(agentRun.sourceReferenceIds ?? []).size === 1 ? "" : "n"}`,
+        });
       for (const source of generatedCoworkerSources(agentRun, {
         sessionId: request.workingContext!.sessionId,
         threadId: request.workingContext!.threadId,
@@ -2911,7 +2991,7 @@ export class AssistantService {
     }
 
     const presentation =
-      agentRun && generatedCoworkerText ? modelPresentation(agentRun) : null;
+      agentRun && generatedCoworkerContent ? modelPresentation(agentRun) : null;
     if (presentation) components.push(presentation);
 
     const validated = validateAssistantComponents(components);

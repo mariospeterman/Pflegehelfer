@@ -81,19 +81,19 @@ export function ClinicalAssistantMessage({
   isStreaming: boolean;
 }) {
   const actions = useContext(ActionsContext);
-  const { updateMessage, isRunning, messages } = useThread();
+  const { updateMessage, isRunning } = useThread();
   const [busy, setBusy] = useState(false);
   if (!actions) throw new Error("ConversationActionsProvider fehlt.");
   const source = message.content ?? "";
-  const latestDraftSource = messages.findLast(
-    (item) =>
-      item.role === "assistant" &&
-      typeof item.content === "string" &&
-      item.content.includes("DraftActionCard("),
-  )?.content;
-  const archived =
-    source.includes("DraftActionCard(") && latestDraftSource !== source;
-  const renderedSource = archived ? supersededOpenUi : source;
+  const proposalStatus = message.name?.match(
+    /^pflegehelfer-proposal:(pending|superseded|consumed|expired):\d+$/,
+  )?.[1];
+  const renderedSource =
+    proposalStatus === "consumed"
+      ? completedOpenUi
+      : proposalStatus === "superseded" || proposalStatus === "expired"
+        ? supersededOpenUi
+        : source;
   const parsed = createParser(clinicalAssistantLibrary.toJSONSchema()).parse(
     renderedSource,
   );
@@ -167,7 +167,14 @@ export function ClinicalAssistantMessage({
           ? event.params.reviewedActionIds
           : undefined,
       });
-      updateMessage({ ...message, content: completedOpenUi });
+      updateMessage({
+        ...message,
+        name: message.name?.replace(
+          /pflegehelfer-proposal:[^:]+:/,
+          "pflegehelfer-proposal:consumed:",
+        ),
+        content: completedOpenUi,
+      });
       if (result.handoff) actions.onHandoff(result.handoff);
       await actions.onExecuted(
         result.itemStates?.includes("reviewed")

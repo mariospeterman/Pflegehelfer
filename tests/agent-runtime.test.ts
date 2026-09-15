@@ -93,6 +93,33 @@ function registry(onRead = vi.fn()) {
 }
 
 describe("bounded agent runtime", () => {
+  it("reports model and validation progress before the terminal result resolves", async () => {
+    let release!: (decision: AgentModelDecision) => void;
+    const pending = new Promise<AgentModelDecision>((resolve) => {
+      release = resolve;
+    });
+    const progress: string[] = [];
+    const runtime = new BoundedAgentRuntime(
+      {
+        id: "progress-model",
+        next: () => pending,
+      },
+      registry(),
+    );
+
+    const run = runtime.run({
+      request: "Hallo",
+      context,
+      allowedTools: [],
+      onProgress: ({ stage }) => progress.push(stage),
+    });
+    await vi.waitFor(() => expect(progress).toEqual(["model"]));
+    release({ kind: "conversation", text: "Hallo!" });
+
+    await expect(run).resolves.toMatchObject({ status: "conversation" });
+    expect(progress).toEqual(["model", "validation"]);
+  });
+
   it("lets the model observe a real tool result and choose a different next tool", async () => {
     const model = fixtureModel([
       { kind: "tool-call", toolName: "get_open_questions", input: {} },

@@ -49,10 +49,33 @@ test("only the latest corrected selection can be approved", async ({
   ).toHaveCount(2);
 
   await page.reload();
+  await expect(page.getByLabel("Nachricht an Pflegehelfer")).toBeEnabled({
+    timeout: 20_000,
+  });
   await expect(
     page.getByRole("button", { name: "Auswahl bestätigen" }),
   ).toHaveCount(1);
   await expect(
     page.getByText("nach Aktualisierung erneut autorisiert"),
   ).toBeVisible();
+
+  await page.getByRole("button", { name: "Auswahl bestätigen" }).click();
+  await expect(
+    page.getByRole("button", { name: "Auswahl bestätigen" }),
+  ).toHaveCount(0);
+  await expect(page.getByText("Ausgeführt", { exact: true })).toBeVisible();
+
+  await page.reload();
+  await expect(page.getByLabel("Nachricht an Pflegehelfer")).toBeEnabled({
+    timeout: 20_000,
+  });
+  await expect(
+    page.getByRole("button", { name: "Auswahl bestätigen" }),
+  ).toHaveCount(0);
+  await expect(page.getByText("Ausgeführt", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText(
+      "Korrektur übernommen. Diese frühere Auswahl ist nicht mehr gültig.",
+    ),
+  ).toHaveCount(2);
 });
