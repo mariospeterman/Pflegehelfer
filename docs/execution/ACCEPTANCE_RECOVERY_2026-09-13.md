@@ -523,3 +523,10 @@ G0 remains PASS. G1–G7 remain PARTIAL for the exact closure items in
 institutional read-only pilot and controlled real-write pilot remain NOT READY.
 This is a completed internal conversation-layer increment, not a clinical
 deployment or vendor acceptance claim.
+
+Publication evidence: PR #1 branch `codex/genui-production-showcase` reached
+remote head `86d4b99448a4517e38e36c375377bde7e6250e49`. The clean rebuilt PWA and API
+both reported `pfh-86d4b99448a4`, `dirty:false`. GitHub Actions run
+`35442169455` passed install, `verify`, security, the complete memory browser
+matrix and operations in 4m09s. This publication evidence does not change the
+implementation SHA above or advance any PARTIAL/NOT READY gate.
