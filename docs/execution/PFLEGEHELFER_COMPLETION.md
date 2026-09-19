@@ -104,15 +104,15 @@ Approved institution / site / department / station / role / workflow guidance
 
 Use one protected file-storage abstraction, integrated with existing Medplum/file facilities where appropriate. Do not automatically build both a second media platform and a separate clinical file store. Clinical attachments have proper FHIR metadata/links; HR files use their restricted nonclinical domain.
 
-| Domain | Authority |
-|---|---|
-| External clinical/master information | Designated provider for that domain and installation. |
-| Normalized clinical workspace | Medplum/FHIR with original identifiers, versions, occurrence/recording times and provenance. |
-| Workday/assignment coordination | PostgreSQL, unless a configured provider owns the original task; avoid two independent task lifecycles. |
+| Domain                                     | Authority                                                                                                                |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| External clinical/master information       | Designated provider for that domain and installation.                                                                    |
+| Normalized clinical workspace              | Medplum/FHIR with original identifiers, versions, occurrence/recording times and provenance.                             |
+| Workday/assignment coordination            | PostgreSQL, unless a configured provider owns the original task; avoid two independent task lifecycles.                  |
 | Conversations, drafts, approvals, delivery | PostgreSQL under distinct access/retention policies. Necessary draft content is not a second independently editable EHR. |
-| Staff identity, membership, qualification | Institution IdP/directory and approved operational mappings. |
-| Role/workflow instructions | Reviewed Markdown and validated metadata, published as immutable versions. |
-| Model output | Proposed interpretation/communication, never credential or execution authority. |
+| Staff identity, membership, qualification  | Institution IdP/directory and approved operational mappings.                                                             |
+| Role/workflow instructions                 | Reviewed Markdown and validated metadata, published as immutable versions.                                               |
+| Model output                               | Proposed interpretation/communication, never credential or execution authority.                                          |
 
 Separate logical schemas/databases and least-privilege accounts. Using the same managed PostgreSQL infrastructure can be an operational option; do not write into Medplum's private tables from Pflegehelfer. Use its supported API/SDK.
 
@@ -243,26 +243,26 @@ Actual staff identities, qualifications, rosters, assignments, patients, private
 
 Supply substantive approved guidance for all existing role families. Preserve useful guides and improve gaps:
 
-| Role/profile family | Required meaningful workflow | Boundary |
-|---|---|---|
-| Pflegeassistenz/SRK, AGS EBA | Incoming handover, assigned basic support, reported work, escalation, transfer | Distinct qualifications and delegated/local competencies. |
-| FaGe EFZ | Assigned care/medical-technical activities, coordination, documentation, handover | Not automatic equivalence with HF/FH because `capabilityRole` once pointed to registered-nurse. |
-| Pflege HF, Pflege FH | Nursing coordination/review, patient work, rounds, responsibility transfer | Do not invent an HF/FH legal hierarchy; local duties apply. |
-| Pflege-Teamleitung/Schichtleitung | Coverage, ownership, delegation, unresolved responsibilities | Supervisory access is purpose-limited, not access to private assistants. |
-| Ärztlicher Dienst | Addressed questions, round preparation, human-authored decisions, follow-up ownership | No LLM-originated prescribing/diagnosis. |
-| Apotheker/in | Existing medication discrepancies, reconciliation questions, attributed response | No autonomous medication change. |
-| Pharma-Assistent/in/support | Supply/logistics and locally delegated work | Not pharmacist authority by shared label. |
-| Physio, Ergo, Logopädie, Ernährungsberatung | Existing schedule/goals/instructions, intervention report, outcome, coordination | Distinct relevant context, no new AI treatment advice. |
-| Transport | Pickup/destination/assistance, completion, exceptions | Minimum necessary patient information. |
-| Service/Hotellerie, Reinigung | Briefing, meal/room/hygiene work, completion, issue routing | No broad chart access. |
-| Administration/Eintritt/Austritt | Imported data, missing documents, appointments and follow-up | Administrative completion is not clinical sign-off. |
-| Abrechnung/Versicherungskoordination | Approved evidence, missing requirements, duplicates, reviewed export | External insurers are recipients, not unrestricted internal users. |
-| Heimleitung, Geschäftsleitung/CEO | Operational brief, unresolved work, authorized change/improvement review | Seniority is not universal clinical/HR access. |
-| Finanzen/CFO | Evidence completeness and financial/process aggregates | No invented tariff/revenue conclusions. |
-| HR | On/offboarding, documents, qualification/training expiry, restricted personnel requests | No patient chart or private assistant mining. |
-| Berufsbildung | Authorized supervision, training and reviewed learning records | Do not infer competence from chat/timer telemetry. |
-| Qualität/Patientensicherheit | Authorized review/incident queue, evidence, improvement, closure | No rewriting original reports. |
-| IT/Integration | Health, queues, scoped faults, controlled reconciliation | Technical administration is not clinical sign-off. |
+| Role/profile family                         | Required meaningful workflow                                                            | Boundary                                                                                        |
+| ------------------------------------------- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Pflegeassistenz/SRK, AGS EBA                | Incoming handover, assigned basic support, reported work, escalation, transfer          | Distinct qualifications and delegated/local competencies.                                       |
+| FaGe EFZ                                    | Assigned care/medical-technical activities, coordination, documentation, handover       | Not automatic equivalence with HF/FH because `capabilityRole` once pointed to registered-nurse. |
+| Pflege HF, Pflege FH                        | Nursing coordination/review, patient work, rounds, responsibility transfer              | Do not invent an HF/FH legal hierarchy; local duties apply.                                     |
+| Pflege-Teamleitung/Schichtleitung           | Coverage, ownership, delegation, unresolved responsibilities                            | Supervisory access is purpose-limited, not access to private assistants.                        |
+| Ärztlicher Dienst                           | Addressed questions, round preparation, human-authored decisions, follow-up ownership   | No LLM-originated prescribing/diagnosis.                                                        |
+| Apotheker/in                                | Existing medication discrepancies, reconciliation questions, attributed response        | No autonomous medication change.                                                                |
+| Pharma-Assistent/in/support                 | Supply/logistics and locally delegated work                                             | Not pharmacist authority by shared label.                                                       |
+| Physio, Ergo, Logopädie, Ernährungsberatung | Existing schedule/goals/instructions, intervention report, outcome, coordination        | Distinct relevant context, no new AI treatment advice.                                          |
+| Transport                                   | Pickup/destination/assistance, completion, exceptions                                   | Minimum necessary patient information.                                                          |
+| Service/Hotellerie, Reinigung               | Briefing, meal/room/hygiene work, completion, issue routing                             | No broad chart access.                                                                          |
+| Administration/Eintritt/Austritt            | Imported data, missing documents, appointments and follow-up                            | Administrative completion is not clinical sign-off.                                             |
+| Abrechnung/Versicherungskoordination        | Approved evidence, missing requirements, duplicates, reviewed export                    | External insurers are recipients, not unrestricted internal users.                              |
+| Heimleitung, Geschäftsleitung/CEO           | Operational brief, unresolved work, authorized change/improvement review                | Seniority is not universal clinical/HR access.                                                  |
+| Finanzen/CFO                                | Evidence completeness and financial/process aggregates                                  | No invented tariff/revenue conclusions.                                                         |
+| HR                                          | On/offboarding, documents, qualification/training expiry, restricted personnel requests | No patient chart or private assistant mining.                                                   |
+| Berufsbildung                               | Authorized supervision, training and reviewed learning records                          | Do not infer competence from chat/timer telemetry.                                              |
+| Qualität/Patientensicherheit                | Authorized review/incident queue, evidence, improvement, closure                        | No rewriting original reports.                                                                  |
+| IT/Integration                              | Health, queues, scoped faults, controlled reconciliation                                | Technical administration is not clinical sign-off.                                              |
 
 Each enabled profile has purpose, relevant first step, typical inputs/outputs, escalation, closure, denied actions and at least one tested useful scenario. Do not reimplement each profession in TypeScript. Separate qualification, functional role, delegation, assignment and purpose; never union all of a person's roles into an implicit superuser.
 
@@ -434,18 +434,18 @@ Prepare institution incident procedures, including applicable data-breach assess
 
 Create or update one concise release/readiness dossier using existing compliance documentation. For every requirement record applicability, responsible owner, implementation evidence, open decision and approval status. Use the verified source register and current institution/canton/vendor facts; do not pretend source reading is legal sign-off.
 
-| Area | Required release evidence |
-|---|---|
+| Area                                            | Required release evidence                                                                                                                                                                                                                                                             |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Intended purpose / medical-device qualification | Document the actual functions and marketing claims, including summaries, medical images and later standalone domains; obtain competent qualification review. If a feature qualifies as MDSW, gate it and complete the relevant conformity pathway rather than renaming it a coworker. |
-| Privacy and professional secrecy | Determine controller/processor roles, purposes, minimization, access/sharing, data-subject procedures and applicable Swiss/cantonal framework; assess DPIA need and residual risk. |
-| Outsourcing / hosting / support | Contractual processor/subprocessor controls, remote support, location, backup and any international access/transfer; Swiss hosting alone is not complete compliance. |
-| AI transparency | Explain that users interact with AI, what is retained/used, limitations and review. No confidential customer data used for general model training by default. |
-| Professional responsibilities | Institution-approved qualifications, delegation, role definitions and activities; no universal permissions invented from a title. |
-| Service evidence / reimbursement | Setting-specific reviewed mapping and completeness, no timer-to-tariff shortcut or invented codes. |
-| EU reach where applicable | Screen GDPR and EU AI Act applicability, roles and current obligations when serving relevant users/markets; neither assume every Swiss system is automatically in scope nor ignore applicable cross-border use. |
-| EPD or certified systems | FHIR interoperability is not EPD certification. New EPD/PDMS/diagnostic integrations require their actual contracts/conformance and scope assessment. |
-| Security and operations | Threat model, dependency/SBOM/license inventory, tested access/recovery, vulnerability/incident handling, support and release process. |
-| Clinical/organizational acceptance | Named authorized reviewers, held-out language/workday usability results and deployment approval; coding-agent review is not clinician/regulator sign-off. |
+| Privacy and professional secrecy                | Determine controller/processor roles, purposes, minimization, access/sharing, data-subject procedures and applicable Swiss/cantonal framework; assess DPIA need and residual risk.                                                                                                    |
+| Outsourcing / hosting / support                 | Contractual processor/subprocessor controls, remote support, location, backup and any international access/transfer; Swiss hosting alone is not complete compliance.                                                                                                                  |
+| AI transparency                                 | Explain that users interact with AI, what is retained/used, limitations and review. No confidential customer data used for general model training by default.                                                                                                                         |
+| Professional responsibilities                   | Institution-approved qualifications, delegation, role definitions and activities; no universal permissions invented from a title.                                                                                                                                                     |
+| Service evidence / reimbursement                | Setting-specific reviewed mapping and completeness, no timer-to-tariff shortcut or invented codes.                                                                                                                                                                                    |
+| EU reach where applicable                       | Screen GDPR and EU AI Act applicability, roles and current obligations when serving relevant users/markets; neither assume every Swiss system is automatically in scope nor ignore applicable cross-border use.                                                                       |
+| EPD or certified systems                        | FHIR interoperability is not EPD certification. New EPD/PDMS/diagnostic integrations require their actual contracts/conformance and scope assessment.                                                                                                                                 |
+| Security and operations                         | Threat model, dependency/SBOM/license inventory, tested access/recovery, vulnerability/incident handling, support and release process.                                                                                                                                                |
+| Clinical/organizational acceptance              | Named authorized reviewers, held-out language/workday usability results and deployment approval; coding-agent review is not clinician/regulator sign-off.                                                                                                                             |
 
 Swissmedic's 21 April 2026 guidance bases qualification on intended purpose and functionality; it explicitly discusses medical-image display. Keep diagnostics and specialist image interpretation outside the initial product and review ordinary media features for their actual intended use. Do not assert that HITL, a disclaimer or self-hosting grants exemption.
 
@@ -537,14 +537,14 @@ Measure real human effort in the demonstration: repeated typing, navigation away
 
 Do not rebuild everything in one unreviewable change. The autonomous session continues across these complete slices. Internal scope remains binding, but one unavailable external key must not freeze unrelated engineering.
 
-| Sequence | Required output | Existing gates |
-|---|---|---|
-| 1. Consolidate and unblock | Canonical docs, exact baseline, safe key/runtime prerequisite, secret-free builds, real-store environment, removal inventory | G0/G5 |
-| 2. Prove the coworker | Actual model ordinary dialogue/read/specific clarification/optional GenUI/draft/revision/approval/read-back; mobile visual inspection | G1/G4/G7 |
-| 3. Close work and data reliability | All supported direct actions on one acceptance path, inbound/conflicts, resource-native recovery, full two shifts/addenda, files and team collaboration | G1/G2/G3 |
-| 4. Make institutions configurable | Roles/stations, administration, governed packs, directory/identity/RLS, staff/HR privacy, same build at second site | G3/G5 |
-| 5. Close operational product | Service evidence, analytics/improvement, multi-instance/concurrency, retention/restoration/egress, final visual/performance evidence | G1/G5/G6/G7 |
-| 6. Release review | Final-SHA clean checkout/CI, matrix and dossier, merge recommendation and owner approval | G0–G7 |
+| Sequence                           | Required output                                                                                                                                         | Existing gates |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
+| 1. Consolidate and unblock         | Canonical docs, exact baseline, safe key/runtime prerequisite, secret-free builds, real-store environment, removal inventory                            | G0/G5          |
+| 2. Prove the coworker              | Actual model ordinary dialogue/read/specific clarification/optional GenUI/draft/revision/approval/read-back; mobile visual inspection                   | G1/G4/G7       |
+| 3. Close work and data reliability | All supported direct actions on one acceptance path, inbound/conflicts, resource-native recovery, full two shifts/addenda, files and team collaboration | G1/G2/G3       |
+| 4. Make institutions configurable  | Roles/stations, administration, governed packs, directory/identity/RLS, staff/HR privacy, same build at second site                                     | G3/G5          |
+| 5. Close operational product       | Service evidence, analytics/improvement, multi-instance/concurrency, retention/restoration/egress, final visual/performance evidence                    | G1/G5/G6/G7    |
+| 6. Release review                  | Final-SHA clean checkout/CI, matrix and dossier, merge recommendation and owner approval                                                                | G0–G7          |
 
 Start provider/clinical/security stakeholder prerequisites in parallel only with authorization. Do not make every future feature a prerequisite for finding out whether the natural conversation works. Conversely, after proving the conversation, continue closing the remaining agreed internal scope rather than declaring the full product complete.
 

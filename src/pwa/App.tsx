@@ -45,17 +45,15 @@ const roleLabels: Record<Role, string> = {
 const workflowOpenings: Partial<Record<Role, ConversationOpening>> = {
   "care-assistant": {
     eyebrow: "Dein Arbeitstag · Schritt 1 von 10",
-    title: "Guten Morgen — beginnen wir mit der Übergabe.",
-    summary:
-      "Ich führe dich durch offene Aufgaben, bewusste Patientenkontexte, Dokumentation, Teamfragen und die nächste Übergabe. Nichts wird ohne deine Prüfung freigegeben.",
-    progress: "Übergabe → Priorisieren → Patientenarbeit",
+    title: "Guten Morgen.",
+    summary: "Die Übergabe ist vorbereitet. Was möchtest du zuerst ansehen?",
+    progress: "Übergabe · Aufgaben · Teamfragen",
   },
   "registered-nurse": {
     eyebrow: "Dein Arbeitstag · Schritt 1 von 10",
-    title: "Guten Morgen — die Schichtübergabe ist bereit.",
-    summary:
-      "Wir prüfen zuerst die Deltas und dringenden Punkte. Danach begleite ich dich patientenweise bis Dokumentation, Freigabe und Synchronisation abgeschlossen sind.",
-    progress: "Übergabe → Priorisieren → Patientenarbeit",
+    title: "Guten Morgen.",
+    summary: "Die Schichtübergabe ist bereit. Womit möchtest du beginnen?",
+    progress: "Übergabe · Aufgaben · Teamfragen",
   },
   physician: {
     eyebrow: "Ärztlicher Dienst · Visitenworkflow",
@@ -68,10 +66,10 @@ const workflowOpenings: Partial<Record<Role, ConversationOpening>> = {
 
 const fallbackOpening: ConversationOpening = {
   eyebrow: "Rollenbezogener Arbeitskontext",
-  title: "Willkommen bei Pflegehelfer.",
+  title: "Guten Morgen.",
   summary:
-    "Ich zeige nur Arbeit und Informationen, die für deine aktuelle Rolle und deinen Zweck freigegeben sind.",
-  progress: "Orientierung → Arbeit → Abschluss",
+    "Wie kann ich dich in deinem freigegebenen Arbeitskontext unterstützen?",
+  progress: "Fragen · Arbeit · Abschluss",
 };
 
 async function api<T>(
@@ -276,6 +274,28 @@ function PflegehelferMark() {
   );
 }
 
+function InterfaceIcon({ name }: { name: "menu" | "scope" | "chevron" }) {
+  if (name === "menu") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 7h16M4 12h16M4 17h16" />
+      </svg>
+    );
+  }
+  if (name === "scope") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M16 20v-1.5a4.5 4.5 0 0 0-4.5-4.5h-3A4.5 4.5 0 0 0 4 18.5V20M10 10a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM17 11a3 3 0 0 0 0-6M18.5 14.2A4 4 0 0 1 22 18v2" />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="m7 9 5 5 5-5" />
+    </svg>
+  );
+}
+
 function ContextPanel({
   snapshot,
   patient,
@@ -322,7 +342,6 @@ function ContextPanel({
       aria-modal={modal ? true : undefined}
     >
       <div className="context-brand">
-        <PflegehelferMark />
         <span>
           <strong>Pflegehelfer</strong>
           <small>{snapshot.organization.displayName}</small>
@@ -1080,6 +1099,13 @@ export function App() {
           : syncLabel;
   const opening =
     workflowOpenings[snapshot.currentUser.role] ?? fallbackOpening;
+  const actorInitials = snapshot.currentUser.displayName
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toLocaleUpperCase("de-CH");
 
   return (
     <div
@@ -1116,12 +1142,33 @@ export function App() {
             aria-label="Kontext und Verlauf öffnen"
             onClick={() => setDrawerOpen(true)}
           >
-            ☰
+            <InterfaceIcon name="menu" />
           </button>
           <div className="header-identity">
-            <strong>Pflegehelfer</strong>
-            <span>{snapshot.organization.displayName}</span>
+            <PflegehelferMark />
+            <span>
+              <strong>Pflegehelfer</strong>
+              <small>{snapshot.organization.displayName}</small>
+            </span>
           </div>
+          <button
+            className="header-scope-switcher"
+            aria-label={
+              patient
+                ? `Aktiver Kontext: ${patient.displayName}, Zimmer ${patient.room}. Kontext wechseln`
+                : "Aktiver Kontext: Mein Assistent. Kontext wechseln"
+            }
+            onClick={() => setDrawerOpen(true)}
+          >
+            <InterfaceIcon name="scope" />
+            <span>
+              <strong>{patient?.displayName ?? "Mein Assistent"}</strong>
+              <small>
+                {patient ? `${patient.room} · Privat` : "Privat · Allgemein"}
+              </small>
+            </span>
+            <InterfaceIcon name="chevron" />
+          </button>
           <div className="header-state">
             <span
               className={`connection-state ${connected ? "connected" : "offline"}${workday?.providerState === "pending" ? " pending" : ""}`}
@@ -1129,7 +1176,10 @@ export function App() {
               aria-label={syncTitle}
             >
               <i />
-              <span className="sync-label" aria-hidden="true">
+              <span
+                className="sync-label"
+                aria-hidden={connected ? true : undefined}
+              >
                 {syncCompactLabel}
               </span>
             </span>
@@ -1156,6 +1206,14 @@ export function App() {
                 ))}
               </select>
             </label>
+            <span
+              className={`actor-avatar ${connected ? "connected" : "offline"}${workday?.providerState === "pending" ? " pending" : ""}`}
+              aria-label={`${snapshot.currentUser.displayName}, ${roleLabels[snapshot.currentUser.role]}. ${syncTitle}`}
+              title={`${snapshot.currentUser.displayName} · ${roleLabels[snapshot.currentUser.role]} · ${syncTitle}`}
+            >
+              {actorInitials}
+              <i aria-hidden="true" />
+            </span>
           </div>
         </header>
         {patient ? (

@@ -11,10 +11,10 @@ CSS, or a second product contract.
 
 ## Reference assets
 
-| Asset | SHA-256 | Purpose |
-| --- | --- | --- |
+| Asset                              | SHA-256                                                            | Purpose                                                                            |
+| ---------------------------------- | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
 | `pflegehelfer-light-reference.png` | `464b5d80eb827c8fb7b9a03d1ba1a85abd5e7b3d84165070f9bfaef0ab90d4b1` | Light-theme composition, density, paper/glass restraint and blue action hierarchy. |
-| `pflegehelfer-dark-reference.png` | `bca1c876b1b0741feef534dc48339963173df043d8213ea8aa16f95f02ae33a1` | Dark-theme surface elevation, contrast and restrained blue/red semantics. |
+| `pflegehelfer-dark-reference.png`  | `bca1c876b1b0741feef534dc48339963173df043d8213ea8aa16f95f02ae33a1` | Dark-theme surface elevation, contrast and restrained blue/red semantics.          |
 
 Both files are 941 × 1672 RGB PNGs supplied on 19 September 2026.
 

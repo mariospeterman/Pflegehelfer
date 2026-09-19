@@ -29,6 +29,30 @@ interface AsrAvailability {
 const entityId = (entity: CriticalEntity) =>
   `${entity.kind}:${entity.start}:${entity.end}`;
 
+function ComposerIcon({ name }: { name: "microphone" | "stop" | "send" }) {
+  if (name === "microphone") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="9" y="3" width="6" height="11" rx="3" />
+        <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M9 21h6" />
+      </svg>
+    );
+  }
+  if (name === "stop") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="7" y="7" width="10" height="10" rx="1" />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="m4 12 16-8-6 16-2.5-6.5L4 12Z" />
+      <path d="m11.5 13.5 4-4" />
+    </svg>
+  );
+}
+
 export function ClinicalComposer({
   userId,
   patient,
@@ -438,7 +462,7 @@ export function ClinicalComposer({
             else void startRecording();
           }}
         >
-          {recording ? "■" : "●"}
+          <ComposerIcon name={recording ? "stop" : "microphone"} />
         </button>
         <label>
           <span className="sr-only">Nachricht an Pflegehelfer</span>
@@ -477,7 +501,7 @@ export function ClinicalComposer({
             aria-label="Antwort abbrechen"
             onClick={cancelMessage}
           >
-            ■
+            <ComposerIcon name="stop" />
           </button>
         ) : (
           <button
@@ -486,7 +510,7 @@ export function ClinicalComposer({
             aria-label="Nachricht senden"
             disabled={!online || busy || value.trim().length < 2}
           >
-            ↑
+            <ComposerIcon name="send" />
           </button>
         )}
       </form>

@@ -6,6 +6,10 @@ export default defineConfig({
   // and multi-client SSE cleanup; keep them bounded without making loaded CI
   // hosts race a generic 30-second wall-clock budget.
   timeout: 60_000,
+  // The same journeys also run against PostgreSQL + Medplum, where a reset,
+  // projection/read-back and restored conversation can legitimately cross
+  // Playwright's five-second assertion default on a cold local stack.
+  expect: { timeout: 15_000 },
   fullyParallel: false,
   // All journeys reset and mutate one shared clinical environment. Parallel
   // workers would make those deterministic workflow assertions race.

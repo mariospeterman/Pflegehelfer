@@ -77,6 +77,12 @@ async function readConversation(userId: string): Promise<ConversationResponse> {
   return body;
 }
 
+function hasUnresolvedPendingTurn(body: ConversationResponse): boolean {
+  return body.turns.some(
+    (turn) => turn.proposalLifecycle?.status === "pending",
+  );
+}
+
 function activeThread(body: ConversationResponse): Thread {
   const active = body.conversations.find((thread) => thread.active);
   if (!active || active.id !== body.context.threadId)
@@ -104,7 +110,7 @@ export function createConversationStorage(userId: string): ChatStorage {
         return activeThread(await readConversation(userId));
       },
       async getMessages(threadId: string): Promise<Message[]> {
-        const body = await readConversation(userId);
+        let body = await readConversation(userId);
         if (body.context.threadId !== threadId)
           throw new Error("Das Gespräch gehört nicht zum aktiven Kontext.");
         let pending: PendingReviewResponse["pending"] = null;
@@ -129,6 +135,15 @@ export function createConversationStorage(userId: string): ChatStorage {
               result.message ?? "Offene Prüfung konnte nicht geladen werden.",
             );
           pending = result.pending;
+          // Conversation history and the short-lived review authority are
+          // deliberately separate reads. Execution can commit between them:
+          // the first read then says `pending` while the second correctly
+          // returns no authority. Re-read the explicit lifecycle once so a
+          // consumed revision renders as completed instead of as an archived
+          // stale draft. If it is still pending, the safe archived response
+          // remains in place and no control is reconstructed.
+          if (!pending && hasUnresolvedPendingTurn(body))
+            body = await readConversation(userId);
         }
         return body.turns.flatMap<Message>((turn) => [
           {
