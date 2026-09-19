@@ -1,211 +1,190 @@
-# Pflegehelfer — Agent-led Conversation and Verified Product Completion
+# Pflegehelfer — One Product, Natural Coworker, Verified Completion
 
-**Date:** 14 September 2026
+**Contract revision:** 19 September 2026
 
 **Repository:** `mariospeterman/Pflegehelfer`
 
-**Branch:** `codex/genui-production-showcase`
+**Working branch:** `codex/genui-production-showcase`
 
-**Source-audited head:** `2b1233d575fb8c33b9f5b98f1211171cd4401e2e`
+**Reviewed remote head:** `998789cec5da4ac23e0439b6a12fa2816009f05a`
 
-**Canonical destination:** `docs/execution/PFLEGEHELFER_COMPLETION.md`
+**Implementation identified in repository evidence:** `690901a8ab0509c1b55e2d23f9607a1c30ac4a2e`
 
-> **A natural agentic coworker on top, faithful reviewed documentation underneath—not a deterministic chatbot and not an unrestricted model writing records.**
->
-> The assistant understands and communicates. Approved Markdown explains institutional work. Reusable tools provide capabilities. The backend enforces access, records human approval and reliably delivers exactly the approved changes.
+**Existing pull request:** #1, draft and unmerged at the recheck
+**Canonical destination:** this file, `docs/execution/PFLEGEHELFER_COMPLETION.md`
 
-This is an IMPLEMENTATION contract for Codex, not the deployed assistant's system prompt. Complete the existing product in coherent slices. Do not produce another prototype, another full-stack rewrite or a plan-only response. Paths and capabilities below are targets unless explicitly identified as current evidence.
+> One natural, role-aware coworker; useful model-composed interfaces; reviewed organizational instructions; faithful documentation; enforced permissions; recoverable delivery.
 
-## 1. Reconcile the current task and finish it without another direction change
+## 0. Mission and precedence
 
-Read the actual current worktree, including uncommitted work, before making changes. It may be newer than the audited head. Preserve other agents' work and do not reset databases, rewrite Git history or overwrite unrelated changes.
+Finish and consolidate the existing product. Do not start a V2 repository, rebuild the OpenUI frontend again, or put another assistant over the old one. Replace internal modules where their behavior contradicts this contract, and delete the retired active paths after parity tests. Preserve completed work and other contributors' uncommitted changes.
 
-Reconcile this instruction into the following existing documents:
+The user meant **faithful reviewed documentation**, not predetermined conversation. The application must preserve reported meaning, distinguish source records from model interpretation, and persist exactly the authorized content/effects reviewed by the human. Neither a schema, source hash, deterministic renderer nor human approval independently proves that a reported event occurred. Do not promise zero hallucinations, automatic legal compliance or guaranteed market leadership.
 
-- `docs/execution/PFLEGEHELFER_COMPLETION.md`: the single current implementation contract.
-- `docs/execution/COMPLETION_MATRIX.md`: the existing G0–G7 evidence and acceptance index.
-- `docs/execution/ACCEPTANCE_RECOVERY_2026-09-13.md`: the existing integrated-profile recovery/evidence record, which now exists in the audited commit.
-- `docs/ARCHITECTURE.md`, active product/workflow documents, relevant ADRs, `AGENTS.md`, `agent.md` and runtime guidance where statements conflict.
+The user requests completion in an autonomous development loop. Implement the whole agreed internal scope in dependency-ordered slices; do not return only a plan or stop after another isolated green feature. Respect authorized runtime, compute and spending limits. When execution is interrupted, save an exact resumable handoff. No fictitious background activity, infinite-run promise, fabricated test, vendor capability or human approval.
 
-Retain all still-applicable acceptance identifiers from the prior contracts, including MD, CT, WF, TX, AI, VA, UI and AG families. Map them to the consolidated requirements; never silently drop an unfinished requirement. Archive superseded engineering instructions and leave references rather than multiple active rulebooks. Keep `AGENTS.md` short. Preserve historical evidence but label the SHA/runtime to which it applies.
+Reconcile this contract into the existing documents rather than append another contradictory master prompt:
 
-This instruction supersedes the interpretation that deterministic safety requires scripted language, a card for every answer or a handwritten grammar for every utterance. It does NOT supersede patient/audience isolation, faithful review, source integrity, reliable delivery, professional boundaries or the remaining administration, collaboration, analytics and operational scope.
+- `docs/ARCHITECTURE.md`: one current architecture, data ownership and boundaries; explicitly distinguish implemented behavior from target behavior.
+- `docs/execution/PFLEGEHELFER_COMPLETION.md`: this implementation contract.
+- `docs/execution/COMPLETION_MATRIX.md`: retain G0–G7 and inherited MD/AG/CT/WF/TX/AI/VA/UI and C1–C16 identifiers; preserve every still-applicable requirement and evidence link.
+- `docs/execution/ACCEPTANCE_RECOVERY_2026-09-13.md`: append dated results; never relabel historical runs as current.
+- Existing experience, workflow, deployment and security guides: concise domain documentation pointing to the above, not duplicated acceptance contracts.
+- `AGENTS.md`: short developer entry point and invariant, not the runtime clinical prompt.
 
-### The specific source-audit baseline
+If requirements conflict, resolve the conflict explicitly in the canonical contract and map the old acceptance ID to its corrected replacement. Do not discard unmet scope or secretly weaken tests. Archive historical instructions/ADRs with a superseded label and a link; retain the history of mistakes. There is no need to maintain every previous generated instruction as active documentation.
 
-Preserve these real advances at `2b1233d`:
+The separate mockup brief in `docs/design/reference/README.md` governs interpretation of the supplied images. It is a visual appendix, not a second product contract.
 
-- Runtime Markdown is loaded from directory-v2 packs, with role/station bindings and approved workflow skill selection.
-- The bounded model can select authorized read and draft-preparation tools without an extra model intent-classification request.
-- The integrated profile uses PostgreSQL, Medplum and an independent stateful provider simulator; it must not fall back silently to memory.
-- Reviewed assistant commands have a local atomic acceptance path with jobs, audit and receipts. Delivery workers retain acknowledgments and require read-back.
-- Pending proposals, browser-tab scope and original-ASR versus reviewed-transcript provenance have improved.
-- Migration-history verification now precedes pending changes. Preserve this correction.
+## 1. Baseline facts and what this instruction does not claim
 
-Reproduce and fix these remaining source-level findings, not assumed production incidents:
+The author rechecked the published branch, PR, CI metadata, completion matrix, architecture, response code, proposal presentation, runtime Markdown loader/catalog, provider registry, CI and browser configuration. This was a targeted source review, not execution of every test or a full live-application audit.
 
-1. `src/core/assistant-service.ts` still maps the LAST selected tool through `routeByTool` into an old intent and then a fixed response tree. This can discard the presentation relevance of earlier tool results.
-2. `generatedCoworkerTextIsSafe` grounds prose against the JSON of selected UI components, including German word/count patterns. Evidence validity must not depend on whether a matching card was rendered.
-3. `prepare_care_update` delegates to a second extraction call and the old verifier. Adding an agent wrapper around that path has not removed its linguistic limits.
-4. `src/ai/assistant-proposal.ts` still requires particular German messages, verbatim current-source note text and physician-only generic communication in parts of model validation. Its correction function has special cases for ml changes, named messages and particular completion phrases.
-5. `toOpenUi` serializes a server-selected component list. Serialization is not inherently wrong; the missing capability is model-selected presentation independent of the old intent switch.
-6. Input is still restricted to 1,200 characters in important paths. Bounded inputs are necessary, but arbitrary truncation or loss of a late negation/correction is not.
-7. Some tools slice results while reporting them complete. Correct pagination, scope, total-count and freshness semantics before the agent summarizes them as exhaustive.
-8. The assistant acceptance path is improved, but direct mutation paths, inbound synchronization, resource-native reconstruction, shared ACL threads, governance, identity/RLS and analytics remain incomplete.
-9. The project's real model/ASR attempts returned HTTP 429; TTS returned 503. These are unpassed model/audio gates. The reported 407 passing tests are not evidence of real-model competence.
+At the reviewed head:
 
-The task author read source and tests but did not execute the running app or reproduce the local results. GitHub Actions returned no runs for the audited head. Establish fresh evidence yourself.
+- OpenUI `AgentInterface`, server-backed scoped history, AI SDK transport and explicit proposal revision metadata are real implementations.
+- The repository reports atomic interruption/rollback/replay, real-store tests, verified simulator read-back and genuine inference/tool/validation/persistence progress.
+- GitHub CI run `34930226049` reports success for `998789c`; the repository also records successful earlier implementation CI. The current Playwright configuration still starts `demo:test-memory`, so this must remain separate from integrated acceptance.
+- G1–G7 remain PARTIAL. Real model/audio acceptance, shared collaboration/library, governed publication, identity/isolation, inbound processing, resource-native reconstruction and analytics still need work or evidence.
+- `verifiedCoworkerContent` now separates dialogue and exact facts, but still has fixed source-free patient dialogue/clarifications; `verifiedNaturalDialogue` retains word/pattern-based whole-answer checks. Reproduce actual behavior before changing it.
+- Directory-v2 manifests and a shared catalog of role/workflow guidance exist. File loading is not yet the complete administrator publication or multi-department product.
+- Production WiCare/careCoach/SAP/device operations are disabled vendor gates; simulator tests do not verify private interfaces.
 
-Current resolution note (2026-09-14): findings 1 and 3 were closed before this
-increment. Finding 2 is closed in the active display path without replacing it
-with another lexical entailment checker: the model selects exact run-local
-claims and optional bounded presentation, while deterministic code renders all
-displayed clinical fact atoms. Model-authored source-free clinical prose is
-never displayed. Measurement concept/value/unit/occurrence time/review status
-and task title/state render as indivisible same-row atoms. Evidence remains
-independent of cards and is archived with exact claims, server-only source
-metadata, a complete-result digest and a final archive digest. The model sees
-only opaque run-local handles plus bounded facts/freshness. Formal
-held-out/model-swap evaluation remains part of G4; all
-other numbered findings and G0–G7 partial gates remain binding.
+Do not reopen already-fixed defects. Inspect newer commits and the local index first. Live service/build health in the user's report is reported evidence until tested. No live-demo password, API key or database URL belongs in this contract, Git or test artifacts.
 
-## 2. Lock the product and terminology
+## 2. Branch, PR and release decisions
 
-Pflegehelfer is a provider-agnostic staff coworker for documentation, retrieval, coordination, communication and organizational work. Normal staff use Pflegehelfer. Medplum remains infrastructure and a separately authorized expert inspection surface.
+Continue the existing branch and draft PR #1 for this consolidation. Do not create a clean repository or another long-lived competing branch. Temporary worktrees/short-lived dependent branches are acceptable for isolated work only; their changes return to this one reviewed line.
 
-The initial product does not originate diagnoses, prognoses, treatment choices, medication prescriptions/dose changes, autonomous clinical triage, alarm replacement, personnel decisions or fabricated billing. Existing human-authored diagnoses, prescribed plans and reports of already-performed professional actions may be retrieved or documented faithfully. Do not suppress legitimate history just because a medication word occurs.
+Commit coherent, secret-free slices normally. Do not force-push, rewrite history, hard-reset, delete volumes or rebase a shared branch without approval. Preserve the exact pre-migration state and a rollback/forward-recovery route.
 
-“Faithful” means preservation of the reviewed meaning and attribution. A valid schema, plausible value, exact quotation, hash or human signature cannot independently prove that reported care occurred. Never promise zero hallucinations or automatic legal compliance.
+**Do not merge to main merely because the old CI is green.** At the end, update the PR summary to match the actual scope, present final-SHA acceptance and request the repository owner's merge approval unless that approval was separately granted. The recommended end state is this reviewed product on `main`, followed by short-lived feature branches. No new production deployment, vendor contact or real-data activation is authorized by this coding instruction.
 
-“No premade cards” means **no compulsory pre-scripted response trees or per-intent screen selection**. Reusable coded React/OpenUI components are necessary. Retain stable identity, source, review and status controls. The model chooses useful composition; it does not generate unrestricted executable frontend code.
+Code integration, public release and clinical deployment are distinct decisions. An owner may approve merging explicitly gated nonproduction capabilities; do not call that clinical readiness. Do not hold a safe source commit hostage to an unavailable model key, but do not call the product complete while a required scenario is unpassed.
 
-“MD-configured” means low-code configuration for existing capabilities and institutional guidance. Markdown is not the live patient database, an authentication system, an implementation of a private vendor API or executable permission authority.
+## 3. Locked product scope and simplicity budget
 
-The human-centered goal is less remembering, searching, retyping, interruption-recovery effort and correction work. The Weinberg photographs do not establish a specific no-code architecture. Measure human benefit and maintenance effort rather than line count or the number of generated cards.
+Pflegehelfer is a documentation, retrieval, communication and work-coordination layer around existing institutional systems. The normal staff interface is its own mobile-first PWA, not Medplum. Authorized experts can inspect FHIR/integration details through separate access.
 
-## 3. Keep one small architecture; remove the actual duplication
+Deliver the already-agreed workday, patient/staff/team workspaces, documents/images, directory, configuration/admin, process analytics and reviewed improvement loop. Do not expand this task into a full payroll system, hospital ERP, prescribing system, PDMS, diagnostic viewer, workforce scorer or native telephony stack.
 
-Retain the existing React/TypeScript/OpenUI shell, modular Fastify backend, operational PostgreSQL, Medplum and provider/model/audio adapters. Prefer maintained SDK features and libraries. Do not add a new orchestration platform, broker, vector database, microservice estate or agent swarm without measured need.
+Initial intended-use exclusions: new diagnosis, patient prognosis, treatment/dose recommendations, autonomous clinical triage, replacement alarm monitoring, clinical image interpretation, automatic employment decisions and fabricated billing. Existing professional diagnoses, orders and performed work may be displayed or faithfully documented within scope. A ban on originating a prescription is not a ban on reading a documented prescription or recording an authorized past event.
+
+Keep the current React/TypeScript/OpenUI/AI SDK/Fastify foundation. Prefer the maintained SDK's tool loop and streaming primitives where they replace bespoke orchestration cleanly; retain a small custom boundary only where necessary and tested. Do not mandate a framework migration for its own sake.
+
+No new mandatory Hermes/LangGraph/Temporal/Flowable/Kafka/NATS/vector database/service mesh. Do not add a separate agent per profession. Do not add TimesFM or another forecasting runtime now. These require a later measured need, explicit evaluation and a reviewed decision.
+
+Reduce duplicated state, all-purpose decision schemas, copied vendor protocols and hand-programmed language. Do not reduce meaningful security or recovery controls just to count fewer lines. Split large modules by clear ownership, not an arbitrary file-length target.
+
+## 4. One architecture and explicit data ownership
 
 ```text
-Employee message / speech / deliberate UI action
-        ↓
-Authorized session + relevant published Markdown + current evidence
-        ↓
-One bounded agent ↔ permitted read and draft-preparation tools
-        ↓
-Natural text + optional model-composed GenUI + source links
-        ↓
-Exact human review / Send / permitted explicit action
-        ↓
-Atomic local command acceptance
-        ↓
-Recoverable Medplum and designated provider delivery
-        ↓
-Audience-scoped receipts, current records and work continuity
+Approved institution / site / department / station / role / workflow guidance
+                                  ↓
+                 OpenUI chat + voice + useful GenUI
+          general | patient-private | shared team | staff | admin
+                                  ↓
+             authenticated, purpose-scoped conversational tools
+                  READ / PREPARE / REVISE — not COMMIT
+                                  ↓
+                       exact human review/action
+                                  ↓
+                    atomic LOCAL command acceptance
+                  ┌───────────────┴─────────────────┐
+                  ↓                                 ↓
+          Medplum clinical FHIR             Operational PostgreSQL
+         resources + provenance       work, threads, drafts, jobs, receipts
+                  └───────────────┬─────────────────┘
+                                  ↓
+                 versioned, capability-based provider adapters
+                       WiCare / careCoach / SAP / others
+                                  ↕
+             authenticated inbound data + conflicts + read-back
 ```
 
-Use one logical agent configuration instantiated with isolated request/session context, not one globally shared memory and not one dedicated model per employee. Keep separate role/person/audience records without duplicating engines.
+Use one protected file-storage abstraction, integrated with existing Medplum/file facilities where appropriate. Do not automatically build both a second media platform and a separate clinical file store. Clinical attachments have proper FHIR metadata/links; HR files use their restricted nonclinical domain.
 
-Ownership is explicit:
+| Domain | Authority |
+|---|---|
+| External clinical/master information | Designated provider for that domain and installation. |
+| Normalized clinical workspace | Medplum/FHIR with original identifiers, versions, occurrence/recording times and provenance. |
+| Workday/assignment coordination | PostgreSQL, unless a configured provider owns the original task; avoid two independent task lifecycles. |
+| Conversations, drafts, approvals, delivery | PostgreSQL under distinct access/retention policies. Necessary draft content is not a second independently editable EHR. |
+| Staff identity, membership, qualification | Institution IdP/directory and approved operational mappings. |
+| Role/workflow instructions | Reviewed Markdown and validated metadata, published as immutable versions. |
+| Model output | Proposed interpretation/communication, never credential or execution authority. |
 
-| Information                                             | Owner                                                                                                     |
-| ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| Existing clinical master record                         | The provider designated by the institution for that domain and operation.                                 |
-| Normalized clinical representation                      | Medplum, with source identity/version/time and provenance.                                                |
-| Workday, responsibilities, conversations and drafts     | Operational PostgreSQL, with clinical references instead of an unnecessary second EHR.                    |
-| Accepted commands, audit metadata and delivery receipts | Operational PostgreSQL and appropriate clinical provenance projections.                                   |
-| Staff identity and memberships                          | Approved identity/directory sources plus governed application mappings.                                   |
-| HR cases                                                | Specifically restricted personnel records, not a public staff profile or general FHIR patient collection. |
-| Institution procedures                                  | Approved immutable Markdown packs and validated execution metadata.                                       |
-| Model/session summaries                                 | Derived context only; never authority over clinical truth or permissions.                                 |
+Separate logical schemas/databases and least-privilege accounts. Using the same managed PostgreSQL infrastructure can be an operational option; do not write into Medplum's private tables from Pflegehelfer. Use its supported API/SDK.
 
-Import provider-originated data automatically through validated synchronization when permitted; do not require a nurse to reapprove every replicated source update. Staff-originated final writes require the appropriate human action. Side-effect-free discussion and operational draft autosave are not final clinical writes.
+Provider adapters are backend implementation contracts. MCP is optional exposure of the same authorized tools to additional clients; it is not required between every internal module and it does not implement a private vendor API.
 
-## 4. Finish the agent-led conversation path
+For a future standalone mode, Medplum may own selected supported clinical domains ONLY after explicit institution-approved migration, reconciliation, source-of-truth reassignment, retention/export and intended-use review. Do not declare a complete standalone EHR merely because Medplum exists. An unavailable upstream provider must not cause silent authority reassignment.
 
-Use the existing bounded runtime or a demonstrably simpler maintained replacement behind the same tool boundary. Do not introduce a parallel framework. The configured natural-language path must no longer require a `classify → old intent → fixed screen` conversion.
+## 5. Make the normal experience genuinely conversational
 
-The runtime must:
+Normal path:
 
-1. Resolve the authenticated principal, purpose, subject/audience, tab/session, patient/encounter when applicable and current approved instruction version.
-2. Load relevant guidance, recent permitted dialogue, pending proposal and source references—not every role file and every patient.
-3. Give the model the useful allowed tool subset and clearly describe tool effects and limitations.
-4. Validate tool name, arguments and current access before execution. Return the model a run-local opaque handle plus bounded real data, occurrence/recorded/retrieved times, completeness and errors. Retain source identifiers, versions, hashes and row provenance only in the server evidence registry.
-5. Let the model decide whether it needs another read, clarification, a natural answer, optional visualization or a draft/revision.
-6. End the run when awaiting a person. Persist resumable work and release compute; do not poll a model while waiting for approval.
+1. Authenticate and resolve the current actor, purpose, department, thread/subject and approved pack.
+2. Supply the current request, relevant dialogue/pending draft, bounded work context and on-demand guidance.
+3. Let one bounded model select authorized read or draft tools, inspect actual results, and choose another read, a specific clarification, a useful answer or a revised draft.
+4. Present readable text by default and optional useful OpenUI composition.
+5. Persist approved changes only through the independent human-command boundary.
 
-An ordinary question can produce plain assistant text with source links and no cards. A non-factual acknowledgment does not require a fabricated citation. A factual answer involving several tools must be able to cite all relevant results without rendering one card per tool.
+A greeting, clarification about the employee's intent or explanation of an approved procedure must not require a dummy patient read. A specific clarification must remain possible before or after a tool call. Questions are not automatically `AssistantProposal` objects.
 
-Remove the last-tool-wins conversion. Preserve a run-scoped evidence/result registry independent of rendering. A result must not lose authority or accessibility merely because the user requested a short text answer rather than a chart.
+Remove fixed generic responses and universal lexical constraints from the successful natural path after replacement tests pass. Do not solve every new utterance by adding another German keyword, connective list or exact-string condition. Keep format checks, unsupported-operation rejection, known contradiction regressions and patient/permission checks. Do not equate “no regex anywhere” with good engineering.
 
-Tools should be small in number and useful in scope: read current work, handover, patient context, observation series, relevant history, permitted colleague work, authorized team discussion, approved reference; resolve a permitted person; prepare or revise a scoped work/message/configuration draft. Reuse domain services rather than make a new service for every tool name.
+Inspect mixed-result behavior carefully: “Mobilisation remains open; dressing is completed” must not be rejected simply because an open task and a completion word occur in the same response. Associate assertions with their relevant source rows rather than applying whole-paragraph keyword rules. A single question ending in `?` is not a proof that it contains no unsupported premise.
 
-A draft tool should accept a schema-validated model proposal and permitted evidence references, then return a durable draft reference/revision and reviewable meaning. Do not ordinarily call a second model that repeats the same interpretation with the old parser. Additional model calls must solve a measured problem, not exist because the old implementation already nested them.
+Give the model simple tools backed by existing services, such as authorized handover/work/patient queries, permitted staff-work lookup, policy search, thread reading and draft creation/revision. Avoid a giant mandatory decision/evidence/layout JSON envelope for ordinary language. Generate hashes, identity bindings, deadlines after explicit resolution, version metadata and authorization server-side.
 
-Model-supplied IDs are untrusted selectors, not authority. Resolve them against the current scope. Server assigns identity, timestamps, hashes, record ownership, destinations and approval tokens. The model cannot access the final-approval endpoint, arbitrary FHIR mutations, SQL, shell, filesystem, remote skill scripts or arbitrary network URLs.
+Prefer opaque scoped references or row handles over requiring the model to echo every scalar field of a measurement. Stable provenance remains server-owned. A handle is not itself authorization and must be checked for current scope and expiry.
 
-Use bounded time, turns, result sizes, fan-out, retry and cost. Distinguish a tool failure from absence of data. Never label a truncated top-20 result as all open work. Counts come from the same authorized query and declared scope. Revalidate live facts when necessary; `retrievedAt` is not the measurement time or provider last-update time.
+Keep one model provider boundary. Use native tool calling and supported structured outputs appropriate to each provider. Cloud-compatible does not mean that every OpenAI-specific endpoint, parameter or schema is supported by every local runtime.
 
-Keep explicit safe direct queries/buttons as efficient alternatives. Without a working model, expose records, deliberate controls and verbatim draft capture with an honest unavailable label. Do not represent regex fallback success as natural-language model understanding.
+Tool calls, steps, bytes, time, concurrency and cost are bounded. Repeated identical failing calls stop with a useful explanation. Cancel inference on disconnect when appropriate, but never roll back already accepted work because the client closed a tab.
 
-## 5. Faithfulness without a custom grammar for every sentence
+## 6. Faithful information, not an infallibility claim
 
-Separate five records: employee input; provider/history evidence; model-proposed interpretation; human-reviewed revision; accepted content and delivery. For speech, keep original ASR text and corrected transcript lineage under the retention policy; no raw audio retention by default.
+Keep separate and traceable:
 
-Preserve subject, attribution, occurrence time, negation, uncertainty, approximation, laterality, quantities/units, performed versus planned status and requested versus mentioned actions. Context from a care plan cannot silently become evidence that the employee performed it today.
+- original staff input and reviewed ASR transcript/corrections;
+- authorized source records and their occurrence times/versions;
+- assistant summary or proposed interpretation;
+- immutable reviewed proposal revision and selected effects;
+- accepted records and delivery/mapping receipts.
 
-Offer verbatim capture and optional visible professional reformulation. Example:
+Preserve quantities, units, negation, approximation, attribution, timing, laterality and performed-versus-planned status. Missing data is not a negative finding. Historical facts do not become observations from this shift. A timer, tag or task title is not proof that care occurred.
 
-```text
-Employee: Anna mobilisiert, danach kurz schwindlig.
-Faithful optional draft: Anna mobilisiert. Anschliessend kurzzeitig Schwindel.
-Unsupported unless supplied: 30 Meter, Rollator, Blutdruck stabil,
-nach Pause beschwerdefrei, Arzt informiert.
-```
+Example:
 
-Replace exact stock-message equality and general-purpose German lexical gating in the normal model path. Retain deterministic reference ownership, schema, value/unit representation, supported effect classes, version and authorization checks. Keep targeted known-contradiction checks where useful, but do not claim substring matching proves entailment.
+> “Anna mobilisiert, danach kurz schwindlig.”
 
-Evidence must refer to actual allowed input or source records. A correction can cite earlier scoped input plus the correction and an inline edit; do not rebind every reference to only the latest sentence. The model must not mint provenance or label text it fabricated as an original quote.
+Optional faithful wording:
 
-Do not build another exhaustive claim ontology to compensate for removing a parser. Use the existing typed fields, source/effect references, meaningful review, targeted checks and held-out evaluation. Unsupported or contradictory clinical claims should be corrected, omitted or surfaced as uncertainty, not accepted simply because citations exist. An optional model evaluator can aid testing but is not an infallible production safety oracle.
+> “Anna mobilisiert. Anschliessend kurzzeitig Schwindel.”
 
-Ground factual prose against authorized evidence, NOT the JSON of UI components. Numbers must retain their semantic association: a pulse value cannot justify a temperature claim merely because the number occurs somewhere. Preserve safe natural wording and paraphrase; do not translate every German article into a numeric test.
+Do not add stable blood pressure, resolved symptoms, equipment, distance or physician notification without supporting information. Verbatim documentation remains available. A source-linked assistant summary is not automatically a signed clinical note.
 
-Long reports must not silently lose the last negation or correction. Set documented transport/model budgets with visible oversized-input handling or explicit chunking; test input beyond the old 1,200-character boundary. Do not split a sentence into independently executable fragments.
+Exact measurements/identities/receipts can be rendered directly from authorized rows, keeping label/value/unit/time/status together. Allow natural accompanying explanation and source-linked summaries; do not substitute a fixed fact printer for the whole conversation. Validate references and detectable mismatches, test semantic faithfulness with held-out cases and obtain appropriate human clinical-language review. Do not claim a second model or a hash makes correctness certain.
 
-After approval the model does not rewrite the final record. Mapping to FHIR/vendor representation is deterministic and versioned; unsupported/lossy mappings need visible reconciliation. Later substantive corrections create attributable amendments or new versions under review policy.
+When necessary, buffer the affected unsupported statement or draft pending correction rather than emitting known false clinical content. Safe progress and conversation need not wait for an entire final review form. Streaming approval controls remain disabled/unavailable until the exact proposal and authority are durable.
 
-Maintain product boundaries at every endpoint. A generic note/task cannot originate a treatment order. Equally, do not block an authorized report of an existing order or completed intervention solely because it contains medication terminology. A reported unusual measurement stays visible with verification state; it must not be hidden behind an older normal value or delay established emergency contact while awaiting software review.
+After approval, no LLM rewrites accepted content. A tested mapping can change representation, not meaning. Unsupported/lossy mappings create explicit reconciliation, not guessed values. Later substantive corrections are attributed amendments/new revisions under the applicable policy.
 
-## 6. Real adaptive GenUI, not one card per tool
+Extreme reported values remain visibly reported/unverified; do not conceal them behind an old normal value, normalize them automatically, or block established urgent-care/contact procedures awaiting a digital countersignature. Additional data-quality review uses institution-approved rules, not invented universal thresholds.
 
-Reuse the installed OpenUI renderer and useful accessible components. Verify the exact package APIs before changing them. Generate the model's presentation specification from the actual registered catalog; do not hand-maintain another component grammar.
+## 7. Complete server-owned conversation and proposal continuity
 
-Implement optional model-authored presentation from allowed primitives: text sections, lists, tables, charts, accordions, choices and small forms, plus bounded domain controls where needed. Data-bearing clinical components hydrate from authorized result references. Draft review hydrates from the server-owned current proposal. No model-supplied JS/MDX, HTML execution, backend route, token or webhook.
+Keep one conversation engine and persisted IDs/statuses. Separate general-private, patient-and-encounter-private, patient-team, department, direct message, staff-context assistant and restricted HR-case audiences through shared infrastructure with distinct membership/subject fields.
 
-The model can choose:
+The server resolves history and evidence. Reject browser-invented assistant/tool results, forged approved states, injected roles, other-patient IDs and unauthorized attachment references. SDK message validation is structural validation, not access control.
 
-- text only for a short question;
-- a compact table for comparing several records;
-- a time-series chart for a requested trend;
-- a few fields for genuinely missing information;
-- an expandable patient summary;
-- a compact editable review for proposed changes.
+Capture origin context when a request/recording starts. A slow result, stream reconnect or second tab must not retarget it. Persist necessary employee input before relying on generation completion. Store interrupted/failed status appropriately; do not make `onFinish` the only durable record of the work.
 
-The renderer/serializer can remain deterministic. The selection/composition for the natural assistant response must not be determined by a giant intent switch. Fixed direct-view buttons and the final approval control are appropriate; they are not a competing conversational product.
+Make draft creation/revision general. Natural edits and inline edits revise the SAME proposal; old authority is invalidated. Use explicit persisted proposal ID/revision/status, never parsed OpenUI strings, visual position or guessed “latest” timestamps.
 
-Natural explanation, evidence references, UI composition and executable authority are separate concerns. A displayed read control may request another authorized read. A generated draft form edits a scoped proposal. Final commit is an authenticated human action validated independently by the backend.
-
-Support actual model/transport streaming where useful, with bounded partial parsing and no executable action until its server state is valid. Do not simulate streaming by delaying a completed response. A fast deterministic query can render immediately. Use existing supported protocol conventions rather than inventing multiple stream formats. Preserve cancellation, accessibility, reconnect and incomplete-output behavior.
-
-Do not force a separate “UI model” call merely to reorder static cards. Prefer composition as part of the main answer or a justified bounded step. Test two different presentations of the same source data and a text-only answer without adding a scenario-specific TypeScript route.
-
-## 7. One durable proposal lifecycle and one review
-
-Reuse the current proposal storage and immutable revision/source records. Add a general `revise` capability that accepts the current draft and scoped correction through the agent rather than a fixed ml/Nora phrase table. Never convert a question about a draft into an edit accidentally.
-
-The existing Luca test remains a regression, not the entire product specification. Also test different names, recipients, measurements, units, times, removed actions and reordered requests. Preserve approximation and explicitly deferred tasks.
+Minimum dialogue:
 
 ```text
 Luca mobilisiert, etwa 200 ml getrunken. Gewicht später.
@@ -213,504 +192,463 @@ Korrektur: eher 150 ml. Nora informieren, nicht den Arzt.
 Nur Dokumentation und Nachricht, noch nichts abschliessen.
 ```
 
-The same proposal is revised; no physician message or task completion is invented. Generalize this through the same runtime used for unfamiliar corrections, not a separate demonstration shortcut.
+Then test other people, different units, historical statements, relative times, missing recipients, partial care and follow-ups referring to previous tool results. Do not solve only these three exact sentences.
 
-The human sees the final wording/effects, recipient, time and relevant source changes. One approval is enough where policy permits. A deliberate Send or direct authorized action can itself be that approval. Do not add mandatory duplicate dialogs to every low-risk interaction. Keep justified countersignature policies separate.
+Approving the newest revision, remaining on the page, switching away/back and reloading must never revive older controls. A lost response must return the original command receipt on safe retry, not produce another note/message. Cancelling generation, discarding a draft, deleting private history and amending an accepted record are distinct operations.
 
-A context switch suspends, not retargets, pending work. Restore the same subject/encounter/thread revision with fresh authority after revalidation. Tabs remain independently scoped. Reissued tokens cannot execute the same proposal twice. Preserve useful drafts after restart. Do not store reusable live authority in historical messages.
+Do not silently truncate clinically material tails such as a late negation. Use bounded inputs, explicit truncation indicators and relevant-context selection. User-interface preferences may be stored separately; private chats are not unscoped global clinical memory.
 
-## 8. Finish the existing durable execution—not another pipeline
+## 8. Genuine OpenUI composition and streaming
 
-Preserve the new local assistant-command acceptance and workers. Migrate remaining supported direct detail/workday actions to the SAME acceptance service. Do not re-enable an integrated endpoint by bypassing the gate, and do not call a blocked normal staff action complete.
+Keep `AgentInterface`, the existing allowlisted component library and maintained compatible AI SDK adapters. Pin a mutually compatible package set; do not upgrade to a new major just because an online example uses it. No mandatory Thesys/OpenUI/Vercel cloud gateway in local mode.
 
-One PostgreSQL transaction accepts the exact reviewed revision and selected effects, consumes authority, stores an idempotency receipt and relevant operational mutation, records audit/evidence and enqueues remote jobs. No model, human or external HTTP request runs inside that transaction.
+Generate the model-facing component specification from the same registered library used for rendering. The model may compose useful text, tables, charts, expandable sections, timelines and missing-data inputs. Reusable components and stable review controls are expected; a compulsory prewritten response for each intent is not.
 
-Treat external effects as recoverable delivery, not a global database transaction. A lost request response must return the original receipt for the same intent and canonical payload. A changed payload using that key fails. Concurrent approval is once-effective; preserve request keys across client retries.
+Bind clinical values to authorized data handles and validate any selected fields/aggregations. The model cannot manufacture bearer tokens, mutation URLs, JavaScript, raw HTML/MDX or workflow authority. Allowlisted rendering is not enough by itself: every action is reauthorized by the backend.
 
-Keep per-item locally accepted, Medplum stored, provider acknowledged, pending verification, rejected and conflict states. Do not call an HTTP acknowledgment a successful clinical/business update without the operation's required evidence. For vendors that cannot provide immediate read-back, use their verified operation-specific acknowledgment semantics and explicit unverified/manual states rather than inventing an API.
+Preserve genuine inference/tool/validation/persistence progress already added. Distinguish such progress from incremental model text and from a final durable clinical draft. No timers faking work. Implement actual incremental content where compatible with the safety boundary; a fast direct query can render immediately without an LLM.
 
-The current worker ordering prevents old checkpoints overtaking new ones. Preserve that protection during migration, then remove normal whole-state checkpoint reconstruction and global unrelated-job blocking. Use resource-scoped repositories, conditional versions and per-aggregate ordering where required. Do not mechanically delete a checkpoint before restoration parity and previous-release migration tests pass. Legitimate FHIR Binary documents/images are not prohibited.
+Malformed or partial UI has a useful non-executable fallback. A stream failure must not erase the employee's input or suggest that a pending clinical write succeeded. Do not depend on client rendering as evidence of human approval.
 
-Prove crash points before/after local commit, remote send, acknowledgment and receipt persistence. Reauthorize delivery under the institution's policy without deleting previously accepted evidence. A changed entitlement may pause delivery for review; it must not quietly erase an approved report.
+## 9. Runtime Markdown, complete role guidance and publishing
 
-## 9. Complete provider ingestion and current context
-
-The reusable adapter boundary remains correct. Finish both initial import and incremental authenticated inbound processing through durable inbox/cursor/mapping/provenance records. Match patient and encounter; quarantine ambiguity instead of choosing the first patient or using room as identity.
-
-Preserve per-operation capability gating, source authority per provider INSTANCE/domain, mapping versions and freshness expectations. One unverified write must not disable verified reads. A new instance of an implemented adapter is configuration; a new unsupported protocol requires code and conformance tests. Markdown does not implement private WiCare/careCoach/SAP APIs.
-
-Keep the independent stateful fake provider with authentication, persistent records, expected versions, delays, rejection, correction and restart. From clean stores prove:
+Extend the actual directory-v2 structure. Do not create a competing loader or move every file for cosmetic reasons:
 
 ```text
-provider initial data → inbound mapping → Medplum → staff context
-→ approved staff update → delivery → provider read-back
-→ independent provider edit → inbound → refreshed authorized workspace
+config/
+  assistant/BASE.md
+  shared/
+    guidance-catalog.json
+    roles/<profile>.md
+    workflows/<workflow>/SKILL.md         # retain existing flat paths where used
+  sites/
+    <existing typed configuration>.json   # migrate references deliberately
+    packs/
+      tertianum-kronenhof/
+        site.json
+        SITE.md
+        departments/*.md
+        stations/*.md
+        providers/<instance>/PROVIDER.md
+        workflows/<workflow>/SKILL.md
+        references/                      # approved-source inventory, not live PHI
+      alpenblick-demo/...
 ```
 
-Prevent feedback loops from own writes returning through inbound; preserve tombstones/corrections and classify conflicts. Avoid silent last-write-wins. Manual resolution must identify the conflicting versions and review the resolution without bypassing source ownership.
+Existing shared manifest references are not inherently duplicate configuration. Each value gets one authoring authority; generated manifests/hashes are generated, not independently maintained copies. Use Agent Skills-compatible Markdown/frontmatter where helpful. No arbitrary skill scripts, executable MDX, remote includes or unchecked file access.
 
-Medplum remains the normalized clinical workspace, not automatically the legal master of every field. PostgreSQL stores operational context, not another independently editable copy of the entire patient chart. Label pending local approved work alongside external source state so staff can see why they differ.
+Markdown explains operating context, responsibilities, procedures, terminology, documentation style and examples. Validated metadata selects implemented capabilities, workflow steps/transitions, departments/stations, provider instances and profile bindings. Do not invent a universal executable language or a BPMN platform.
 
-Real vendor documentation, sandboxes and acceptance remain external. Generic adapter code, workers, conflict UX and their tests are internal tasks. Never use screen scraping or direct vendor database mutation as a covert workaround.
+Actual staff identities, qualifications, rosters, assignments, patients, private cases and secrets belong in the directory/DB/secret manager. “Staff configured by Markdown” means approved role guidance and mappings, not a private per-employee Markdown chart or a document that grants rights.
 
-## 10. Finish the existing MD architecture without relocating it again
+Supply substantive approved guidance for all existing role families. Preserve useful guides and improve gaps:
 
-Keep and extend these CURRENT paths:
+| Role/profile family | Required meaningful workflow | Boundary |
+|---|---|---|
+| Pflegeassistenz/SRK, AGS EBA | Incoming handover, assigned basic support, reported work, escalation, transfer | Distinct qualifications and delegated/local competencies. |
+| FaGe EFZ | Assigned care/medical-technical activities, coordination, documentation, handover | Not automatic equivalence with HF/FH because `capabilityRole` once pointed to registered-nurse. |
+| Pflege HF, Pflege FH | Nursing coordination/review, patient work, rounds, responsibility transfer | Do not invent an HF/FH legal hierarchy; local duties apply. |
+| Pflege-Teamleitung/Schichtleitung | Coverage, ownership, delegation, unresolved responsibilities | Supervisory access is purpose-limited, not access to private assistants. |
+| Ärztlicher Dienst | Addressed questions, round preparation, human-authored decisions, follow-up ownership | No LLM-originated prescribing/diagnosis. |
+| Apotheker/in | Existing medication discrepancies, reconciliation questions, attributed response | No autonomous medication change. |
+| Pharma-Assistent/in/support | Supply/logistics and locally delegated work | Not pharmacist authority by shared label. |
+| Physio, Ergo, Logopädie, Ernährungsberatung | Existing schedule/goals/instructions, intervention report, outcome, coordination | Distinct relevant context, no new AI treatment advice. |
+| Transport | Pickup/destination/assistance, completion, exceptions | Minimum necessary patient information. |
+| Service/Hotellerie, Reinigung | Briefing, meal/room/hygiene work, completion, issue routing | No broad chart access. |
+| Administration/Eintritt/Austritt | Imported data, missing documents, appointments and follow-up | Administrative completion is not clinical sign-off. |
+| Abrechnung/Versicherungskoordination | Approved evidence, missing requirements, duplicates, reviewed export | External insurers are recipients, not unrestricted internal users. |
+| Heimleitung, Geschäftsleitung/CEO | Operational brief, unresolved work, authorized change/improvement review | Seniority is not universal clinical/HR access. |
+| Finanzen/CFO | Evidence completeness and financial/process aggregates | No invented tariff/revenue conclusions. |
+| HR | On/offboarding, documents, qualification/training expiry, restricted personnel requests | No patient chart or private assistant mining. |
+| Berufsbildung | Authorized supervision, training and reviewed learning records | Do not infer competence from chat/timer telemetry. |
+| Qualität/Patientensicherheit | Authorized review/incident queue, evidence, improvement, closure | No rewriting original reports. |
+| IT/Integration | Health, queues, scoped faults, controlled reconciliation | Technical administration is not clinical sign-off. |
+
+Each enabled profile has purpose, relevant first step, typical inputs/outputs, escalation, closure, denied actions and at least one tested useful scenario. Do not reimplement each profession in TypeScript. Separate qualification, functional role, delegation, assignment and purpose; never union all of a person's roles into an implicit superuser.
+
+Include department/station guidance for rehabilitation, long-term care, nursing/medical service, pharmacy, therapies, hotel/service/cleaning, transport, administration/finance, HR/management and quality/IT. ICU/emergency support remains coordination/documentation around primary PDMS/alarm systems, not autonomous acuity management.
+
+Complete admin and CLI authoring:
 
 ```text
-config/assistant/BASE.md
-config/shared/guidance-catalog.json
-config/shared/roles/*.md
-config/shared/workflows/<skill>/SKILL.md
-config/sites/packs/<institution>/site.json
-config/sites/packs/<institution>/SITE.md
-config/sites/packs/<institution>/departments/*.md
-config/sites/packs/<institution>/stations/*.md
-config/sites/packs/<institution>/providers/<provider>/PROVIDER.md
-config/sites/packs/<institution>/workflows/<skill>/SKILL.md
+edit prose/metadata or describe proposed change
+→ validate references and policy ceilings
+→ preview the actual assistant/workflow
+→ run affected scenarios
+→ authorized human approval
+→ publish immutable version
+→ activate for new sessions
+→ compare or roll back
 ```
 
-The current manifest references validated machine configuration at `config/sites/<institution>.json`. Retain that as a single referenced source or migrate it deliberately into the pack with a compatibility import. Do not leave two hand-maintained copies or rename directories merely to match an older prompt.
+Packaging computes hashes and records authenticated publisher/reviewer identity. A bare editable `approvedBy` string or checksum is not approval or authenticity. Use appropriately protected signing/verification where the deployment needs portable signed packs; do not invent custom cryptography. Support offline import of approved bundles.
 
-Add reusable `workflow.json` or equivalent supported metadata only where executable obligations require it. Markdown contains interaction guidance and procedures; metadata contains implemented step types, prerequisites, role references, timing and transition rules. Security capability ceilings are separately reviewed. No arbitrary expression language or executable Markdown.
+Prove selected content reaches the actual model request with version/hash. Cache by pack and authorized scope. A prose-only edit changes guidance, not hidden executable steps or permissions. Structural changes show matching metadata diffs. Pin running workflows; current security revocations apply immediately even to old sessions and queued jobs.
 
-Finish organization → site → department → station → role/qualification/assignment → workflow binding. Support multiple departments/stations, real directory membership changes and different shift patterns. Active role is explicit for multiple-purpose staff; do not union every privilege into a superuser. Institution-specific restrictions can narrow supported capabilities. Creating a role label cannot grant an unimplemented or unreviewed power.
+## 10. Patient, staff, team and management workspaces
 
-Load relevant guidance progressively. Prompt/document/provider contents cannot elevate themselves to system instructions. Preserve secure reference loading, file/UTF-8/size checks and no remote includes/scripts. Hashes identify content integrity; an editable `approvedBy` string or recalculated hash alone is not approval identity or signature.
+Use one mobile-first shell, not several apps. Patients/staff are scoped subjects; never become the authenticated tool principal.
 
-Finish a simple editor/CLI and administrative preview:
+**Patient workspace:** contact-style avatar/initials, independently verified identity/encounter, short approved biography/preferences, source-linked diagnoses/needs, values, medication context, protocol, tasks and files. The assistant talks about the patient, not as the patient. Photo/room alone is not an identity check. Medication orders, administrations and reconciliation discrepancies remain distinct and read-only in the initial product scope.
+
+**Staff workspace:** authorized professional bio/contact, current permitted work/plan and clear modes: “Assistenz zum Arbeitskontext”, “Gemeinsame Arbeit”, “Direktnachricht”. A manager can inspect necessary assigned work only within their responsibility; they cannot read another person's private assistant, unsent draft, unrelated DM or restricted absence reason. A profile click never sends anything or borrows the subject's credentials.
+
+**General assistant:** the current employee's authorized work session, not an unbounded history of all patients. “Mein Assistent” selects the general private context explicitly.
+
+**Shared team thread:** audience/membership is visible; a private draft is published only after content/audience review. A sender going off duty does not orphan a legitimate responsibility; allow approved duty-role takeover.
+
+System connection, scheduled duty, willingness/availability, message delivery, read status and accepted responsibility are different signals. Patient profiles have no fictional online/typing status. No presence-duration productivity scores.
+
+Admin/configuration and analytical views may use conventional focused editors/tables in the same product. Chat-first is not a ban on a useful administration screen. Ordinary clinical details open a Pflegehelfer view; an authorized expert may additionally open Medplum without bypassing permission or approval controls.
+
+## 11. Handover and a complete realistic workday
+
+Keep the exact handover-content snapshot and atomic interruption implementation. Complete append-only post-cutoff addenda and two consecutive real-store/browser shifts.
+
+Handover initially shows a compact patient roster and progress, with one selected patient expanded. Four sections:
+
+1. **Kurzprofil / Achtung:** relevant existing diagnoses/needs and confirmed source precautions.
+2. **Seit der letzten Schicht:** documented changes, performed work and results.
+3. **Offen / ungeklärt:** unanswered questions, missing information, pending reports, conflicts.
+4. **Nächste Schicht:** actual responsibilities, owners, time windows, reason/order and dependencies.
+
+“No entry” does not mean “no symptoms”. Do not claim the previous shift overlooked something when information is merely absent. “What to watch” comes from approved plans or explicit professional instructions, not newly generated clinical judgment.
+
+Acknowledgment binds the exact snapshot/version/content/read-set and responsibility. Listening is not acknowledgment and acknowledgment is not performed care. Support partial transfer and questions. Urgent work and established emergency contacts must not be blocked by incomplete routine handover. Late information appears as an addendum, not silently rewritten acknowledged content.
+
+After handover, show the actual plan: patient, activity, when, why/source, assigned person/role, assistance/dependencies and state. A routine operational ordering suggestion may use appointment/meal/coverage constraints, not AI-derived acuity. Conflicting schedules need explicit handling rather than silent overbooking.
+
+Work episodes support start, pause, spontaneous visit, resume, partial completion, not performed with reason, defer, transfer and cancellation. Reuse accepted reporting as evidence where valid instead of asking for the same narrative again. A stopped timer must not close a task automatically.
+
+At shift close, identify unapproved drafts, pending delivery, unfinished work and unanswered questions. Preserve ownership until the receiving duty person/team accepts it. Never require false completion to leave a shift. Receiving-handover acknowledgment and provider acknowledgment remain independent.
+
+Use Europe/Zurich time, explicit occurrence/recording/approval times, overnight shifts and DST fixtures. Relative times become visible absolute deadlines before approval. A delayed delivery worker must not move “in 30 minutes” to 30 minutes after eventual transmission.
+
+Intake demonstrates import-first workflow: retrieve existing identity/encounter/documents, highlight only missing/conflicting fields, collect the necessary information naturally, review and route permitted changes. No huge empty form or recreated patient list.
+
+## 12. Real #topics, @mentions and notifications
+
+Maintain a small governed taxonomy with stable IDs, localized names, synonyms, sensitivity and review/version metadata. Topics such as Mobilisation, Sturzprävention, Schmerz, Ernährung, Flüssigkeit, Wunde, Schlaf, Angehörige, Transport and Austritt help retrieve actual linked work/documents/messages.
+
+The model can suggest a few relevant topics; reviewed application metadata makes them real searchable filters. A hashtag is not a diagnosis, clinical Flag, medication change, alarm or billing code. Preserve negation/history/uncertainty, including “keine akuten Schmerzen”, “Sturz vor fünf Jahren” and “Sturzgefahr bitte prüfen”. Existing positive or negative clinical records are not overwritten by a casual tag.
+
+Resolve @person/@duty-role through the permitted directory. Ask about ambiguity rather than choosing the first person. Display the actual audience before sharing and never use a mention to widen access. Report comments are linked addenda, not edits to signed history.
+
+Use durable sequenced in-app events/messages, deduplication and unread state. Support reconnect/replay with current permission checks; a retention gap triggers scoped refresh. Separate server accepted, delivered, seen where supported, responsibility accepted and resolved. Notifications do not steal the active patient context.
+
+A deliberate Send of a user-authored ordinary message can be the required human approval. AI-generated or newly published private content gets the appropriate review. Avoid an extra generic confirmation for every text.
+
+Optional OS push carries no clinical detail by default and requires an approved provider/deployment. Fully isolated PWA mode cannot promise reliable internet-dependent background alarms. Primary nurse-call/telephony remains independent. A call button can launch an existing approved channel; do not build or record calls without separate scope.
+
+## 13. Library, files and knowledge
+
+Finish one actual protected library for documents and images. Filters by authorized subject, patient/encounter, team, topic, type and date must retrieve real resources, not merely submit a generic knowledge prompt.
+
+Authenticate byte access and metadata. Validate size/type/signatures, use quarantine/scanning as appropriate, restrict dangerous active content, protect thumbnails and signed URLs, handle original versus sanitized derivatives deliberately, and remove unnecessary location/EXIF from previews. No unrestricted remote-URL fetch or public patient-media links. Parse documents in a bounded isolated process; use embedded text before expensive OCR where appropriate.
+
+An upload has an explicit subject/audience and provenance. Extraction or model suggestions remain drafts for the appropriate workflow; an imported diagnosis is attributed to its source. Document text is untrusted data, not a replacement system prompt. Profile images do not enable biometric identification.
+
+Separate patient records, approved organizational SOPs, general references, intranet news and HR files. Knowledge has owner, audience, version, approval/effective/review/expiry dates and withdrawal. Show unavailable versus negative findings. Start with structured/full-text lookup; add semantic retrieval only if a measured corpus needs it, always derived and permission filtered.
+
+Loop/Staffbase or another private intranet is an optional authorized connector; do not scrape private systems or put confidential content into public search. No hidden internet dependence in isolated mode.
+
+Medical image display intended for individual medical use needs a specific Swissmedic qualification review. Ordinary attachment infrastructure does not justify claiming a diagnostic image viewer, wound assessment or radiology interpretation is exempt. Keep specialist functions disabled until separately assessed.
+
+## 14. One reliable command pipeline and clinical reconstruction
+
+Preserve the tested local transaction that accepts reviewed changes, pauses/closes the old work segment, starts the spontaneous episode, rebinds context, consumes authority, records audit/receipt and enqueues delivery. Keep injected failure/rollback and lost-response replay regressions.
+
+Migrate remaining supported direct UI actions to this same acceptance service. Do not leave required functionality disabled forever in integrated mode, and do not bypass durability just to make a button work. Read paths need no mutation queue.
+
+In one local transaction store current authorization check, exact proposal revision/hash, selected effects, source read-set, one-use authority consumption, idempotency receipt, local workflow changes, audit/event and projection/delivery jobs. No remote/model/human wait inside that transaction.
+
+Use separate versions for Patient, Encounter, Task, note, etc. Do not copy a patient-level version into every FHIR read-set. Keep update preconditions and conflict behavior specific to the resource and field ownership. HMACs/digests support integrity, not factual correctness or permissions.
+
+On restart reconstruct clinical views through resource-scoped Medplum operations and work through operational repositories. Remove normal dependence on a whole-institution/whole-application checkpoint after an explicit versioned migration with parity and recovery tests. Retain a bounded migration reader until safe to retire. Legitimate clinical Binary/document resources remain supported.
+
+Do not duplicate mutable task, communication or service authorities in both stores. Define operational owner and clinical projection/reference. Evidence needed to recover an accepted write may legitimately include its payload; avoid mirroring a second whole EHR into PostgreSQL.
+
+Preserve applied numbered migrations and validate history before executing new SQL. Test previous-release database fixtures, not only empty installs. Do not rehash edited history to make checks green. Unsupported old records enter explicit quarantine/migration review, not a current patient's encounter by default.
+
+## 15. Provider operations: connectors, not wishful plug-and-play
+
+A new instance of an IMPLEMENTED, VERIFIED interface should be configuration-only. A new proprietary operation needs real specification, mapping and acceptance code. Do not promise universal instant connectivity.
+
+Each instance declares vendor/product/version, supported read/write operations, authentication secret reference, source-owned domains, mapping/profile versions, initial import/incremental strategy, concurrency/idempotency behavior, acknowledgment/read-back meaning, error handling and expected freshness. Instance names are not hardcoded in the UI.
+
+Use documented standards/endpoints: WiCare public Gate/SOAP/export descriptions are not proof of every write; careCoach product claims are not generic API documentation; SAP Fiori is a UI family, not the customer-specific backend service contract. Do not invent endpoints, assume native FHIR or use covert browser automation. Begin a facility-sponsored vendor request only with separate authorization.
+
+Persist inbound envelopes, deduplication, cursors and conflicts. Match institutional identifiers and encounters explicitly; handle readmission, merges, corrections/tombstones and imported outbound echoes. No clinical last-write-wins when meaning conflicts. Poison records must not stop unrelated work.
+
+Outbound workers use relational jobs, bounded leases and safe retry. Distinguish accepted locally, projected to Medplum, sent, acknowledged, verified, rejected, conflict and uncertain outcome. Compare the contract-relevant normalized fields/version, not bytes of an entire proprietary object. If a record changed again, use supported history/receipts or show uncertainty; do not blindly resend an acknowledged write because verification transport failed.
+
+Recheck current authorization according to institutional policy without losing accepted evidence. Revoked access can place a job into authorized reconciliation. Preserve acceptance-time actor and current delivery decision separately.
+
+Test an independent stateful fake provider, not the same in-memory object as the app: empty Medplum → initial import → read → review/write → provider read-back → independent provider edit → inbound refresh; then outages, duplicate events, lost replies, conflicts, corrections and separate process restarts.
+
+Production operations remain `EXTERNAL_VENDOR_GATE` individually until contracts and tests exist. Unsupported is a valid result; do not pretend every integration will eventually support all writes. Read-only activation can precede write approval. Unavailable providers must not silently switch to simulators in a real-data profile.
+
+## 16. Identity, institutional isolation and staff privacy
+
+Implement generic institutional OIDC/BFF with a maintained library and an actual isolated test IdP. Real tenant URLs/claims/certificates are external settings; generic sign-in is internal work. Use appropriate code/PKCE/state/nonce handling, server sessions, Secure/HttpOnly/SameSite cookies, CSRF protection, rotation, logout, expiry and revocation. Reject demo identity headers/client role claims in production.
+
+Enforce effective organization/site/department/station, user/profile, individual competency/delegation, assignment/care or supervisory relationship, purpose, audience and operation. Reuse Medplum project/AccessPolicy/field/compartment mechanisms and limited service accounts. Test PostgreSQL RLS, composite scope/foreign keys and connection-pool tenant reset with the actual restricted application role, not a bypassing superuser.
+
+Staff-profile subject is not the actor. HR and management have only required operational/personnel information; no default patient chart or private assistant access. Counts, search snippets, attachments, exports and notification metadata must not leak hidden records. Exceptional audited access is separately governed; do not promise that software-admin access is magically end-to-end private.
+
+One person can have multiple functions, but acting purpose must be explicit where access differs. Current revocation takes effect immediately on reads, queued work and pending review; pinned workflow versions are not frozen access grants. Break-glass, if enabled, must be limited and reviewed, not a bypass into unrelated HR or private messages.
+
+A passkey or second signature is available when the chosen institutional risk policy needs it. Do not require two people for every routine note; do not call WebAuthn approval a legally qualified electronic signature without the required separate scheme.
+
+## 17. Deployment and scaling without premature infrastructure
+
+Ship the same signed/versioned build for managed Swiss hosting and institution-managed local deployment. Recommended initial commercial posture: isolated institution environments, not separate source forks. This is a product choice, not a universal legal requirement or proof of security.
+
+Keep domain/configuration scoping real even in isolated deployments. Implement the requested cross-tenant negative tests; do not claim shared multi-tenant SaaS or horizontal scaling until tested. A future shared control plane may hold deployment/version health, not aggregate clinical/private staff data by default. Do not build that control plane now without need.
+
+Preserve a simple supported container installation and guided CLI/admin setup. No mandatory Kubernetes for a small center. Reuse the current package manager and pin a supported Node runtime consistently for developer shell, CI, build, container and scripts; fail clearly on unsupported versions instead of accepting repeated Node 20 warnings.
+
+Test two API instances/two workers once normal process-local checkpoint dependence is removed. One slow model must not block another employee's task acceptance. Test leases, duplicate execution, pool isolation, database restart and durable SSE replay. Do not infer scale from one browser or serialized fixture tests.
+
+Use verified TLS, backups, update/rollback/forward-recovery procedures, scoped logs/metrics and egress rules. Local fonts/icons/models and checked offline artifacts are required for isolated mode. Network-isolated application operation, intermittent-network PWA use and fully air-gapped deployment are different supported profiles; document them accurately.
+
+Air-gap acceptance tests block egress and run the supported workflow. Browser speech, external push, hosted IdP discovery or cloud telemetry cannot silently leak through. On-premises does not mean infrastructure is maintenance-free; document responsible operators, support expectations and measured resource requirements.
+
+## 18. Credentials, retention, files and incident handling
+
+Do not use the previously exposed key. Verify remediation using authorized account access; the human performs login/MFA. Never ask for keys in chat or print environment values, connection strings, authorization headers or secret-bearing curl commands. Do not embed the supplied tunnel credentials in source, this contract, screenshots or distributable files.
+
+Confirm database rotation only from safe evidence; consider existing authenticated connections separately from new-password rejection. Revoke exposed keys, review usage where authorized and restrict retained logs/artifacts where possible. Rotation is not proof no misuse occurred. Do not claim all external log copies are erased.
+
+Public demos are synthetic and authenticated before paid AI/upload use, with server-enforced budgets/rate/size/time limits. An account budget alert is not necessarily a hard cap. Safe secret scans report rule/path metadata without echoing matches; narrow allowlists need justification. Do not fetch raw historical logs known to contain secrets during an audit.
+
+Separate retention for clinical records, private conversations, proposals, work evidence, audio, audit, files and aggregate analytics. Raw audio is transient by default; approved clinical records do not disappear when private chat is deleted. Support holds, correction/withdrawal, expiry jobs and permitted data exports. Configure institution-specific durations, not a universal guessed number of years.
+
+Integrity protection and append-only audit have a stated threat model and key management. Unkeyed checksums alone are not tamper-proof evidence against an actor who can rewrite both data and checksum. Prefer established cryptographic and storage controls rather than elaborate homemade signing protocols.
+
+Restore operational PostgreSQL, Medplum data, protected files and required configuration into a clean isolated environment. Verify existing records, versions, accepted commands, pending/delivered jobs and handovers; reconcile with the external fake provider so completed writes are not sent again. Record measured RPO/RTO assumptions. A synthetic JSON checksum is not this drill.
+
+Prepare institution incident procedures, including applicable data-breach assessment and cyberattack reporting, with responsible contacts and distinct obligations. Legal applicability and real notifications require authorized human review, not autonomous Codex action.
+
+## 19. Swiss-market readiness: implement controls and obtain actual decisions
+
+Create or update one concise release/readiness dossier using existing compliance documentation. For every requirement record applicability, responsible owner, implementation evidence, open decision and approval status. Use the verified source register and current institution/canton/vendor facts; do not pretend source reading is legal sign-off.
+
+| Area | Required release evidence |
+|---|---|
+| Intended purpose / medical-device qualification | Document the actual functions and marketing claims, including summaries, medical images and later standalone domains; obtain competent qualification review. If a feature qualifies as MDSW, gate it and complete the relevant conformity pathway rather than renaming it a coworker. |
+| Privacy and professional secrecy | Determine controller/processor roles, purposes, minimization, access/sharing, data-subject procedures and applicable Swiss/cantonal framework; assess DPIA need and residual risk. |
+| Outsourcing / hosting / support | Contractual processor/subprocessor controls, remote support, location, backup and any international access/transfer; Swiss hosting alone is not complete compliance. |
+| AI transparency | Explain that users interact with AI, what is retained/used, limitations and review. No confidential customer data used for general model training by default. |
+| Professional responsibilities | Institution-approved qualifications, delegation, role definitions and activities; no universal permissions invented from a title. |
+| Service evidence / reimbursement | Setting-specific reviewed mapping and completeness, no timer-to-tariff shortcut or invented codes. |
+| EU reach where applicable | Screen GDPR and EU AI Act applicability, roles and current obligations when serving relevant users/markets; neither assume every Swiss system is automatically in scope nor ignore applicable cross-border use. |
+| EPD or certified systems | FHIR interoperability is not EPD certification. New EPD/PDMS/diagnostic integrations require their actual contracts/conformance and scope assessment. |
+| Security and operations | Threat model, dependency/SBOM/license inventory, tested access/recovery, vulnerability/incident handling, support and release process. |
+| Clinical/organizational acceptance | Named authorized reviewers, held-out language/workday usability results and deployment approval; coding-agent review is not clinician/regulator sign-off. |
+
+Swissmedic's 21 April 2026 guidance bases qualification on intended purpose and functionality; it explicitly discusses medical-image display. Keep diagnostics and specialist image interpretation outside the initial product and review ordinary media features for their actual intended use. Do not assert that HITL, a disclaimer or self-hosting grants exemption.
+
+Current BAG information distinguishes requirements by service type and setting; do not inherit the old blanket assumption that all basic-care/coordination services require a physician order. Verify the current applicable rules before any live reimbursement mapping. This task implements truthful evidence and reviewed preparation, not automated tariff decisions.
+
+Read current BACS reporting applicability and exemptions for the customer; distinguish its cyberattack-reporting obligations from privacy-breach notifications. Do not encode one universal deadline/threshold for all institutions or silently file a report.
+
+If a required institutional approval is missing, keep that release gate closed while completing generic internal engineering. Deliver the evidence pack and exact remaining decision, not a fabricated compliance badge.
+
+## 20. Analytics, service completeness and reviewed improvement
+
+Use PostgreSQL events/projections first. Define a small event dictionary and data minimization. One accepted work event records actual performer(s), role, patient/encounter where relevant, performed/reported activity, effective time, recording/approval time, quantities, task/order references, segments and amendments.
+
+Reuse that event for documentation links, task evidence and service-completeness review. Multiple tags, messages or participants must not multiply one service. Elapsed time is not automatically active care, billable work or invoice value.
+
+Show documented, required information missing, possible duplicate, order/mapping to review, ready for approved export and delivered/rejected states. Validate setting/version-specific external billing rules separately. Do not invent CHF savings or revenue from demonstration data; the goal is complete lawful evidence, not upcoding.
+
+Initial analytics: documentation delay, avoidable re-entry, correction steps, unresolved handover items, request/ownership latency, delivery age/failures, model latency/cost and voluntary staff-reported usefulness. Define denominators, missing data, windows, deduplication and comparable baseline/pilot groups. Staff timers/presence do not measure competence, work ethic or care quality. Do not mine private conversations or voice for emotion/personality/staff rankings.
+
+For organizational culture/team-building questions use appropriately governed voluntary feedback and human interpretation, not inferred psychological diagnoses from telemetry. Show uncertainty and confounding in operational comparisons. Distinguish time saved, usable capacity and realized money saved.
+
+Implement one complete synthetic improvement cycle: discover a routing delay → propose a reviewed duty-queue/wording/workflow change → show evidence and diff → run scenarios → authorized owner publishes → limited pilot → compare → keep/rollback. Models propose, not activate permissions or clinical procedures. No autonomous training on confidential private data.
+
+TimesFM or other forecasting remains optional later for aggregate workloads/occupancy/task volumes if reliable history and backtesting beat simple baselines. Do not install a forecasting service now, infer patient prognosis or score employees under this project closure.
+
+## 21. Real model, ASR and TTS acceptance
+
+The currently documented runtime is fallback. Resolve the replacement-key/accepted local-runtime prerequisite early with authorized access. Distinguish authentication, unavailable credit, rate limiting, network errors, unsupported API/schema and actual model incompetence. Do not repeat a credit failure indefinitely or generalize from an old tiny model to all local inference.
+
+Run progressive probes with a bounded approved budget: plain conversation → one authorized read → a specific clarification → a small draft → revision → complete workday. Test the same live provider adapter the UI uses. A listed model, working `/models`, a key present, an HTTP 200 or one JSON fixture does not demonstrate the coworker.
+
+Use held-out wording, names, quantities, mixed completed/open tasks, negation, approximate intake, historical values, conflicting sources, scope changes and long utterances. Evaluate false additions/omissions, wrong-patient/effect rate, clarification quality, human edit burden and task success. Do not demand a preferred sentence. A model judge is supplementary evidence, not sole clinical validation.
+
+Record pinned model/runtime/schema/prompt/pack versions and actual latency/cost. Model upgrades are replaceable but not automatically enabled for production; run conformance, held-out evaluation, clinical/organizational review as required, limited rollout and rollback. Better models may improve capability, not permissions or guaranteed truth.
+
+ASR uses actual bounded microphone bytes, editable transcript and the same draft path. Capture transcript corrections as new provenance, not edits to original ASR evidence. General operational speech questions need no patient; patient documentation needs explicit scope. Do not invent confidence scores. Test supported languages, real representative human Swiss-German recordings under authorization, noise, names, units, numbers and negation. Synthetic TTS loopback is integration testing, not dialect acceptance.
+
+TTS reads the exact selected visible/frozen text with stop/pause/repeat/speed and useful segment position. Audio must actually play and match, not only return bytes. Stop on lock/context change; prevent re-captured TTS from approving a command. Browser speech remains clearly synthetic/unapproved unless its processing route is established.
+
+Separate unconfigured, configured, reachable, contract-tested, scenario-accepted and production-approved states. Never label fallback a real-model success. Hosted processing of real data needs separate institutional approval and terms; local-only modes have no hidden hosted fallback. Missing audio does not break typed workflows.
+
+## 22. Visual implementation: apply the supplied references intelligently
+
+Read `docs/design/reference/README.md` and inspect both supplied images. They show desired mood and interaction styling, not literal data, legal approval, responsive CSS or completed application behavior.
+
+Preserve the OpenUI-based PWA and one semantic design system. Light: white/off-white, very subtle paper texture, near-black typography, pharmaceutical blue. Dark: near-black/graphite, readable off-white, restrained blue. Red is reserved for appropriate warnings/errors/selected brand accents. Use restrained glass on chrome, not low-contrast clinical content.
+
+Mobile header: hamburger left; compact center context switcher for general/patient/staff/role-appropriate work; current-user avatar/settings right. Keep critical patient/audience identity readable. Place the larger wordmark/tagline in the drawer or wide layout rather than cramming every desktop element into 360 px.
+
+Desktop: collapsible sidebar, a centered readable chat column and optional contextual inspector at sufficient width. Tablet adapts rather than stretching mobile cards. Do not permanently show dashboards around the conversation. A new chat can be calm/empty; an active shift can offer a short actionable handover entry without flooding the viewport.
+
+One composer: attachment +, auto-growing text, clearly distinct dictation/listen modes, send and stop/cancel. Hide/reconfigure controls by state instead of displaying four ambiguous blue circles. No emoji as core action icons. Use one maintained consistent SVG icon set, labels/tooltips, keyboard controls and visible focus. Clarify send/record/read-aloud semantics.
+
+Preserve the distinct existing Edelweiss/negative-space-plus mark; the image's heart-cross is only a mockup variant. Use one canonical SVG/logo set. No protected Red Cross imitation, official Swiss shield or Tertianum logo. A color change is not legal clearance; request brand review before external commercial use. Synthetic facility label remains “Tertianum Kronenhof · Demo” with non-affiliation and no real data.
+
+DO NOT copy the mockup's unsourced “Stabil”, “keine dringenden Massnahmen”, “Wunde reizlos” or similar assertions as default output. Do not infer status from normal-looking numbers. Use explicit source/time/author or omit. Do not copy the depicted age/room/diagnosis into another patient's fixture. Green presence belongs to a real system/directory signal, not a fictional patient online state.
+
+Exact times/units/source states accompany values. Unknown, absent, explicitly negative, stale, contradicted and unreviewed data remain distinguishable. Real charts use actual time coordinates, not equally spaced samples disguised as time. Tables have accessible alternatives.
+
+Use compact expandable patient summaries, not mandatory oversized cards. No duplicate starters/menus/composers/status banners, hidden controls, raw actor IDs or technical FHIR labels on routine care screens. Same routine confirmation should not appear redundantly in toast, banner, card and profile.
+
+## 23. PWA security, accessibility and performance
+
+Inspect real running screenshots AND interaction at 360×800, 390×844, tablet portrait/landscape, 1024 and 1440 widths, desktop wide, light/dark/system, 200% zoom/text, keyboard and screen-reader navigation, reduced motion/transparency and virtual keyboard. Include Android Chrome and supported iOS/WebKit behavior where available; report device coverage honestly.
+
+Use WCAG 2.2 AA as an engineering target; test actual contrast over composited glass and non-text controls, focus visibility, reflow, labels, error recovery and alternate inputs. A 44–48 CSS-pixel bedside target is a design goal, not a claim that every WCAG AA criterion mandates 44 px. No horizontal overflow is insufficient if the composer clips text or hides a review control.
+
+PWA installation uses HTTPS/internal trusted certificates and one maintained manifest/service worker. Update notifications must preserve drafts; no uncontrolled reload mid-approval. Cache static shell/assets by default, not unrestricted clinical/HR data or bearer secrets. Any institution-approved offline clinical subset needs a separate threat model, expiry, scope and explicit pending-sync behavior. Offline writes cannot bypass fresh authorization/reconciliation on reconnect.
+
+Do not promise a PWA can enforce screenshot prevention, full device attestation/remote wipe or air-gapped background wakeup. BYOD is an institution decision; support managed devices and clear lock/logout behavior. Web push is optional and separate from guaranteed medical alarming.
+
+Reproduce the reported ~688 KB gzip initial main chunk, inspect dependency attribution and split optional profiles/charts/media/admin code where measured. Avoid bringing server SDKs/Node crypto/broad generated schemas into the browser unnecessarily. Do not migrate frameworks or create artificial chunk files solely to lower one number.
+
+Measure cold/warm start, JS parse time, first usable composer, model first content, tool latency, draft readiness, approval response and delivery lag separately. Set budgets after a representative-device baseline. Report regression/improvement instead of unverifiable “ultra-fast” claims.
+
+## 24. Realistic synthetic data and testing scope
+
+Use existing approximately fifteen fictional longitudinal profiles and enhance them coherently rather than reseeding unrelated data every iteration. Six-patient nursing default plus zero/two/twelve assignment tests. Profiles include source-tagged existing diagnoses, care preferences, encounters, goals, tasks, medication context, time-series records, intentional missing/conflicting data, readmission and adjacent shifts.
+
+Use a controlled scenario clock with its mode visible. Do not present a weeks-old measurement as this shift's latest observation merely to populate a card. Do not generate clinical images and present them as real evidence; use labelled synthetic or licensed teaching material appropriately. Do not reproduce licensed interRAI/BESA/LEP instruments or codes without permission.
+
+Have fictional staff for all enabled role profiles, including multi-role and cross-station coverage with explicit assignments. Demonstrate genuine differences, not cosmetics. “AI teammate” replies in the demo are clearly simulated and never counted as human approval or silently used for two-person sign-off.
+
+Required completed demonstrations: nursing full two-shift journey; FaGe/SRK/HF differences; physician source-linked questions/rounds; pharmacy; therapy; service/cleaning/transport minimum context; intake/administration; staff profile/DM; Heimleitung operational review; restricted HR onboarding; service completeness; governance improvement; second-site setup; provider outage/conflict/restore.
+
+Measure real human effort in the demonstration: repeated typing, navigation away from conversation, redundant approvals, correction effort and whether staff must think about the backend system. Synthetic times/benefits demonstrate a mechanism, not measured real-house ROI.
+
+## 25. Sequential execution plan mapped to G0–G7
+
+Do not rebuild everything in one unreviewable change. The autonomous session continues across these complete slices. Internal scope remains binding, but one unavailable external key must not freeze unrelated engineering.
+
+| Sequence | Required output | Existing gates |
+|---|---|---|
+| 1. Consolidate and unblock | Canonical docs, exact baseline, safe key/runtime prerequisite, secret-free builds, real-store environment, removal inventory | G0/G5 |
+| 2. Prove the coworker | Actual model ordinary dialogue/read/specific clarification/optional GenUI/draft/revision/approval/read-back; mobile visual inspection | G1/G4/G7 |
+| 3. Close work and data reliability | All supported direct actions on one acceptance path, inbound/conflicts, resource-native recovery, full two shifts/addenda, files and team collaboration | G1/G2/G3 |
+| 4. Make institutions configurable | Roles/stations, administration, governed packs, directory/identity/RLS, staff/HR privacy, same build at second site | G3/G5 |
+| 5. Close operational product | Service evidence, analytics/improvement, multi-instance/concurrency, retention/restoration/egress, final visual/performance evidence | G1/G5/G6/G7 |
+| 6. Release review | Final-SHA clean checkout/CI, matrix and dossier, merge recommendation and owner approval | G0–G7 |
+
+Start provider/clinical/security stakeholder prerequisites in parallel only with authorization. Do not make every future feature a prerequisite for finding out whether the natural conversation works. Conversely, after proving the conversation, continue closing the remaining agreed internal scope rather than declaring the full product complete.
+
+## 26. Acceptance tests that lock the intended behavior
+
+Preserve inherited acceptance IDs and map the following closures into them; these are not another competing matrix. Add failing regressions before fixes and test the actual implementation paths.
+
+**Conversational and evidence:** natural source-free general and patient-context clarification; specific question after tool reading; multi-tool answer independent of last tool; mixed open/completed tasks; harmless paraphrases without source-word membership; no invented measurements/clinical conclusions/notifications; model-selected text vs table vs chart from the same underlying records; all source/handle scope checks.
+
+**Meaning and revision:** approximate/historical/negative reports, unfamiliar recipients and timing, partial completion; same proposal revised across three turns and inline edits; latest approve → remain → reload → switch back without older action revival; deliberately discarded/expired authorities; long input with late negation; voice corrections.
+
+**Workday:** exact snapshot/readout, partial acknowledgment, urgent interruption, source addenda after cutoff, approved order references, deferred responsibility, receiving owner absence, two consecutive shifts, zero assignment, readmission/new encounter, overnight/DST, multi-person activity without inflated service evidence.
+
+**Execution:** idempotency replay returns original receipt; same key/different payload rejected; fault after pause before new-context bind rolls back all effects; cancelled generation vs response lost after commit; two workers with expired leases; version conflict before projection, acknowledgment lost, read-back unavailable, changed-again provider resource, inbound duplicate/correction/poison record, recovered database and independent provider restart.
+
+**Privacy:** patient A/B tabs, employee/encounter/site mismatch, staff-context query does not impersonate subject, Heimleitung cannot indirectly retrieve restricted diagnoses, HR/no clinical access, source histories before permission revocation, @/search/counts/files/export/notifications do not widen access, forged client assistant/tool/approval message rejected, limited-role RLS and pool reuse, explicit break-glass boundaries.
+
+**Configuration:** selected approved MD reaches actual model request, unrelated guides excluded, meaningful prose-only change without TypeScript, structural metadata diff, old sessions pinned/current revocation immediate, invalid/traversal/symlink/remote include rejected, second multi-department institution and supported provider instance with no source fork, undeclared capability cannot be introduced by Markdown.
+
+**Files and learning:** real upload/quarantine/view/search/withdrawal, safe previews and expired access, uploaded prompt injection cannot call unauthorized tools, staff/personnel file isolation, one work event reused without duplicates, actual taxonomy filters, one human-approved improvement/pilot/rollback with simulated metrics clearly labelled.
+
+**AI/audio:** successfully configured model through the UI, held-out texts, second model conformance without permission changes, real microphone ASR review, TTS matching readout, failures/refusal/rate limits/timeouts/unsupported schema and budget caps; fixtures remain separate from real-model results.
+
+**Visual/ops:** full screenshots and keyboard testing in all specified states, no clipped composer or hidden review, consistent header/icons/marks, independently refreshable source statuses, no model authority while streaming incomplete UI, egress blocked, previous-release migration, isolated actual-store/file restore and reconciliation, measured performance.
+
+Tests for meaning assert expected effects and preserved facts, not one stock German sentence. Do not weaken a legitimate safety regression to achieve conversational fluency; fix its underlying concern without forcing all dialogue into templates. A peer review must assess utility as well as security.
+
+## 27. CI, artifact evidence and repository cleanup
+
+Retain the current memory-profile test job as a fast test layer. Add explicit integrated jobs with PostgreSQL, Medplum and an independent fake provider. Required integrated jobs fail or remain explicitly unpassed if their dependencies are missing. Do not let `reuseExistingServer` exercise an unknown local instance in final acceptance; verify build/profile identity.
+
+Use isolated test institutions/databases or an explicitly serial shared-fixture suite; do not run destructive reset tests concurrently and call race failures model errors. Cross-worker concurrency tests still need dedicated isolated scenarios. Do not inflate totals by summing overlapping targeted and full suites.
+
+Pin runtime and compatible dependencies, install with the frozen lockfile, validate peers and licenses/SBOM, build both artifacts and run lint/typecheck/security/air-gap/functional/visual suites. Secret-dependent model tests can be protected and separately triggered; no keys on untrusted PRs or raw tool logs.
+
+Maintain a removal inventory: old responsibility → canonical replacement → live callers removed → migrated tests/evidence. Check duplicate transport producers/consumers, chat state, custom serializers, composers/sidebars, model routers, work/task authorities, old styles/logos, unused dependencies and stale docs. Static unused-code tools are aids; runtime pack files, generated component registries and applied migrations can be legitimately referenced dynamically.
+
+Do not remove applied migrations, audit history or versioned recovery fixtures. Retire obsolete API routes via explicit compatibility/deprecation only where needed; one compatibility adapter is not a second product. No permanent competing frontend behind a feature flag.
+
+Final acceptance uses a clean checkout of the exact implementation SHA, clean infrastructure and configured runtime. Verify PWA/API artifact IDs, source SHA, dirty flag and service worker cache. Record docs-only commits separately; do not claim tests on a later code commit because an earlier one passed. Publish safe evidence/logs and update PR scope/CI requirements.
+
+## 28. Autonomous loop and honest finish line
+
+For every unmet acceptance:
 
 ```text
-edit MD/metadata or describe desired change
-→ draft diff → validation → runtime preview → scenario tests
-→ authorized human approval → immutable publication → activation
-→ new sessions use the new version → compare or roll back
+inspect actual current code and evidence
+→ reproduce or define the failing requirement
+→ implement the smallest complete change
+→ targeted real-store tests
+→ use the app and inspect UI/data/receipts
+→ independent review where available
+→ fix root cause and rerun regression
+→ commit coherent changes and update matrix
+→ continue to next unmet dependency
 ```
 
-Generate manifest hashes mechanically as part of the reviewed publication process. Do not make an administrator manually edit many dependent hashes, and do not automatically bless an unauthorized edit. Running sessions pin their procedure version; current access revocations still apply immediately.
-
-Actual staff lists, patient assignments, qualifications, absence reasons and credentials belong in governed operational/directory data, not individual Markdown files. Synthetic fixtures may remain separately versioned. Provide working `site validate/inspect/preview/publish/activate` CLI/admin flows using the existing configuration mechanism, not decorative commands.
-
-## 11. Complete useful role guidance and workflows
-
-Keep the 25 shared synthetic role guides and existing workflow catalog. Expand their substance and supported tools instead of copying one generic support-day under every name. Research the current official role sources and obtain local review before production; these are demonstration defaults, not a universal Swiss legal permission matrix.
-
-| Profiles                                                  | Required useful scenario                                                                                                                                           |
-| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Pflegeassistenz/SRK, AGS EBA, FaGe EFZ                    | Distinct approved competencies; assigned care/work report, partial work, appropriate escalation and transfer.                                                      |
-| Pflege HF, Pflege FH                                      | Source-linked handover, coordination, human-authored professional findings, reviews and follow-up ownership. Do not invent an automatic HF/FH authority hierarchy. |
-| Pflege-Teamleitung/Schichtleitung                         | Coverage, assignment, unresolved responsibilities and reviewed delegation, without private-transcript access.                                                      |
-| Ärztlicher Dienst                                         | Questions, rounds preparation, human response and attributed follow-up; formal prescribing stays outside the generic assistant.                                    |
-| Apotheker/in; Pharma-Assistenz                            | Separate medication review/reconciliation versus supply/logistics work with appropriate responsibilities.                                                          |
-| Physio, Ergo, Logopädie, Ernährungsberatung               | Relevant appointment/goals, session documentation and cross-team requests using existing approved plans.                                                           |
-| Transport, Service/Hotellerie, Reinigung                  | Actual work queues, completion/exception and necessary precautions without broad clinical access.                                                                  |
-| Eintritt/Austritt/Administration; Abrechnung/Versicherung | Imported gaps, documents, evidence completeness, approved export and rejection follow-up.                                                                          |
-| Heimleitung, Geschäftsleitung/CEO, Finanzen/CFO           | Permitted operating brief, exception ownership, baseline/quality/cost review and human-approved changes.                                                           |
-| HR, Berufsbildung                                         | Onboarding/offboarding, qualification/training expiry, supervised learning and restricted personnel cases; no patient data by default.                             |
-| Qualität/Patientensicherheit; IT/Integration              | Authorized review/incident work versus technical queue/health/recovery operations, with distinct authority.                                                        |
-
-Role procedures remain configurable, but unsupported tasks must be visible as unsupported. A role file is not evidence its end-to-end application workflow exists. Do not build payroll, a full HR suite, tariff engine, PBX or replacement PDMS merely to make every role useful.
-
-## 12. General, patient, staff and shared workspaces
-
-Use one shell, composer, subject context service, tool registry and command pipeline. Support private general assistance, private patient/encounter assistance, permitted staff-context assistance, shared patient-team/department discussion, DMs and restricted personnel cases as explicit scopes—not duplicate products.
-
-Patient profiles feel like familiar contacts, but the assistant speaks ABOUT the patient. Show photo/initials, identifiers, encounter and a compact private/shared audience label. Profile lenses expose approved personal preferences, documented diagnoses, allergies with known/unknown/negative distinctions, care goals, actual values, read-only medication context, timeline, work and authorized files. No invented patient personality or presence.
-
-Staff profiles separate:
-
-1. Ask Pflegehelfer about the requester's permitted work context concerning a colleague.
-2. View shared assignments and responsibilities.
-3. Contact the real colleague or duty role through deliberate Send/Call.
-
-Opening Nora never executes as Nora or reveals her private assistant transcript/drafts to Heimleitung or HR. Supervision can show necessary published operational work under policy, not unrelated clinical/personnel information. Patient identities cannot leak indirectly through staff-task counts, search or analytics.
-
-System connectivity, source freshness, duty status and optional availability are distinct. Do not show a patient as online. Do not infer performance from a colleague's connection state or reveal an absence reason. Calls use a user-initiated approved integration; no automatic dialing or recording.
-
-Scoped drafts, pending reviews, scroll and interrupted care survive navigation. A slow answer goes to its origin thread. Incoming events never hijack the active patient. Test two browser documents, logout, permission revocation and stale responses.
-
-## 13. Complete the working day and handover
-
-Start nursing with a real authorized handover, not a marketing card or hard-coded “step 1 of 10.” Use a compact roster with patient expansion and four sections: Kurzprofil/Achtung; Seit der letzten Schicht; Offen/ungeklärt; Nächste Schicht. Show only source-backed existing diagnoses/precautions and actual responsibilities. Missing reports are not evidence of no symptoms or criticism of the previous shift.
-
-Freeze content, source read-set, ownership and cutoff. Acknowledgment refers to the exact content version. Add later information as an append-only addendum. Allow questions and partial review. Listening is not acknowledgment, comprehension or performed care. Urgent work and primary communication cannot be blocked until all routine handover rows are read.
-
-TTS reads the visible chosen content version, with stop/pause/repeat/speed and return after a question. It must not freely embellish the handover or capture its own speech as a user's approval.
-
-After handover show the actual work plan: patient, time/window, activity, reason/source, responsible person/role, dependencies/assistance and status. Explain operational ordering from existing appointments and approved constraints; do not originate clinical urgency from vital signs or diagnoses.
-
-Work is interruptible and repetitive, not a fixed one-pass checklist. Support start, pause, resume, waiting, partial completion, not performed with reason, deferral, cancellation and transfer. Stopping a timer or opening another profile does not establish performed work. Work remains possible after the morning list is complete.
-
-At close reuse accepted records, identify unapproved drafts, pending provider delivery, questions and outstanding responsibility. Do not require false completion to finish a shift. The receiving person/team acknowledges the exact transfer. Include two consecutive shifts, overnight/DST boundaries, no assigned patients and multi-person assistance in acceptance tests.
-
-## 14. Real #/@, notification and library behavior
-
-Finish durable ACL-enforced shared threads, authored comments/replies, report-linked addenda, explicit publication preview, duty-role ownership and reassignment. A deliberate Send is meaningful approval; do not duplicate it without a justified reason. Read, responsibility accepted and resolved are distinct.
-
-`@person` and `@duty-role` resolve through the authorized directory. Clarify ambiguous matches; do not select the first person. A mention never grants access or publishes prior private content automatically.
-
-`#topics` are approved categorization suggestions and real searchable metadata. Keep topics separate from clinical statements and active safety Flags. Negated/historical/uncertain language must not create a confirmed positive diagnosis, risk, alarm, task or billed service. Corrections remove stale categorization. Useful filters include unresolved work by topic and separately confirmed source warnings; do not conflate them.
-
-Notifications and unread counters use durable audience-filtered events with replay, revocation checks and bounded payloads. Outside-the-app push requires an approved delivery mechanism; do not promise reliable air-gapped background PWA alarms. Primary nurse-call/urgent contact stays independent.
-
-Implement one authorized library for documents/images with patient/team/topic/date/type filters, safe previews, source/version and approval state. Do not leave a Bibliothek button that only submits an unimplemented question. Validate and scan uploads where applicable, quarantine unsafe files, authorize thumbnails and bytes, handle metadata/expiry and retain originals appropriately. No public patient images, hidden EXIF leaks, arbitrary SVG scripts or patient photos scraped/generated as real identity evidence.
-
-Approved policies and intranet/news are different knowledge classes with owner, audience, source, approval/effective/review/expiry and withdrawal. Optional Loop/Staffbase and public information use only authorized read connectors; no patient data in web queries. Air-gap uses controlled imports/DMZ, not hidden external calls. Add semantic retrieval only where measurements justify it.
-
-## 15. Context, analytics, evidence and governed improvement
-
-Use existing PostgreSQL state for conversation, pending work and necessary context. Model-generated summaries are derived and permission-bound; retrieve current clinical/provider facts rather than treating old chat as the chart. Retention/export/deletion are separate for private conversation, accepted clinical records, audit, media and aggregates. Deleting chat must not delete already approved clinical records.
-
-Create one accepted work event linking performer, acting role, patient/encounter, activity, occurrence/recorded/approved times, quantity where supported, deliberate time segments, order/task and proposal/source references. Reuse that event for documentation/task evidence/reporting; do not generate multiple services from tags, messages, multiple staff or repeated approval clicks.
-
-Timer duration is not performed care; performed care is not automatically billable; a billable item is not automatically an invoice. Provide completeness/duplicate/order-review and approved-export states. Real tariff rules are setting-specific, versioned and reviewed. Do not fabricate revenue, upcode or autonomously submit charges.
-
-Build initial analytics with a small documented event vocabulary and PostgreSQL views: documentation delay, duplicate/repeated effort where measurable, correction steps, unresolved handover/questions, task age, provider failures, model/audio latency/cost and staff-reported usefulness. Define denominators, windows, missing data and deduplication. Separate time saved, useful capacity and realized financial saving. Synthetic data demonstrates the method, not actual ROI or causality.
-
-Kader/Heimleitung/CEO receive permitted aggregates; team leads see the individual work necessary for their approved responsibilities. Do not mine private transcripts, infer emotion/personality/competence or rank employees from activity/presence. Use reviewed feedback and process evidence for team/culture improvements.
-
-Implement the improvement cycle using the SAME configuration publishing path:
-
-```text
-permitted evidence → proposed change + rationale
-→ MD/metadata diff → regression/simulation → human approval
-→ limited new-version pilot → compare → retain/rollback
-```
-
-The agent may propose wording, routing, context or workflow simplification. It cannot grant rights, alter clinical truth, deploy itself or manipulate metrics. No new multi-agent improvement platform is needed.
-
-## 16. Real identity, data protection and operation
-
-Complete generic production OIDC/BFF with maintained libraries and an isolated test IdP. Actual institution endpoints/certificates/approval remain deployment inputs; generic implementation is internal. Validate tokens/claims, session lifecycle, CSRF, state/nonce and appropriate PKCE. Use secure server cookies. Production never accepts demo identity headers or user-supplied role authority.
-
-Enforce current principal, tenant/site/department, functional role, qualification/delegation, assignment/treatment or supervisory relationship, purpose and audience across tools, direct APIs, search, media, event replay and jobs. Reuse appropriate Medplum AccessPolicy/project boundaries; tags and ID prefixes are not access controls.
-
-Test RLS/composite scope constraints with actual limited application credentials, not a superuser. Two tenants, two API replicas and two workers must not share a mutable patient/site singleton. Preserve accepted evidence on revocation and use explicit review for affected queued delivery.
-
-Finish retention sweepers, legal holds, restricted exports, access auditing, secrets management, immutable artifact/SBOM update support, network/TLS expectations and PHI-free observability. No notes, names, transcripts or patient labels in generic metrics/logs. Detailed evaluation fixtures must remain synthetic.
-
-Restore real PostgreSQL, Medplum, media and required configuration into a clean isolated environment. Reconcile already-delivered jobs against the fake provider; do not resend blindly. Test previous-release migrations and recovery, not only empty schemas or JSON checksum equality. Report measured recovery assumptions instead of guarantees.
-
-The intended-use documentation must match actual functions and public claims. HITL, local hosting and the word coworker do not establish a medical-device exemption or privacy compliance. Require Swiss institutional/cantonal/privacy/clinical review as applicable, and assess EU obligations where applicable rather than assuming every EU rule automatically applies. Do not expand into diagnostic or employee decision functions to make the demonstration impressive.
-
-## 17. Real AI and voice acceptance, not more fallback passes
-
-Choose an actually available, capable model from current official documentation and account/runtime support. Do not hard-code a historical marketing name as a production guarantee. Preserve the provider adapter seam and local-first deployment; a stronger model should improve understanding without changing tool authority.
-
-The previous hosted requests failed with 429 and the project reports exhausted credit. Treat that as an explicit operator/account prerequisite; do not keep retrying indefinitely or switch to an unapproved third party. Diagnose and report TTS 503 separately. Support safe local alternatives if actually installed and authorized. Missing access leaves that test unpassed but does not stop unrelated engineering.
-
-Use one capable model first for the acceptance journey. Optional fast/deep routing follows measured need. Verify selected runtime tool calling, streaming, schema/nullability, output budget, refusal/incomplete/error handling. Do not require a needless separate classifier/extractor/UI model for every message.
-
-Protect funded public demos with authentication, request/upload/rate and spend limits before enabling external inference. Secrets stay server-side. `store:false` is not a universal no-retention guarantee. Local production has no undisclosed hosted ASR/LLM/TTS fallback.
-
-Actual voice acceptance is microphone/file bytes → ASR → editable transcript → same conversational agent → reviewed draft → delivery. Preserve original ASR and correction provenance, not invented calibrated confidence. Test names, negations, numbers, times and the institution's languages. TTS loopback is not human Swiss-German accuracy validation. Browser speech is labelled an unvalidated synthetic fallback.
-
-Distinguish unconfigured, reachable, smoke-tested, scenario-accepted and institution-approved. Pin acceptance evidence to model/runtime/prompt/schema/pack versions. Actual endpoint attempts that failed are not successful model tests. A fixture endpoint is useful protocol evidence only.
-
-## 18. Polish the actual UI without another redesign
-
-Preserve the current chat/private-patient structure, branding and useful components. Aim for ChatGPT/OpenUI-like clarity with an original Pflegehelfer design: one composer, restrained sidebar, compact headers, natural messages, useful inline generated UI and progressive disclosure. Do not clone trademarks or optimize for decorative cards.
-
-Sidebar functions must genuinely work: My assistant, planned work, team/mentions, library, patients, staff/duty contacts, history and authorized administration. A click on My assistant actually switches to the general thread. Tabs are read lenses or explicit audience changes over the same records, not another app or duplicate engine.
-
-Keep a white/near-black base, pharmaceutical blue actions and restrained red for meaningful brand/urgent/error use. One semantic theme supports light/dark/system. Glass can distinguish the drawer/composer/toolbar; clinical numbers, medication context, tables and approvals need calm legible surfaces. Support reduced transparency/motion and high contrast.
-
-Use one consistent SVG icon set and the existing original blue Edelweiss/negative-space plus. Refine small-size rendering and canonical assets; do not create a red-cross imitation or claim legal clearance from a color change. Keep `Tertianum Kronenhof · Demo` and non-affiliation/fictional-data disclosure.
-
-Fix actual usability defects: clipped composer, keyboard occlusion, oversized handover, repeated status cards, raw user/encounter IDs, false presence, stale times, dead menu buttons and inaccessible review. Clinical time-series charts use actual timestamps/units, not equal spacing disguised as elapsed time. Source read time does not erase stale data.
-
-Use a controlled labelled demo clock with coherent 1–2-week synthetic histories. Retain approximately fifteen profiles, six assigned by default plus zero/two/twelve cases; readmission must have a new encounter. Use licensed or plainly fictional media. Do not reproduce proprietary assessment content without permission. Add distinct enabled-role staff fixtures and realistic questions without claiming local Tertianum endorsement.
-
-Visually inspect the running INTEGRATED profile at 360/390 px, tablet portrait/landscape and desktop; light/dark/system, 200% zoom, keyboard, reduced transparency/motion and mobile virtual keyboard. Record screenshots and actual interaction, not only selector passes/no-overflow. Readability and effort matter more than cosmetic animation. Measure p50/p95 end-to-end latency under concurrent synthetic use and cost per successfully reviewed work event.
-
-## 19. Preserved inherited acceptance identifiers
-
-The following acceptance identifiers remain binding. The C1–C16 probes in the
-next section refine and combine them; they do not replace or silently close
-them. Evidence is indexed by both families in `COMPLETION_MATRIX.md` and the
-acceptance-recovery record.
-
-### Runtime instructions and configuration
-
-- MD-01: approved institution/role/workflow Markdown reaches the model request
-  with the correct hash/version; unrelated role instructions do not.
-- MD-02: a prose-only change affects guidance, not permissions or mandatory
-  workflow completion.
-- MD-03: a structural workflow change has a visible metadata diff, tests and
-  human publication; an existing session remains pinned.
-- MD-04: a new approved role/profile, second institution and multiple
-  departments require configuration only; forbidden capabilities fail closed.
-- MD-05: traversal, symlink, unapproved file, revoked pack, injected override
-  text and remote include cannot expose data or tools.
-- MD-06: staff and assignments come from governed operational/directory data,
-  not patient files or hard-coded business logic.
-- MD-07: institution, department and station guidance resolves for
-  cross-coverage and multiple roles without mixing publication revisions.
-- MD-08: a new role name bound to existing reviewed capabilities and a new
-  instance of an implemented adapter need no business-source edit; unknown
-  operations require implementation.
-- MD-09: every documented reads/uses/proposes/reviews/records arrow resolves to
-  an actual tool, reference or owner; live patient Markdown does not exist.
-
-### Runtime agent and tool contracts
-
-- AG-01: the approved skill body reaches the model on demand; its reviewed
-  hash/version remains server-side and unrelated roles and procedures do not.
-- AG-02: the model requests a read tool, observes its real response and can
-  select a different next read or terminal outcome without an intent/card path.
-- AG-03: read-only questions produce no final mutation; drafts produce no
-  provider/clinical write; invented privileged tools are rejected.
-- AG-04: model-supplied actor, tenant, purpose and references cannot override
-  server scope or cross patient/encounter/staff/audience boundaries.
-- AG-05: provider, procedure, profile and attachment injection cannot obtain
-  more tools, disclose data or override executable policy.
-- AG-06: tool budgets, repeat detection, timeout, refusal, cancellation and
-  no-progress recovery terminate safely without blocking another employee.
-- AG-07: two model backends use the same tools/proposals/services; real runs are
-  reported separately from fixtures.
-- AG-08: direct roster, context, timestamp and approval controls need no model
-  round trip or artificial delay.
-- AG-09: backend-issued IDs, versions, hashes and recipients survive revision;
-  the model never fabricates authority.
-- AG-10: a restored pending revision can be corrected and approved once without
-  repeating the full report.
-
-### Conversation, people and privacy
-
-- CT-01: general → Anna → Luca → Nora → general restores the right private
-  drafts and work continuity.
-- CT-02: a new encounter never inherits the previous encounter's draft.
-- CT-03: slow model/audio results and two tabs remain bound to their origin;
-  stale authority fails safely.
-- CT-04: a lead can ask about permitted colleague work but cannot retrieve that
-  colleague's private assistant history.
-- CT-05: management without patient access cannot infer diagnoses through
-  staff-task, profile, search or analytics paths.
-- CT-06: opening a staff assistant never sends a message; a direct message
-  requires deliberate send and the correct authored audience.
-- CT-07: off-duty and stale connectivity cannot become absence, health or
-  performance claims; absence reasons remain hidden.
-- CT-08: personnel cases, patient/team/department threads, private assistants
-  and unrelated DMs cannot cross-read via search, mentions, counts, media or
-  events.
-- CT-09: role/membership revocation invalidates retrieval, pending authority
-  and notification delivery without erasing accepted records.
-
-### Meaning, handover and workflow
-
-- WF-01: “Nur Morgenpflege erledigt; Mobilisation später” preserves the open
-  activity.
-- WF-02: “Arzt nicht informieren, keine weitere Kontrolle” creates neither a
-  message nor a task.
-- WF-03: “Gestern 200 ml, heute ungefähr 150 ml” preserves time and
-  approximation; a correction revises rather than duplicates.
-- WF-04: “Nora statt Arzt; nur Nachricht, nichts abschliessen” edits the same
-  reviewed proposal.
-- WF-05: treatment instructions cannot enter generic note/task APIs, while an
-  authorized past-event report is not silently removed.
-- WF-06: an extreme pending value remains visible but is neither confirmed
-  evidence nor a reason to delay established emergency communication.
-- WF-07: handover and post-cutoff addendum are exact; TTS matches the selected
-  version and listening never acknowledges it.
-- WF-08: zero/two/twelve assignments, overnight/DST shifts, no receiving owner
-  and two-person work produce truthful outcomes.
-- WF-09: interruption/resume, partial care, role transfer and a second shift do
-  not duplicate responsibility or service evidence.
-- WF-10: negated/historical topics do not create an active clinical Flag; a
-  role queue stays unassigned until claimed.
-
-### Execution and recovery
-
-- TX-01: double approval and lost response return one receipt for the same
-  payload; a changed payload using the key fails.
-- TX-02: crash points before/after local commit and remote send lose no accepted
-  work and cause no blind duplicate effect.
-- TX-03: a migration-history mismatch fails before any pending schema/data
-  mutation.
-- TX-04: previous-release migration, encounter and note fixtures produce
-  traceable output or explicit quarantine.
-- TX-05: empty Medplum → provider import → staff update → read-back → independent
-  provider change → application is proved end to end.
-- TX-06: two workers cover lease expiry, duplicate/correction/poison input,
-  replay and conflict.
-- TX-07: two replicas and tenants using limited credentials share no mutable
-  site/patient singleton or data.
-- TX-08: isolated full restore reconciles delivery without blindly resending an
-  already delivered action.
-- TX-09: patient/team/library bytes, thumbnails, export metadata and signed URLs
-  enforce current audience and expiry.
-
-### Real AI, audio, value and UI
-
-- AI-01: strict schema, refusal/incomplete/429/timeout, long input and
-  cancellation never report fallback as model success.
-- AI-02: two adapters run the same held-out synthetic scenarios; real service
-  evidence remains separate from fixtures.
-- AI-03: real audio bytes → reviewed transcript → model proposal → approved
-  action, plus exact TTS readout.
-- AI-04: logs are token/key/PHI-free, cost is bounded and injected content has
-  no unrestricted tool/network reach.
-- VA-01: one activity with multiple tags/documents/staff/interruptions cannot
-  inflate billable evidence.
-- VA-02: improvement proposal → diff/tests → human activation → comparison →
-  rollback cannot autonomously change permission or score staff.
-- UI-01: general/patient/staff/direct/admin modes work at required viewport,
-  theme, keyboard, zoom and transparency states with clear actor/subject/audience.
-- UI-02: irregular timestamped values, missing/negative/allergy states and
-  source staleness display truthfully.
-- UI-03: no duplicate navigation/cards, hidden composer, unreachable review,
-  false presence, decorative chart or dead feature button remains.
-
-## 20. Required acceptance evidence and execution order
-
-First demonstrate the central agent/GenUI/faithful-delivery slice with current stores and a real model when access exists. Finish the reliability dependencies alongside it, then expand shared role/site features. Do not spend another cycle adding appearance without proving the core conversation.
-
-Keep G0–G7. Map inherited IDs plus these concrete closure probes into it:
-
-| Probe                     | Passing evidence                                                                                                                                                   |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| C1 — natural answer       | A factual plain-text answer from real tools, with sources and ZERO required cards; ordinary acknowledgment needs no fake citation.                                 |
-| C2 — multiple results     | Model uses two different tools and answers from both. Last tool does not determine the entire response or erase prior evidence.                                    |
-| C3 — genuine GenUI        | Same dataset requested briefly, as a table and as a chart yields appropriate model-selected composition using the registered catalog; no new intent/screen branch. |
-| C4 — arbitrary phrasing   | Held-out ordinary paraphrases and general proposal corrections work without phrase-specific code. All current negation/attribution tests remain meaningful.        |
-| C5 — correct faithfulness | Anna's dizziness example adds no unreported facts; numeric associations, history and uncertainty remain correct across UI/review/FHIR/read-back.                   |
-| C6 — durable revision     | Luca and an independently chosen different case revise the same proposal through multiple turns, tabs, switches and restart. No accidental completion/message.     |
-| C7 — safe presentation    | Unknown components, invented source/draft refs, injected provider text and interrupted streams cannot execute or widen access.                                     |
-| C8 — full integration     | Empty Medplum plus stateful fake source, inbound import, reviewed update, delivery/read-back, independent external edit, conflict and restart.                     |
-| C9 — one execution path   | Both chat review and applicable direct controls use durable acceptance; double clicks/lost responses/lease expiry have no duplicate effective record.              |
-| C10 — complete workday    | Two consecutive shifts, exact handover/addenda/readout, interruption, deferral and incoming acceptance with real stores.                                           |
-| C11 — low-code adaptation | Second institution/multiple departments and distinct roles via existing reviewed packs; guidance and metadata changes have separate tested effects.                |
-| C12 — people/privacy      | Team lead sees permitted colleague work but not private chats; explicit DM publication, role queues, revocation and library bytes/search/counts are scoped.        |
-| C13 — identity/recovery   | Test IdP, limited-role RLS, two replicas/workers, retention and actual isolated restore/reconciliation.                                                            |
-| C14 — value/improvement   | One evidence event cannot inflate services; reviewed configuration diff/test/publish/pilot/rollback produces labelled synthetic metrics.                           |
-| C15 — actual AI/audio     | Actual model and ASR/TTS calls plus held-out model-swap evaluation; fixtures/429/503 are reported separately, never counted as acceptance.                         |
-| C16 — UI                  | Integrated complete scenarios at required screen/theme/accessibility states, with correct subject/audience and no duplicate or nonfunctional controls.             |
-
-Use held-out variations unknown to the implementation author and different source fixtures. Assertions compare meaning, access and effects—not one preferred German sentence. A grading model may assist, not replace responsible clinical review. Add every discovered failure as a general behavioral regression, not another production string matcher.
-
-Count suites without double-counting overlapping tests. Current independent reviewer opinions do not replace executed tests. Keep a traceable evidence index: exact SHA, commands, versions, environment/profile, scenario, state/receipt assertions, screenshots and declared skips. Required service absence must leave its gate unpassed. A memory-demo success is not integrated acceptance.
-
-### Autonomous development loop
-
-```text
-read actual current status → select unmet acceptance dependency
-→ reproduce/define failure → implement smallest complete slice
-→ run targeted and real-store tests → exercise UI and inspect records
-→ independent review where available → correct root causes
-→ regression → coherent commit → update evidence → continue
-```
-
-Continue all independent internal work when one external item is blocked. Do not ask the user to choose trivial engineering details. Do not contact vendors, spend unbounded funds, expose new public services, import real patient data or deploy to an institution without explicit authorization. If execution/context limits intervene, preserve exact progress, worktree state, commands and next failure to resume. Do not declare final completion or promise invisible background work.
-
-## 21. Cleanup, final audit and deliverables
-
-Consolidate the normal agent path, typed tools, evidence registry, optional presentation and review executor. Remove obsolete production use of last-tool intent routing, phrase-equality validators, per-example correction branches and duplicate authority/state paths only after parity and safety tests. Keep useful serializers, UI primitives, value parsers and explicit degraded controls. Do not merely hide the old architecture with CSS or keep two permanent products behind flags.
-
-Break large files by genuine ownership—not one wrapper per function. Prefer clear modules for evidence/proposals, tools, chat presentation, command acceptance and repositories. Remove dead exports, duplicate schemas, unsupported “ready” labels and stale docs. Do not delete historical clinical/audit data or useful regression scenarios to reduce line count.
-
-The clean final audit must build from an actual clean checkout with the pinned lockfile, provision fresh own stores and fake provider, import fixtures and run the integrated journeys. Reusing a developer database is separate evidence. Configure meaningful CI for the working branch/PR and record its actual results; an unavailable CI service is not a fabricated green run.
-
-Final report separately states:
-
-1. **Synthetic product completion:** all internal G gates implemented and exercised with real own stores and simulated external systems.
-2. **Connected AI/audio:** actual available model, microphone ASR and TTS scenarios passed, with measured limitations and held-out results.
-3. **Institutional read-only pilot:** generic controls internally complete plus the required real source/device/identity/privacy approvals.
-4. **Controlled provider-write pilot:** verified vendor operations, mappings/receipts/conflicts, recovery and institutional review.
-
-Provide the exact runtime MD paths and edit/preview/publish commands, one demonstrated configuration change, tool/presentation traces without hidden chain-of-thought, final UI screenshot index, scope/access tests, actual delivery/restore evidence, cost/latency measures and remaining external prerequisites. All current normal actions advertised as working must actually work in the declared profile.
-
-**Do not relabel partial work as a new roadmap or claim the product is complete because the test count increased. The final proof is a natural conversation that completes real reviewed work, with useful adaptive UI and reliable records underneath.**
-
-## 22. Binding release-closure continuation
-
-The 14 September 2026 release-closure instruction is merged here rather than
-maintained as another architecture or roadmap. It does not replace any G0–G7,
-MD/AG/CT/WF/TX/AI/VA/UI or C1–C16 requirement above.
-
-### Publish the inspectable baseline independently
-
-The OpenUI/Vercel AI SDK conversation replacement, its pinned lockfile, tests
-and truthful documentation may be committed and published independently of an
-OpenAI account sign-in. Publication never closes a credential incident and
-must not use a reported exposed credential. Secret scans operate on names,
-digests and redacted findings only. Record database rotation, OpenAI
-revocation/rotation, usage review and connected acceptance as separate facts.
-
-Every release candidate exposes one non-secret build diagnostic. It identifies
-the exact API and PWA source SHA/build ID, says whether they match, and keeps
-persistence, model/audio and provider readiness as separate component states.
-The shipped PWA artifact—not a source-code assumption—supplies the PWA
-identity. A `/models` response, a configured key or matching build identifiers
-do not prove model competence, durable storage or provider acceptance.
-
-### Preserve the replacement and remove parallel authorities
-
-Do not start another frontend or agent framework migration. Keep one custom
-composer, one server-owned conversation history, one AgentInterface/OpenUI
-renderer and one Vercel AI SDK UIMessage stream. Persist an authorized turn
-before its first renderable byte. Treat client/tool messages, source handles,
-component names and prior action controls as untrusted; re-authorize on the
-server and expose only the latest actionable revision. Cancellation, tab
-switches, reload and restart must not leak, revive or cross-bind a response.
-
-The model authors ordinary conversation and specific question-only
-clarifications. Deterministic code authorizes tools, resolves exact source
-atoms, validates reviewed meaning and executes accepted effects. Do not add a
-new source-word grammar or fixed-German response tree to make tests green.
-Provider prose, browser state and a human click are not independent occurrence
-evidence.
-
-Maintain an explicit removal/migration inventory while retiring the former
-surface, last-tool response routing and duplicate mutation authorities. A
-compatibility adapter may remain only when its caller, sunset condition and
-non-authoritative status are documented and tested. Remove obsolete code only
-after the new path has parity and durable recovery evidence.
-
-### Execute closure in the existing order
-
-1. Publish a secret-free, inspectable G0/G5 baseline with exact remote SHA and
-   matching build identities.
-2. Prove the G1/G4/G7 conversational slice with an accepted real model, two
-   unrelated synthetic patients, authorized reads, natural prose, a specific
-   clarification, optional GenUI, a corrected draft, human approval,
-   persistence/read-back and reload.
-3. Complete the G1/G2/G3 working-day journey through provider import,
-   handover, interruption/rollback/resume, collaboration, deferral, shift
-   transfer and process restart, including failures before and after local
-   commit.
-4. Finish G3/G5 shared workspaces, library, governed Markdown publication,
-   second-site configuration, test OIDC/RLS and immediate revocation.
-5. Close G1/G5/G6/G7 analytics, direct-action convergence, multi-instance
-   operation, migrations/restore/retention/egress, visual/performance evidence,
-   CI and an isolated clean-checkout proof.
-
-For final proof, provision clean own stores plus an independent stateful fake
-provider and run real-store suites sequentially where their fixture resets
-conflict. Classify every skip and report unit/fixture, PostgreSQL, Medplum,
-provider, browser and connected model/audio evidence separately. Continue
-internal work when an external account, vendor or institutional approval is
-blocked.
-
-Every handoff reports six independent states: source published/reviewable;
-conversation replacement implemented; connected AI/audio accepted; complete
-synthetic product; institutional read-only pilot approved; controlled real
-provider-write pilot approved. Never collapse those into one completion label.
-
-## Official reference register
-
-The source-audit findings above come from the repository at the named SHA; the requirements are the requested target, not claims that they are implemented. Consult exact installed-version official documentation during development. The sources below support engineering/role/privacy principles, not certification.
-
-- OpenUI library/prompt/parser/renderer: https://www.openui.com/docs/openui-lang/overview
-- OpenUI renderer and APIs: https://www.openui.com/docs/openui-lang/renderer ; https://www.openui.com/docs/api-reference
-- Function/tool calling: https://developers.openai.com/api/docs/guides/function-calling
-- Structured outputs and their limitations: https://developers.openai.com/api/docs/guides/structured-outputs
-- Agent Skills format: https://agentskills.io/specification
-- Simple agent/workflow patterns (foundational article; tooling has evolved): https://www.anthropic.com/engineering/building-effective-agents
-- Medplum access policies: https://www.medplum.com/docs/access/access-policies
-- Medplum project/transaction settings: https://www.medplum.com/docs/self-hosting/project-settings
-- BAG professional-role FAQ: https://www.bag.admin.ch/de/haeufige-fragen-faq-zum-gesundheitsberufegesetz-gesbg
-- EDÖB AI/privacy: https://www.edoeb.admin.ch/de/ki-und-datenschutz
-- EDÖB employer data: https://www.edoeb.admin.ch/de/datenbearbeitung-durch-den-arbeitgeber
-- Swissmedic official software qualification guidance entry point: https://www.swissmedic.ch/swissmedic/en/home/medical-devices/regulation-of-medical-devices/faq.html
-
-Before real deployment verify applicable role/delegation, retention, regulatory, tariff and vendor contracts with the responsible institution. Do not invent an endpoint, clinical permission or compliance approval to close a test.
+Separate three authorities: Codex develops in its authorized environment; the runtime assistant reads/proposes through limited tools; the institution publishes reviewed workflow improvements. No runtime self-modifying code or autonomous permission changes.
+
+Repeated failure triggers diagnosis, not endlessly rerunning tests or adding restrictions that make the assistant useless. Keep execution within explicit time/cost budgets. If access, context or runtime ends, save current SHA, uncommitted work, exact failing command, remaining criteria, blocker owner and next commands in the existing recovery document. Report a handoff, not completion.
+
+A coding agent cannot supply a missing funded API project, private vendor contract, institutional approval or clinical sign-off. Complete independent internal work; keep the exact external test unpassed and the corresponding operation disabled. No confidence score or “no P0/P1” reviewer statement overrides a PARTIAL gate.
+
+Report separately:
+
+1. **Published/reviewable source** — exact clean remote SHA and PR.
+2. **Conversational implementation** — actual natural response/tool/draft path and no retired active engine.
+3. **Connected AI/audio accepted** — actual successful model/ASR/TTS scenarios, model/pack versions and no fallback substitution.
+4. **Full synthetic product complete** — all agreed internal workflows, stores, governance and operations with explicit simulated providers.
+5. **Institutional read-only pilot** — internal controls complete plus actual provider/data/device/privacy approvals.
+6. **Controlled real write pilot** — verified operations/mappings/acknowledgment/conflict/recovery plus institutional authorization.
+
+For a merge recommendation identify exactly which internal release scope passed and which excluded capabilities remain disabled. Do not conflate code merge with clinical deployment. Provide actual MD paths/commands, a tested guidance change, structural workflow publication, second-site setup, complete workday, teammate/privacy behavior, provider read-back, restore, UI screenshot index, removed paths and measured model/device costs.
+
+**Final product question:** Can the employee complete real work through natural conversation, useful taps and minimal meaningful review, while the institution changes approved procedures without code forks and every accepted record remains attributed, permission-correct, recoverable and visibly delivered?
+
+If not, finish the specific missing behavior. Do not create another architecture direction.
+
+## 29. Source register and evidence discipline
+
+Repository observations above concern the stated SHA; code and matrix were read, not independently executed by this contract's author. User reports of live health/test totals are not automatic passing evidence. The supplied generated mockups are visual inspiration, not actual product screenshots. Proposed designs and acceptance tests are engineering requirements.
+
+Recheck official documentation against the actual installed dependency versions before implementation. Do not silently adopt a current-major example into an older pinned package set. Primary references consulted on 19 September 2026:
+
+- **R1:** GitHub branch/PR #1, CI run `34930226049`, matrix and source files at `998789cec5da4ac23e0439b6a12fa2816009f05a`; see `docs/reviews/RECHECK_2026-09-19.md` in this delivery package.
+- **T1:** OpenUI integration: https://www.openui.com/integrations/vercel-ai-sdk — maintained stream/component interface.
+- **T2:** OpenUI example: https://www.openui.com/docs/agent/agent-runtimes/vercel-ai-sdk — example cloud/default-memory choices are not product requirements.
+- **T3:** AI SDK agent guidance: https://ai-sdk.dev/docs/agents/overview — reusable bounded tool loop, not another bespoke agent platform.
+- **T4:** Agent Skills: https://agentskills.io/specification — Markdown conventions and progressive loading, not authorization.
+- **T5:** Medplum AccessPolicy: https://www.medplum.com/docs/access/access-policies — reuse maintained clinical access mechanisms.
+- **T6:** Medplum self-hosting: https://www.medplum.com/docs/self-hosting/considerations — operator responsibility remains.
+- **T7:** WCAG 2.2: https://www.w3.org/TR/WCAG22/ — engineering accessibility target and specific criterion definitions.
+- **T8:** OWASP uploads: https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html — layered file validation/storage controls.
+- **T9:** OpenAI key safety: https://help.openai.com/en/articles/5112595-best-practices-for-api-key-safety — server-only secrets, revocation and usage review; do not copy example commands that print keys into agent logs.
+- **CH1:** EDÖB AI: https://www.edoeb.admin.ch/de/ki-und-datenschutz — Swiss data-protection obligations apply to AI; assess high-risk processing.
+- **CH2:** EDÖB outsourcing: https://www.edoeb.admin.ch/de/outsourcing-auftragsdatenbearbeitung — outsourcing does not remove the controller's responsibilities.
+- **CH3:** EDÖB patient disclosure: https://www.edoeb.admin.ch/de/bekanntgabe-von-patientendaten — sensitive health data, professional secrecy and purpose-limited sharing.
+- **CH4:** EDÖB employer processing: https://www.edoeb.admin.ch/de/datenbearbeitung-durch-den-arbeitgeber — personnel-data purpose and proportionality.
+- **CH5:** BAG GesBG FAQ: https://www.bag.admin.ch/de/haeufige-fragen-faq-zum-gesundheitsberufegesetz-gesbg — no exhaustive universal activity-permission list from job titles.
+- **CH6:** BAG care reimbursement: https://www.bag.admin.ch/de/krankenversicherung-pflegeleistungen — current service-type prerequisites and setting differences; do not reuse obsolete blanket ordering requirements or invent tariff mappings.
+- **CH7:** Swissmedic Medical Device Software information sheet BW630_30_007, v3.0, valid 21 April 2026, especially sections 4–6: https://www.swissmedic.ch/swissmedic/en/home/news/updates/updated_documents/april-2026.html (linked official PDF).
+- **CH8:** BACS scope: https://www.bacs.admin.ch/en/who-has-to-report and https://www.bacs.admin.ch/en/reporting-obligation — assess actual customer/incident applicability and exemptions.
+- **EU1:** EU AI Act transparency/application guidance: https://digital-strategy.ec.europa.eu/en/faqs/transparency-obligations-under-article-50-ai-act — screen relevant cross-border application; obtain current legal review rather than copying blanket deadlines.
+- **V1:** WiCare Doc-L: https://www.wigasoft.ch/dokumentationsloesungen/wicare-doc-l/ — public Gate/SOAP/export features do not authorize every write.
+- **V2:** careCoach: https://www.topcare.ch/ — existing product/mobile/voice/integration capabilities are the baseline to beat, not private API contracts.
+
+Obtain actual institution-approved SOPs, applicable professional/cantonal guidance, provider specifications and required legal/clinical reviews before real activation. Do not replace unavailable sources with a coding agent's assumptions.
