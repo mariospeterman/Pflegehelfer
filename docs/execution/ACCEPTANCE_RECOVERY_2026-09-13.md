@@ -428,3 +428,98 @@ reported the same clean source SHA and build ID `pfh-684e44f4b969`. GitHub CI
 run `34929873156` then passed `verify`, security, the complete post-fix E2E
 matrix and operations from a clean checkout in 4m39s. A later evidence-only
 documentation commit does not change implementation SHA `690901a8`.
+
+## September completion-contract and visual recheck — 2026-09-19
+
+Implementation SHA:
+`2d99c8789e575131cb251eefa39d150b2d5020ec`.
+
+This increment adopts the supplied September completion contract and exact
+light/dark visual-direction files while preserving the existing OpenUI
+replacement and server authority. Reference SHA-256 values are:
+
+- light: `464b5d80eb827c8fb7b9a03d1ba1a85abd5e7b3d84165070f9bfaef0ab90d4b1`;
+- dark: `bca1c876b1b0741feef534dc48339963173df043d8213ea8aa16f95f02ae33a1`.
+
+The reference is not a clinical fixture. The implementation uses its hierarchy,
+compact scope treatment, conversation rhythm and restrained light/dark mood but
+does not copy unsupported “Stabil”, “keine dringenden Massnahmen”, wound,
+measurement or patient assertions. The live header now shows conversation
+scope, actor identity and synchronization state; composer actions use maintained
+SVG symbols; handover readability and opening copy are improved; and OpenUI's
+hard-coded light scroll fades are theme-safe. Mobile offline state remains
+literal and visible while submission is disabled.
+
+### Lifecycle race found and closed
+
+The first real-store browser run found a mixed-read race after successful
+approval. PostgreSQL had atomically committed the command and reported proposal
+revision 1 as `consumed`, but the client could combine a conversation response
+captured just before that commit (`pending`) with an authority response captured
+just after it (none). The safe archived warning appeared even though execution
+had succeeded.
+
+The conversation adapter now detects that disagreement and re-reads explicit
+proposal lifecycle once. A consumed revision renders the completed state; a
+still-pending revision without authority remains archived and no approval is
+reconstructed. `tests/openui-client-lifecycle-race.regression-1.test.ts`
+recreates this exact interleaving. No rendered-string detection or authority
+widening was introduced.
+
+### Current verification
+
+- `pnpm verify`: formatting, zero-warning lint, both TypeScript configurations,
+  428 enabled tests with 25 declared environment skips and both production
+  builds passed.
+- Memory-profile Playwright: 67 passed, 23 deliberate skips and zero failures
+  across 360, 390, 768, 1024 and 1440 px. An earlier run exposed the hidden
+  mobile offline label (65 passed / 23 skipped / 2 failed); the focused repair
+  passed 2/2 before the final clean matrix.
+- Sequential PostgreSQL: 7 files / 24 tests passed against the live PostgreSQL
+  16 container.
+- Medplum 5.1.37: seed/transaction atomicity succeeded and the explicitly
+  enabled stale-version integration passed 1/1.
+- Independent stateful provider simulator: authentication/read-back/restart
+  passed 1/1. Provider lease/read-back/recovery coverage remains included in
+  the 24 PostgreSQL tests.
+- Integrated deterministic browser: source-linked refresh passed; one bedside
+  sentence produced four review items and executed successfully; the three-turn
+  Luca correction left two superseded drafts, one current approval, rendered
+  `Ausgeführt` on the same page and still rendered it after reload with no older
+  approval control.
+- `verify:security`, `verify:ops` and `verify:airgap` passed. The operations
+  probe verified the synthetic backup/restore checksum.
+- Final measured main OpenUI bundle: 2,368.70 kB minified / 689.04 kB gzip. It
+  remains explicit G7 optimization work.
+
+The Playwright assertion wait is now 15 seconds while the total test remains 60
+seconds. This accommodates cold PostgreSQL/Medplum reset and verified projection
+latency; it does not relax clinical validation, authorization or stale-version
+checks.
+
+### Model and credential result
+
+The integrated process reported the configured hosted fast model as
+`gpt-5.6-terra`. The required real non-writing synthetic contract call was made
+and returned `ready:false` after 2,908 ms with
+`deterministic-clinical-planner-v1` as fallback. That is a failed model call,
+not acceptance. ASR remained configured but unaccepted, and browser TTS remains
+synthetic-demo only. No credential value was read, printed or committed.
+
+Authorized account/key remediation and a successful actual-model journey still
+remain open. Until ordinary dialogue, an authorized read, a specific
+clarification, a faithful draft, correction and approval all pass without
+fallback, connected AI stays **NOT READY**.
+
+### Runtime and remaining release state
+
+Verified runtime: Node 24.19.0, OpenUI 0.9.13, Vercel AI SDK 6.0.282,
+PostgreSQL 16, Medplum 5.1.37, Redis, the independent stateful provider
+simulator and `deterministic-clinical-planner-v1` for accepted journeys. The
+hosted `gpt-5.6-terra` attempt failed separately as described above.
+
+G0 remains PASS. G1–G7 remain PARTIAL for the exact closure items in
+`COMPLETION_MATRIX.md`; connected AI/audio, the full synthetic product,
+institutional read-only pilot and controlled real-write pilot remain NOT READY.
+This is a completed internal conversation-layer increment, not a clinical
+deployment or vendor acceptance claim.
