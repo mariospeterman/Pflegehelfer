@@ -597,3 +597,11 @@ diagnostics; it does not relabel shared collaboration/library, resource-native
 recovery, inbound conflicts, two-shift workday, identity/RLS, governed site
 publication, analytics, multi-instance restore, performance or external vendor
 authorization as complete.
+
+Publication evidence: implementation `43edbdbcf55e920c947cf133f8cead3e207cb9f5`
+and its evidence update reached PR #1 head
+`40f62f22170a19b601acc0a9e9f0e526d8721998`. Clean PWA and API artifacts both
+reported build ID `pfh-40f62f22170a`, `dirty:false`. GitHub Actions run
+`35490168863` passed install, `verify`, security, the complete memory browser
+matrix and operations from a clean checkout in 3m17s. This later publication
+evidence does not change the implementation SHA or advance a PARTIAL gate.

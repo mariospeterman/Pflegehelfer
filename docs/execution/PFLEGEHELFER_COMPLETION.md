@@ -6,7 +6,7 @@
 
 **Working branch:** `codex/genui-production-showcase`
 
-**Reviewed remote head:** `a14fb19624947f1a5c70c4dcd8f64a53f0f8ba0b`
+**Verified implementation/evidence head:** `40f62f22170a19b601acc0a9e9f0e526d8721998`
 
 **Current conversational implementation:** `43edbdbcf55e920c947cf133f8cead3e207cb9f5`
 
