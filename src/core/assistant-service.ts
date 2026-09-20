@@ -297,66 +297,153 @@ function boundedAtomText(
   return result.length > 0 && result.length <= maxLength ? result : null;
 }
 
-/**
- * Preserve a contextual clarification only when it is a single question-only
- * utterance. This rejects a factual premise smuggled in before a trailing
- * question (for example, "Luca läuft selbstständig. Weiter?").
- */
-function boundedClarificationQuestion(text: string): string | null {
-  const question = text.trim();
-  if (
-    question.length === 0 ||
-    question.length > 600 ||
-    !question.endsWith("?") ||
-    question.includes("\n") ||
-    /[.!](?:\s|$)/u.test(question.slice(0, -1))
-  )
-    return null;
-  return question;
+function containsProtectedTerm(
+  text: string,
+  protectedTerms: readonly string[],
+): boolean {
+  return protectedTerms.some((term) =>
+    new RegExp(
+      `(?:^|[^\\p{L}\\d])${term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:$|[^\\p{L}\\d])`,
+      "iu",
+    ).test(text),
+  );
 }
 
+function splitNaturalClauses(text: string): string[] {
+  return text
+    .split(/(?<=[.!?;])\s+|\n+/u)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+/**
+ * A clarification may sound natural and include a short process explanation.
+ * Declarative patient assertions remain unavailable without exact claims.
+ */
+function boundedClarificationQuestion(
+  text: string,
+  protectedTerms: readonly string[],
+): string | null {
+  const clarification = text.trim();
+  if (
+    clarification.length === 0 ||
+    clarification.length > 800 ||
+    !clarification.includes("?")
+  )
+    return null;
+  const clauses = splitNaturalClauses(clarification);
+  if (clauses.length === 0 || clauses.length > 4) return null;
+  const unsupportedDeclarativePremise = clauses.some(
+    (clause) =>
+      !clause.includes("?") &&
+      (containsProtectedTerm(clause, protectedTerms) ||
+        /\b\d+(?:[.,/]\d+)?\s*(?:mmhg|°c|grad|ml|kg|%|\/min)\b/iu.test(
+          clause,
+        ) ||
+        /\b(?:schmerzfrei|stabil|selbstständig|abgeschlossen|erledigt|offen|unauffällig|reizlos)\b/iu.test(
+          clause,
+        )),
+  );
+  return unsupportedDeclarativePremise ? null : clarification;
+}
+
+function canonicalClaimTokens(text: string): string[] {
+  const normalized = text
+    .toLocaleLowerCase("de-CH")
+    .replace(/,/g, ".")
+    .normalize("NFKC");
+  const tokens = new Set<string>();
+  for (const match of normalized.matchAll(/\b\d+(?:[./]\d+)?\b/gu))
+    tokens.add(match[0]);
+  const groups: Array<[RegExp, string]> = [
+    [
+      /\b(?:offen\p{L}*|steht noch aus|nicht erledigt|angenommen|wartend)\b/iu,
+      "state:open",
+    ],
+    [
+      /\b(?:erledigt|abgeschlossen|vollständig erledigt)\b/iu,
+      "state:completed",
+    ],
+    [/\b(?:in arbeit|begonnen)\b/iu, "state:in-progress"],
+    [/\b(?:pausiert|unterbrochen)\b/iu, "state:paused"],
+    [/\b(?:blutdruck|rr)\b/iu, "concept:blood-pressure"],
+    [/\b(?:temperatur|temp\.?|grad)\b|°c/iu, "concept:temperature"],
+    [/\b(?:puls|herzfrequenz)\b|\/min/iu, "concept:pulse"],
+    [/\b(?:sauerstoff|sättigung|saettigung|spo₂|spo2)\b|%/iu, "concept:oxygen"],
+    [/\bgewicht\b|\bkg\b/iu, "concept:weight"],
+  ];
+  for (const [pattern, token] of groups)
+    if (pattern.test(normalized)) tokens.add(token);
+  return [...tokens];
+}
+
+function atomClaimTokens(atom: string): Set<string> {
+  return new Set(canonicalClaimTokens(atom));
+}
+
+function clauseIsSupported(
+  clause: string,
+  atoms: readonly string[],
+  protectedTerms: readonly string[],
+): boolean {
+  const materialTokens = canonicalClaimTokens(clause);
+  const hasPatientTerm = containsProtectedTerm(clause, protectedTerms);
+  const hasCurrentMeasurementClaim =
+    /\b(?:aktuell|jetzt|derzeit|momentan)\b/iu.test(clause) &&
+    materialTokens.length > 0;
+  if (hasCurrentMeasurementClaim) return false;
+  if (materialTokens.length === 0 && !hasPatientTerm) return true;
+  const normalizedClause = clause.toLocaleLowerCase("de-CH");
+  return atoms.some((atom) => {
+    const normalizedAtom = atom.toLocaleLowerCase("de-CH");
+    const available = atomClaimTokens(atom);
+    const supportsTokens = materialTokens.every((token) =>
+      available.has(token),
+    );
+    const supportsPatient =
+      !hasPatientTerm ||
+      protectedTerms.some(
+        (term) =>
+          normalizedClause.includes(term.toLocaleLowerCase("de-CH")) &&
+          normalizedAtom.includes(term.toLocaleLowerCase("de-CH")),
+      );
+    return supportsTokens && supportsPatient;
+  });
+}
+
+/**
+ * Validate each factual clause against one exact rendered row. This preserves
+ * natural connective prose while preventing a state/value from one row being
+ * attached to another row merely because both words occur somewhere.
+ */
 function verifiedNaturalDialogue(
   text: string,
   atoms: readonly string[],
-): string {
-  const dialogue = text.trim().slice(0, 1_200);
-  const normalizedDialogue = dialogue.toLocaleLowerCase("de-CH");
-  const normalizedFacts = atoms.join(" ").toLocaleLowerCase("de-CH");
-  const clinicalConcepts = [
-    "blutdruck",
-    "temperatur",
-    "puls",
-    "sauerstoff",
-    "atemfrequenz",
-    "gewicht",
-    "blutzucker",
-  ];
-  const introducesDifferentConcept = clinicalConcepts.some(
-    (concept) =>
-      normalizedDialogue.includes(concept) &&
-      !normalizedFacts.includes(concept),
+  protectedTerms: readonly string[],
+): string | null {
+  const dialogue = text.trim();
+  if (dialogue.length === 0 || dialogue.length > 1_200) return null;
+  const supported = splitNaturalClauses(dialogue).filter((clause) =>
+    clauseIsSupported(clause, atoms, protectedTerms),
   );
-  const turnsOccurrenceIntoCurrent =
-    atoms.some((atom) => atom.includes("gemessen am")) &&
-    /\b(?:aktuell|jetzt|derzeit|momentan)\b/iu.test(dialogue);
-  const changesOpenTaskToCompleted =
-    atoms.some((atom) =>
-      /: (?:offen|angenommen|in Arbeit|wartend)\./u.test(atom),
-    ) && /\b(?:abgeschlossen|erledigt|vollständig erledigt)\b/iu.test(dialogue);
-  const changesCompletedTaskToOpen =
-    atoms.some((atom) => /: abgeschlossen\./u.test(atom)) &&
-    /\b(?:offen|steht noch aus|nicht erledigt)\b/iu.test(dialogue);
-  const unsupportedMeasurementWording =
-    /\b\d+(?:[.,]\d+)?\s*grad\b/iu.test(dialogue) &&
-    !/\b\d+(?:[.,]\d+)?\s*grad\b/iu.test(normalizedFacts);
+  return supported.length > 0 ? supported.join(" ") : null;
+}
+
+function safeSourceFreePatientDialogue(
+  text: string,
+  protectedTerms: readonly string[],
+): string | null {
+  const dialogue = text.trim();
+  if (dialogue.length === 0 || dialogue.length > 1_200) return null;
   if (
-    introducesDifferentConcept ||
-    turnsOccurrenceIntoCurrent ||
-    changesOpenTaskToCompleted ||
-    changesCompletedTaskToOpen ||
-    unsupportedMeasurementWording
+    containsProtectedTerm(dialogue, protectedTerms) ||
+    canonicalClaimTokens(dialogue).length > 0 ||
+    requiresDedicatedClinicalWorkflow(dialogue) ||
+    /\b(?:diagnos|schmerzfrei|stabil|unauffällig|reizlos|verabreicht|gegeben|durchgeführt|erledigt|offen|vollständig|dokumentiert)\p{L}*\b/iu.test(
+      dialogue,
+    )
   )
-    return "Die belegten Angaben stehen getrennt und unverändert darunter.";
+    return null;
   return dialogue;
 }
 
@@ -387,29 +474,22 @@ function verifiedCoworkerContent(
       (run.presentation && run.presentation.kind !== "text")
     )
       return null;
-    // In the private general assistant, a source-free social turn has no
-    // patient fact to re-render. Preserve the bounded model's actual response
-    // instead of replacing every conversation with one canned sentence.
-    if (run.status === "conversation" && options.allowSourceFreeModelText) {
-      const text = run.text.trim().slice(0, 4_000);
-      const mentionsPatient = options.protectedPatientTerms.some((term) =>
-        new RegExp(
-          `(?:^|[^\\p{L}\\d])${term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:$|[^\\p{L}\\d])`,
-          "iu",
-        ).test(text),
+    if (run.status === "conversation") {
+      const text = safeSourceFreePatientDialogue(
+        run.text,
+        options.protectedPatientTerms,
       );
-      return mentionsPatient ? null : { dialogue: text, clinicalFacts: [] };
+      return text ? { dialogue: text, clinicalFacts: [] } : null;
     }
-    if (run.status === "conversation")
-      return {
-        dialogue: "Gern. Wobei soll ich dich unterstützen?",
-        clinicalFacts: [],
-      };
-    if (run.status === "clarification-needed")
-      return {
-        dialogue: "Welche Angabe soll ich dazu kurz klären?",
-        clinicalFacts: [],
-      };
+    if (run.status === "clarification-needed") {
+      const clarification = boundedClarificationQuestion(
+        run.text,
+        options.protectedPatientTerms,
+      );
+      return clarification
+        ? { dialogue: clarification, clinicalFacts: [] }
+        : null;
+    }
     if (run.status === "no-action")
       return {
         dialogue:
@@ -635,18 +715,25 @@ function verifiedCoworkerContent(
   }
   if (renderedAtoms.length === 0 && run.status !== "clarification-needed")
     return null;
-  if (run.status === "clarification-needed")
-    return boundedClarificationQuestion(run.text)
-      ? {
-          dialogue: boundedClarificationQuestion(run.text)!,
-          clinicalFacts: [],
-        }
+  if (run.status === "clarification-needed") {
+    const clarification = boundedClarificationQuestion(
+      run.text,
+      options.protectedPatientTerms,
+    );
+    return clarification
+      ? { dialogue: clarification, clinicalFacts: [] }
       : null;
+  }
   const suffix =
     run.status === "no-action"
       ? "Es wurde keine Aktion vorbereitet oder ausgeführt."
       : "";
-  const dialogue = verifiedNaturalDialogue(run.text, renderedAtoms);
+  const dialogue =
+    verifiedNaturalDialogue(
+      run.text,
+      renderedAtoms,
+      options.protectedPatientTerms,
+    ) ?? "Hier sind die belegten Angaben.";
   const facts = boundedAtomText(renderedAtoms, suffix);
   return dialogue && facts
     ? {

@@ -5,10 +5,7 @@ import {
   toStrictStructuredOutputSchema,
 } from "../src/ai/model-gateway.js";
 import { validateLocalAiEndpoint } from "../src/ai/local-endpoint-policy.js";
-import {
-  assistantProposalSchema,
-  deterministicAssistantProposal,
-} from "../src/ai/assistant-proposal.js";
+import { assistantProposalSchema } from "../src/ai/assistant-proposal.js";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -243,29 +240,77 @@ describe("authorized model context boundary", () => {
     },
   );
 
-  it("runs a real, non-writing synthetic model contract test", async () => {
-    let localRequestBody: Record<string, unknown> | null = null;
+  it("runs transport and authorized-read acceptance through the interactive agent runtime", async () => {
+    const localRequestBodies: Array<Record<string, unknown>> = [];
+    let call = 0;
     vi.stubGlobal(
       "fetch",
       vi.fn((_url: string, init?: RequestInit) => {
         if (typeof init?.body !== "string")
           throw new Error("Expected a serialized model request");
-        const body = JSON.parse(init.body) as {
-          messages: Array<{ role: string; content: string }>;
-        };
-        localRequestBody = body;
-        const prompt = body.messages.find(
-          (message) => message.role === "user",
-        )?.content;
+        const body = JSON.parse(init.body) as Record<string, unknown>;
+        localRequestBodies.push(body);
+        const serialized = JSON.stringify(body);
+        const referenceId = serialized.match(
+          /EvidenceResult\/get_open_tasks\/[A-Za-z0-9-]+/,
+        )?.[0];
+        const outputs = [
+          {
+            kind: "conversation",
+            toolName: null,
+            input: null,
+            text: "Gern, das freut mich.",
+            draftReferenceId: null,
+            sourceReferenceIds: [],
+            evidenceClaims: [],
+            presentation: null,
+          },
+          {
+            kind: "tool-call",
+            toolName: "get_open_tasks",
+            input: {},
+            text: null,
+            draftReferenceId: null,
+            sourceReferenceIds: [],
+            evidenceClaims: [],
+            presentation: null,
+          },
+          {
+            kind: "answer",
+            toolName: null,
+            input: null,
+            text: "Die synthetische Rückfrage ist offen.",
+            draftReferenceId: null,
+            sourceReferenceIds: referenceId ? [referenceId] : [],
+            evidenceClaims: referenceId
+              ? [
+                  {
+                    referenceId,
+                    path: "tasks.0.patientLabel",
+                    value: "Synthetische Person",
+                  },
+                  {
+                    referenceId,
+                    path: "tasks.0.title",
+                    value: "Synthetische Rückfrage prüfen",
+                  },
+                  {
+                    referenceId,
+                    path: "tasks.0.state",
+                    value: "accepted",
+                  },
+                ]
+              : [],
+            presentation: null,
+          },
+        ];
         return Promise.resolve(
           new Response(
             JSON.stringify({
               choices: [
                 {
                   message: {
-                    content: JSON.stringify(
-                      deterministicAssistantProposal(prompt ?? ""),
-                    ),
+                    content: JSON.stringify(outputs[call++]),
                   },
                 },
               ],
@@ -286,13 +331,26 @@ describe("authorized model context boundary", () => {
       mode: "local-openai",
       model: "local-test-model",
       dataBoundary: "local-network",
+      fallbackUsed: false,
+      probes: [
+        expect.objectContaining({
+          stage: "transport-smoke",
+          ready: true,
+          toolCalls: 0,
+        }),
+        expect.objectContaining({
+          stage: "application-read",
+          ready: true,
+          toolCalls: 1,
+        }),
+      ],
     });
-    expect(localRequestBody).toMatchObject({
+    expect(localRequestBodies[0]).toMatchObject({
       response_format: { type: "json_object" },
     });
     expect(
       (
-        localRequestBody as unknown as {
+        localRequestBodies[0] as unknown as {
           messages: Array<{ role: string; content: string }>;
         }
       ).messages.some(
@@ -301,5 +359,65 @@ describe("authorized model context boundary", () => {
           content.includes("Return one JSON object matching this exact schema"),
       ),
     ).toBe(true);
+    expect(JSON.stringify(localRequestBodies)).not.toContain(
+      "assistant_proposal_v3",
+    );
+  });
+
+  it("fails connected acceptance with a sanitized provider cause and no fallback", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              error: {
+                code: "invalid_api_key",
+                type: "invalid_request_error",
+                message: "credential value must never escape diagnostics",
+              },
+            }),
+            {
+              status: 401,
+              headers: {
+                "content-type": "application/json",
+                "x-request-id": "req_synthetic_123",
+              },
+            },
+          ),
+        ),
+      ),
+    );
+    const result = await new ModelGateway({
+      PFH_AI_MODE: "hosted-test",
+      PFH_DEMO_MODE: "true",
+      PFH_LLM_DATA_CLASSIFICATION: "synthetic-only",
+      PFH_ALLOW_EXTERNAL_AI: "true",
+      PFH_LLM_API_KEY: "fixture-only",
+      PFH_LLM_BASE_URL: "https://synthetic-model.example.invalid/v1",
+      PFH_LLM_MODEL: "gpt-test",
+    }).testSynthetic();
+
+    expect(result).toMatchObject({
+      ready: false,
+      model: "gpt-test",
+      fallbackUsed: false,
+      probes: [
+        expect.objectContaining({
+          stage: "transport-smoke",
+          ready: false,
+        }),
+      ],
+      failure: {
+        stage: "provider",
+        code: "authentication",
+        httpStatus: 401,
+        providerCode: "invalid_api_key",
+        providerType: "invalid_request_error",
+        requestId: "req_synthetic_123",
+        fallbackUsed: false,
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain("credential value");
   });
 });

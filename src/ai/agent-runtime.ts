@@ -206,6 +206,68 @@ export interface AgentRunResult {
   presentation?: AgentPresentationSpec;
   /** Immutable successful results from this run; independent of rendered UI. */
   evidenceRecords?: AgentEvidenceRecord[];
+  /** Sanitized provider/runtime failure detail. Never contains prompts or response bodies. */
+  failure?: AgentFailureDiagnostic;
+}
+
+export interface AgentFailureDiagnostic {
+  stage:
+    | "configuration"
+    | "request"
+    | "transport"
+    | "provider"
+    | "response"
+    | "schema"
+    | "orchestration";
+  code:
+    | "not-configured"
+    | "authentication"
+    | "authorization"
+    | "model-access"
+    | "rate-limited"
+    | "quota-exhausted"
+    | "network"
+    | "tls"
+    | "redirect"
+    | "timeout"
+    | "cancelled"
+    | "unsupported-parameter"
+    | "unsupported-schema"
+    | "refusal"
+    | "incomplete"
+    | "invalid-output"
+    | "provider-error";
+  message: string;
+  requestedModel: string;
+  returnedModel?: string;
+  runtimeMode: string;
+  adapter: string;
+  apiVersion: string;
+  schemaVersion: string;
+  httpStatus?: number;
+  providerCode?: string;
+  providerType?: string;
+  providerParam?: string;
+  requestId?: string;
+  retryAfterSeconds?: number;
+  finishReason?: string;
+  incompleteReason?: string;
+  validationPaths?: string[];
+  elapsedMs: number;
+  tokenUsage?: {
+    input?: number;
+    output?: number;
+    total?: number;
+  };
+  fallbackUsed: false;
+  configurationDigest: string;
+  promptDigest: string;
+}
+
+export class AgentModelError extends Error {
+  constructor(readonly diagnostic: AgentFailureDiagnostic) {
+    super(diagnostic.message);
+  }
 }
 
 export class AgentToolError extends Error {
@@ -403,7 +465,7 @@ export class BoundedAgentRuntime {
             tools,
             signal: controller.signal,
           });
-        } catch {
+        } catch (error) {
           const aborted = controller.signal.aborted;
           const status = input.signal?.aborted
             ? "cancelled"
@@ -417,7 +479,15 @@ export class BoundedAgentRuntime {
             status,
             latencyMs: Math.round(performance.now() - started),
           });
-          return { status, text: safeTerminalText, trace, toolCalls };
+          return {
+            status,
+            text: safeTerminalText,
+            trace,
+            toolCalls,
+            ...(error instanceof AgentModelError
+              ? { failure: error.diagnostic }
+              : {}),
+          };
         }
         trace.push({
           sequence: trace.length + 1,

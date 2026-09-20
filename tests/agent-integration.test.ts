@@ -366,6 +366,31 @@ describe("runtime-guided assistant agent", () => {
     expect(response.evidence).toEqual([]);
   });
 
+  it("keeps harmless model-authored dialogue in a patient workspace", async () => {
+    const gateway = fixtureGateway(() => ({
+      kind: "conversation",
+      toolName: null,
+      input: null,
+      text: "Gern. Sag mir einfach, wobei ich dich unterstützen kann.",
+      draftReferenceId: null,
+      sourceReferenceIds: [],
+      evidenceClaims: [],
+    }));
+    const response = await new AssistantService(
+      new PflegehelferService(),
+      gateway,
+    ).query("u-nurse", {
+      prompt: "Danke, das hilft.",
+      patientId: "p-luca",
+      workingContext: workingContext(),
+    });
+
+    expect(response.components[0]).toEqual({
+      type: "AssistantText",
+      message: "Gern. Sag mir einfach, wobei ich dich unterstützen kann.",
+    });
+  });
+
   it("withholds source-free patient claims in the general conversation", async () => {
     const gateway = fixtureGateway(() => ({
       kind: "conversation",
@@ -527,6 +552,44 @@ describe("runtime-guided assistant agent", () => {
     expect(response.evidence[0]?.resourceId).toMatch(
       /^Patient\/p-luca\/_history\//,
     );
+  });
+
+  it("keeps a specific multi-line clarification with a short process explanation", async () => {
+    const gateway = fixtureGateway((turn, request) => {
+      if (turn === 0)
+        return {
+          kind: "tool-call",
+          toolName: "get_patient_summary",
+          input: {},
+          text: null,
+          draftReferenceId: null,
+          sourceReferenceIds: [],
+        };
+      const reference = evidenceHandle(request, "get_patient_summary");
+      return {
+        kind: "clarification-needed",
+        toolName: null,
+        input: null,
+        text: "Damit ich die passende Ansicht öffne.\nMöchtest du zuerst die Risiken oder die Pflegeziele ansehen?",
+        draftReferenceId: null,
+        sourceReferenceIds: reference ? [reference] : [],
+        evidenceClaims: [],
+      };
+    });
+    const response = await new AssistantService(
+      new PflegehelferService(),
+      gateway,
+    ).query("u-nurse", {
+      prompt: "Hilf mir beim Überblick.",
+      patientId: "p-luca",
+      workingContext: workingContext(),
+    });
+
+    expect(response.components[0]).toEqual({
+      type: "AssistantText",
+      message:
+        "Damit ich die passende Ansicht öffne.\nMöchtest du zuerst die Risiken oder die Pflegeziele ansehen?",
+    });
   });
 
   it("uses the injected operational delivery authority for degraded sync lookup", async () => {
