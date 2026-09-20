@@ -1,14 +1,14 @@
 # Pflegehelfer — One Product, Natural Coworker, Verified Completion
 
-**Contract revision:** 19 September 2026
+**Contract revision:** 20 September 2026
 
 **Repository:** `mariospeterman/Pflegehelfer`
 
 **Working branch:** `codex/genui-production-showcase`
 
-**Reviewed remote head:** `998789cec5da4ac23e0439b6a12fa2816009f05a`
+**Reviewed remote head:** `a14fb19624947f1a5c70c4dcd8f64a53f0f8ba0b`
 
-**Implementation identified in repository evidence:** `690901a8ab0509c1b55e2d23f9607a1c30ac4a2e`
+**Current conversational implementation:** `43edbdbcf55e920c947cf133f8cead3e207cb9f5`
 
 **Existing pull request:** #1, draft and unmerged at the recheck
 **Canonical destination:** this file, `docs/execution/PFLEGEHELFER_COMPLETION.md`
@@ -40,13 +40,13 @@ The separate mockup brief in `docs/design/reference/README.md` governs interpret
 
 The author rechecked the published branch, PR, CI metadata, completion matrix, architecture, response code, proposal presentation, runtime Markdown loader/catalog, provider registry, CI and browser configuration. This was a targeted source review, not execution of every test or a full live-application audit.
 
-At the reviewed head:
+At the reviewed head and the current local implementation:
 
 - OpenUI `AgentInterface`, server-backed scoped history, AI SDK transport and explicit proposal revision metadata are real implementations.
 - The repository reports atomic interruption/rollback/replay, real-store tests, verified simulator read-back and genuine inference/tool/validation/persistence progress.
 - GitHub CI run `34930226049` reports success for `998789c`; the repository also records successful earlier implementation CI. The current Playwright configuration still starts `demo:test-memory`, so this must remain separate from integrated acceptance.
 - G1–G7 remain PARTIAL. Real model/audio acceptance, shared collaboration/library, governed publication, identity/isolation, inbound processing, resource-native reconstruction and analytics still need work or evidence.
-- `verifiedCoworkerContent` now separates dialogue and exact facts, but still has fixed source-free patient dialogue/clarifications; `verifiedNaturalDialogue` retains word/pattern-based whole-answer checks. Reproduce actual behavior before changing it.
+- The 20 September conversational increment makes the connected probe use the same bounded agent adapter, instruction assembly and tool loop as the PWA; exposes sanitized stage/provider diagnostics; and makes fallback ineligible for connected acceptance. It also preserves harmless patient-workspace dialogue and specific explanatory clarification while validating factual clauses against exact referenced rows. This is implementation evidence, not successful hosted-model scenario acceptance.
 - Directory-v2 manifests and a shared catalog of role/workflow guidance exist. File loading is not yet the complete administrator publication or multi-department product.
 - Production WiCare/careCoach/SAP/device operations are disabled vendor gates; simulator tests do not verify private interfaces.
 
@@ -475,6 +475,10 @@ TimesFM or other forecasting remains optional later for aggregate workloads/occu
 
 The currently documented runtime is fallback. Resolve the replacement-key/accepted local-runtime prerequisite early with authorized access. Distinguish authentication, unavailable credit, rate limiting, network errors, unsupported API/schema and actual model incompetence. Do not repeat a credit failure indefinitely or generalize from an old tiny model to all local inference.
 
+Connected acceptance has two explicit levels. The **transport/model smoke** uses the production model adapter and bounded runtime for a tiny nonclinical text turn followed by one authorized synthetic read. The separate **application conversation acceptance** uses the normal backend/PWA path and isolated real stores for clarification, draft persistence, correction, review, delivery and read-back. A successful smoke records `smoke-tested`; it does not set `scenario-accepted` or production approval. Deterministic substitution, a legacy extraction planner or any fallback result fails connected acceptance.
+
+Every failed probe preserves only safe operator detail: stage, requested/returned model, runtime and adapter/API/schema versions, HTTP status, allowlisted provider code/type/parameter, provider request ID, retry delay, finish/incomplete reason, schema paths, elapsed time, token usage where returned, fallback flag and configuration/prompt/pack digests. Prompts, responses, credentials, authorization headers, connection strings and chain of thought are never diagnostic payloads. Authentication, authorization/model access, quota, transient rate limit, network/TLS/redirect, timeout/cancellation, unsupported parameter/schema, refusal/incomplete output, parsing, tool/evidence mismatch and persistence failure remain distinct outcomes.
+
 Run progressive probes with a bounded approved budget: plain conversation → one authorized read → a specific clarification → a small draft → revision → complete workday. Test the same live provider adapter the UI uses. A listed model, working `/models`, a key present, an HTTP 200 or one JSON fixture does not demonstrate the coworker.
 
 Use held-out wording, names, quantities, mixed completed/open tasks, negation, approximate intake, historical values, conflicting sources, scope changes and long utterances. Evaluate false additions/omissions, wrong-patient/effect rate, clarification quality, human edit burden and task success. Do not demand a preferred sentence. A model judge is supplementary evidence, not sole clinical validation.
@@ -537,14 +541,13 @@ Measure real human effort in the demonstration: repeated typing, navigation away
 
 Do not rebuild everything in one unreviewable change. The autonomous session continues across these complete slices. Internal scope remains binding, but one unavailable external key must not freeze unrelated engineering.
 
-| Sequence                           | Required output                                                                                                                                         | Existing gates |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
-| 1. Consolidate and unblock         | Canonical docs, exact baseline, safe key/runtime prerequisite, secret-free builds, real-store environment, removal inventory                            | G0/G5          |
-| 2. Prove the coworker              | Actual model ordinary dialogue/read/specific clarification/optional GenUI/draft/revision/approval/read-back; mobile visual inspection                   | G1/G4/G7       |
-| 3. Close work and data reliability | All supported direct actions on one acceptance path, inbound/conflicts, resource-native recovery, full two shifts/addenda, files and team collaboration | G1/G2/G3       |
-| 4. Make institutions configurable  | Roles/stations, administration, governed packs, directory/identity/RLS, staff/HR privacy, same build at second site                                     | G3/G5          |
-| 5. Close operational product       | Service evidence, analytics/improvement, multi-instance/concurrency, retention/restoration/egress, final visual/performance evidence                    | G1/G5/G6/G7    |
-| 6. Release review                  | Final-SHA clean checkout/CI, matrix and dossier, merge recommendation and owner approval                                                                | G0–G7          |
+| Pass                                 | Dependency-ordered output                                                                                                                                                                                                                                    | Existing gates |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------- |
+| A — acceptance parity and diagnosis  | Same-runtime transport smoke plus authorized read, safe classified diagnostics, fallback failure, replacement credential/local runtime prerequisite and a separately recorded full application conversation result                                           | G0/G4          |
+| B — prove the coworker end to end    | Actual-model ordinary dialogue → authorized read → specific clarification → faithful draft → correction → optional GenUI → explicit approval → PostgreSQL/Medplum/provider read-back in a real browser; held-out language and audio evidence remain separate | G1/G4/G7       |
+| C — close the reliable ward product  | Converged acceptance service for direct and assistant actions, resource-native recovery, durable inbound/conflicts, two consecutive shifts/addenda, collaboration/topics/library and accurate provider reconciliation                                        | G1/G2/G3       |
+| D — close institution and operations | Governed role/station publication, staff/HR privacy, OIDC/BFF/RLS, second-site configuration, service evidence/analytics/reviewed improvement, two replicas/workers, restore/retention/deployment and final visual/performance/clean integrated CI           | G3/G5/G6/G7    |
+| Release review                       | Exact final implementation SHA, clean artifact identities, current matrix/dossier, all remaining EXTERNAL owners/actions, merge recommendation and repository-owner approval                                                                                 | G0–G7          |
 
 Start provider/clinical/security stakeholder prerequisites in parallel only with authorization. Do not make every future feature a prerequisite for finding out whether the natural conversation works. Conversely, after proving the conversation, continue closing the remaining agreed internal scope rather than declaring the full product complete.
 

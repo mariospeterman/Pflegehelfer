@@ -1,7 +1,7 @@
 # Pflegehelfer production architecture
 
 Status: canonical architecture and data-ownership boundary
-Last verified: 2026-09-19
+Last verified: 2026-09-20
 
 This is the single architectural source of truth. Product behaviour is in `PRODUCT_EXPERIENCE.md`; configurable journeys are in `WORKFLOWS.md`. ADRs explain decisions but do not override this document.
 
@@ -46,6 +46,8 @@ The deployable baseline is one modular TypeScript backend, one PWA, PostgreSQL, 
 The current implementation is the OpenUI `AgentInterface` replacement inside the existing PWA, backed by server-owned scoped conversation history, explicit proposal revision/status, one-use approval authority and the PostgreSQL command boundary. The integrated development profile starts PostgreSQL 16, Medplum 5.1.37, Redis and an independent stateful provider simulator. Memory-profile CI is a fast deterministic regression profile and is never evidence that those external stores ran.
 
 The architecture is not yet a production deployment claim. Resource-native reconstruction without a normal checkpoint read, full shared-thread/library/publication behavior, production OIDC and non-bypass tenant isolation, two-replica recovery, real vendor adapters, accepted local/hosted model and audio runtimes, analytics and institutional validation remain completion gates. Their status is maintained in `execution/COMPLETION_MATRIX.md`.
+
+Connected-model status has deliberately separate states: configured, reachable, `smoke-tested`, application-scenario accepted and production approved. The smoke path uses the same `ModelGateway.agentAdapter()`, bounded runtime, instructions and authorized tool registry as interactive chat for one nonclinical response and one synthetic read; it never calls the legacy clinical-plan compiler and never treats fallback as success. Full acceptance must still traverse the ordinary server/PWA conversation, durable proposal lifecycle, explicit human action and external read-back. Failures retain only classified, sanitized provider/runtime metadata—never prompts, responses or secrets.
 
 ## Ownership and truth
 

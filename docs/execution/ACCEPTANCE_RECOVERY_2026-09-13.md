@@ -530,3 +530,70 @@ both reported `pfh-86d4b99448a4`, `dirty:false`. GitHub Actions run
 `35442169455` passed install, `verify`, security, the complete memory browser
 matrix and operations in 4m09s. This publication evidence does not change the
 implementation SHA above or advance any PARTIAL/NOT READY gate.
+
+## Same-runtime model diagnostics and conversation repair — 2026-09-20
+
+Implementation SHA:
+`43edbdbcf55e920c947cf133f8cead3e207cb9f5`.
+
+The model acceptance probe previously called the legacy clinical-plan path,
+which could replace a provider failure with a deterministic plan and discarded
+the actionable provider cause. The normal interactive path also replaced safe
+patient-workspace dialogue and useful explanatory clarification with fixed
+phrases, while checking factual prose as one combined paragraph.
+
+The repair makes the probe use the same `agentAdapter`, bounded agent runtime,
+instruction assembly and authorized tool registry as interactive chat. It runs
+one nonclinical no-tool turn and one isolated authorized read, never invokes a
+write and never counts fallback. A successful result is `smoke-tested`; the
+separate full application scenario remains unpassed. Provider failure now
+retains safe stage/model/adapter/API/schema, status, allowlisted provider code,
+type and parameter, request ID, retry/finish/schema-path, elapsed/usage and
+digest fields while excluding prompt/response bodies and credentials.
+
+Conversation verification now preserves harmless source-free patient-context
+dialogue and a specific multiline clarification with a short explanation. For
+factual prose it validates each clause against one exact referenced rendered
+row/atom, removes unsupported factual clauses and leaves exact clinical facts
+to deterministic rendering. Unauthorized tools, unsupported clinical claims,
+unapproved writes and stable server authority remain prohibited.
+
+Current evidence:
+
+- targeted conversational/model regressions: 3 files / 43 tests passed;
+- `pnpm verify`: formatting, zero-warning lint, both TypeScript targets,
+  431 tests passed with 25 declared environment skips and both production
+  builds passed;
+- memory-profile Playwright: 67 passed and 23 deliberate skips across the five
+  configured viewport projects; this remains separate from integrated-store
+  evidence;
+- PostgreSQL 16: 7 files / 24 tests passed sequentially with the live API
+  worker stopped and a 30-second integration test budget. A run made while the
+  API worker competed for the same destructive fixture queue is excluded;
+- Medplum 5.1.37 optimistic stale-version rejection/read-back: 1/1 passed;
+- independent authenticated provider simulator restart/read-back: 1/1 passed;
+- integrated 390×844 browser smoke reached the scoped Anna thread, reloaded
+  server-owned history and produced no console errors. The typed request
+  accurately reported unavailable model service rather than pretending a model
+  answer;
+- `verify:security`, `verify:ops` and `verify:airgap` passed. The source scanner
+  contains no embedded credential; the operations check verified its synthetic
+  backup/restore checksum;
+- Node 24.19.0, pnpm 11.19.0, OpenUI React UI 0.13.10, AI SDK 6.0.282,
+  PostgreSQL 16, Medplum 5.1.37 and the stateful external simulator were used.
+
+No hosted model call was made. The ignored `.env.demo` file predates the
+reported exposed credential and was not read, printed or invoked. Connected
+model, ASR and full application acceptance therefore remain **NOT READY**.
+Owner/action: the authorized account owner installs a newly issued key through
+the approved secret mechanism, or configures an approved local runtime; then IT
+or Quality runs the progressive same-runtime smoke and the isolated real-store
+application journey. A `/models` success, fallback or fixture output is not
+acceptance.
+
+G0 remains PASS and G1–G7 remain PARTIAL for the internal closure items in
+`COMPLETION_MATRIX.md`. This increment closes acceptance-path parity and safe
+diagnostics; it does not relabel shared collaboration/library, resource-native
+recovery, inbound conflicts, two-shift workday, identity/RLS, governed site
+publication, analytics, multi-instance restore, performance or external vendor
+authorization as complete.

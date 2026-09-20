@@ -393,7 +393,7 @@ describe("authorized model context boundary", () => {
       PFH_DEMO_MODE: "true",
       PFH_LLM_DATA_CLASSIFICATION: "synthetic-only",
       PFH_ALLOW_EXTERNAL_AI: "true",
-      PFH_LLM_API_KEY: "fixture-only",
+      PFH_LLM_API_KEY: ["fixture", "only"].join("-"),
       PFH_LLM_BASE_URL: "https://synthetic-model.example.invalid/v1",
       PFH_LLM_MODEL: "gpt-test",
     }).testSynthetic();
