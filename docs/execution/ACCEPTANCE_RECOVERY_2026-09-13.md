@@ -661,3 +661,45 @@ ward-loop event projections, export and authorized UI, small-cell handling in
 the persisted query layer, and the governed improvement publish/pilot/rollback
 cycle. Actual institution comparator observations and customer benefit remain
 external evidence and were not invented.
+
+### Exact resume point after this increment
+
+The next dependency-ordered internal slice is G2 append-only post-cutoff
+handover addenda, followed by the event projection that can feed the value
+report without duplicate service evidence. Implement it across the existing
+boundary rather than as a JSON field on the frozen snapshot:
+
+1. add migration `011` for immutable, institution-scoped addenda bound to the
+   exact handover, patient, encounter, source reference, author and recorded
+   time; do not mutate `handover_snapshots.content`, version or content hash;
+2. add memory/PostgreSQL parity in `src/infrastructure/operational-store.ts`
+   and the typed command/view in `src/core/workday.ts`;
+3. authorize patient/encounter and exact handover version in the existing
+   `/api/v1/workday` command boundary, then show source/time/author separately
+   from the frozen four-section snapshot in `WorkdayPanel`;
+4. prove duplicate-source replay, altered replay rejection, stale/wrong
+   handover, wrong encounter, post-acknowledgement visibility and two-shift
+   receiver visibility in memory plus an isolated PostgreSQL database;
+5. add the corresponding typed process event once, then project it into the
+   organizational-value input without counting a note/task/message as another
+   patient service.
+
+Resume commands:
+
+```sh
+git switch codex/genui-production-showcase
+git pull --ff-only origin codex/genui-production-showcase
+pnpm verify
+pnpm exec vitest run tests/interrupted-shift.test.ts --reporter=dot
+```
+
+Before the PostgreSQL/Medplum/provider or browser proofs, create a dedicated
+test database/project/provider namespace and verify the runtime identity. Do
+not reuse or reset the running demonstration stores. The existing shared-fixture
+PostgreSQL suites remain sequential until that isolation work is complete.
+
+External prerequisites remain separate: the authorized account owner supplies
+a newly issued model credential or approved local runtime; institutions supply
+their approved comparator observations, privacy/clinical decisions and vendor
+contracts. None of those external owners blocks the addendum, projection,
+shared ACL/file, OIDC/RLS, publication, retention or restore engineering.
