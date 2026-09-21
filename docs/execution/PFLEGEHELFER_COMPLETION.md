@@ -1,12 +1,12 @@
 # Pflegehelfer — One Product, Natural Coworker, Verified Completion
 
-**Contract revision:** 20 September 2026
+**Contract revision:** 21 September 2026
 
 **Repository:** `mariospeterman/Pflegehelfer`
 
 **Working branch:** `codex/genui-production-showcase`
 
-**Verified implementation/evidence head:** `40f62f22170a19b601acc0a9e9f0e526d8721998`
+**Reviewed branch/PR head:** `4595e7c33635f51aac2781d284e065a43b9831ee`
 
 **Current conversational implementation:** `43edbdbcf55e920c947cf133f8cead3e207cb9f5`
 
@@ -14,6 +14,8 @@
 **Canonical destination:** this file, `docs/execution/PFLEGEHELFER_COMPLETION.md`
 
 > One natural, role-aware coworker; useful model-composed interfaces; reviewed organizational instructions; faithful documentation; enforced permissions; recoverable delivery.
+
+The 20 September outcome-closure input is merged here rather than retained as a second master contract. Its priority correction is binding: Pflegehelfer must reduce avoidable re-entry and coordination burden while preserving reviewed meaning, correct destination delivery and responsibility ownership across shifts. A generic Swiss-branded chat experience, Markdown, air-gap capability or model neutrality alone is not the product outcome.
 
 ## 0. Mission and precedence
 
@@ -44,11 +46,12 @@ At the reviewed head and the current local implementation:
 
 - OpenUI `AgentInterface`, server-backed scoped history, AI SDK transport and explicit proposal revision metadata are real implementations.
 - The repository reports atomic interruption/rollback/replay, real-store tests, verified simulator read-back and genuine inference/tool/validation/persistence progress.
-- GitHub CI run `34930226049` reports success for `998789c`; the repository also records successful earlier implementation CI. The current Playwright configuration still starts `demo:test-memory`, so this must remain separate from integrated acceptance.
+- GitHub CI run `35490423770` reports success for reviewed head `4595e7c33635f51aac2781d284e065a43b9831ee`; the repository also records successful earlier implementation CI. The current Playwright configuration still starts `demo:test-memory`, so this must remain separate from integrated acceptance.
 - G1–G7 remain PARTIAL. Real model/audio acceptance, shared collaboration/library, governed publication, identity/isolation, inbound processing, resource-native reconstruction and analytics still need work or evidence.
 - The 20 September conversational increment makes the connected probe use the same bounded agent adapter, instruction assembly and tool loop as the PWA; exposes sanitized stage/provider diagnostics; and makes fallback ineligible for connected acceptance. It also preserves harmless patient-workspace dialogue and specific explanatory clarification while validating factual clauses against exact referenced rows. This is implementation evidence, not successful hosted-model scenario acceptance.
 - Directory-v2 manifests and a shared catalog of role/workflow guidance exist. File loading is not yet the complete administrator publication or multi-department product.
 - Production WiCare/careCoach/SAP/device operations are disabled vendor gates; simulator tests do not verify private interfaces.
+- The reviewed source-binding predicate can associate one task's completion state with another task for the same patient and can misread locally negated completion wording. The isolated supplied probe is reproduction evidence only; closure requires the production module and caller regression.
 
 Do not reopen already-fixed defects. Inspect newer commits and the local index first. Live service/build health in the user's report is reported evidence until tested. No live-demo password, API key or database URL belongs in this contract, Git or test artifacts.
 
@@ -71,6 +74,8 @@ Deliver the already-agreed workday, patient/staff/team workspaces, documents/ima
 Initial intended-use exclusions: new diagnosis, patient prognosis, treatment/dose recommendations, autonomous clinical triage, replacement alarm monitoring, clinical image interpretation, automatic employment decisions and fabricated billing. Existing professional diagnoses, orders and performed work may be displayed or faithfully documented within scope. A ban on originating a prescription is not a ban on reading a documented prescription or recording an authorized past event.
 
 Keep the current React/TypeScript/OpenUI/AI SDK/Fastify foundation. Prefer the maintained SDK's tool loop and streaming primitives where they replace bespoke orchestration cleanly; retain a small custom boundary only where necessary and tested. Do not mandate a framework migration for its own sake.
+
+Assume that general conversation, summarization and connectors continue improving in model platforms and incumbent products. Keep the model/chat host replaceable and reuse the same authorized read, draft and command services from every client. Do not add a second ChatGPT/Claude frontend, remote MCP gateway or agent platform without a separately approved use case and the same identity, policy, review and delivery boundary.
 
 No new mandatory Hermes/LangGraph/Temporal/Flowable/Kafka/NATS/vector database/service mesh. Do not add a separate agent per profession. Do not add TimesFM or another forecasting runtime now. These require a later measured need, explicit evaluation and a reviewed decision.
 
@@ -134,7 +139,7 @@ A greeting, clarification about the employee's intent or explanation of an appro
 
 Remove fixed generic responses and universal lexical constraints from the successful natural path after replacement tests pass. Do not solve every new utterance by adding another German keyword, connective list or exact-string condition. Keep format checks, unsupported-operation rejection, known contradiction regressions and patient/permission checks. Do not equate “no regex anywhere” with good engineering.
 
-Inspect mixed-result behavior carefully: “Mobilisation remains open; dressing is completed” must not be rejected simply because an open task and a completion word occur in the same response. Associate assertions with their relevant source rows rather than applying whole-paragraph keyword rules. A single question ending in `?` is not a proof that it contains no unsupported premise.
+Inspect mixed-result behavior carefully: “Mobilisation remains open; dressing is completed” must not be rejected simply because an open task and a completion word occur in the same response. Associate assertions with their relevant source rows rather than applying whole-paragraph keyword rules. Locally negated completion cannot simultaneously count as positive completion. If one factual clause contradicts its bound row, do not silently delete it and join the remaining clauses into changed meaning; withhold or regenerate the affected response while retaining exact server-rendered facts. A single question ending in `?` is not a proof that it contains no unsupported premise.
 
 Give the model simple tools backed by existing services, such as authorized handover/work/patient queries, permitted staff-work lookup, policy search, thread reading and draft creation/revision. Avoid a giant mandatory decision/evidence/layout JSON envelope for ordinary language. Generate hashes, identity bindings, deadlines after explicit resolution, version metadata and authorization server-side.
 
@@ -465,6 +470,30 @@ Show documented, required information missing, possible duplicate, order/mapping
 
 Initial analytics: documentation delay, avoidable re-entry, correction steps, unresolved handover items, request/ownership latency, delivery age/failures, model latency/cost and voluntary staff-reported usefulness. Define denominators, missing data, windows, deduplication and comparable baseline/pilot groups. Staff timers/presence do not measure competence, work ethic or care quality. Do not mine private conversations or voice for emotion/personality/staff rankings.
 
+### 20.1 Versioned organizational-value evaluation
+
+Implement a compact authorized value report and export from a versioned evaluation definition. The definition fixes institution/ward, workflow, period or comparison condition, eligible work, exclusions, outcome definitions, data sources, sample approach, denominators, owner, decision date and thresholds before outcomes are reviewed. It compares only alternatives actually available to the institution:
+
+- the current licensed process with its enabled native features and reasonable training/configuration;
+- a feasible improved-incumbent configuration where this is a cheaper real alternative;
+- an institution-approved general assistant plus available connectors where it can lawfully be tested; and
+- Pflegehelfer on the same eligible work and outcome definitions.
+
+An unavailable alternative and a vendor description remain labelled as such. Manual or CSV baseline observations are acceptable; never scrape a competitor or deliberately disable an incumbent to create a weak baseline. Unknown baseline means **not measured**, never zero.
+
+Keep observed pilot data, customer-reported measurements, modeled estimates and synthetic simulation in separate result classes. Never blend them into one headline. The core report covers 4–8 stable measures including total human administrative effort, repeated entry, receiving-owner acceptance, verified delivery completeness, adjudicated faithfulness/rework, voluntary usefulness and full service cost. Administrative effort includes capture, meaningful review, correction, failed attempts and downstream reconciliation; it excludes care time and passive waiting. Presence, page-open duration, care timers, keystrokes, private chats and inferred emotion/personality are not inputs.
+
+For a comparable cohort, tested ordinary code—not an LLM—computes:
+
+```text
+net released administrative minutes
+  = baseline effort expected for the eligible workload
+    - Pflegehelfer capture/review/correction/failure effort
+    - additional downstream reconciliation/support effort not already counted
+```
+
+Persist the method and uncertainty and avoid double-counting rework. A negative result is valid. Released time, usable capacity, modeled opportunity value and realized cash effects are separate concepts. A customer-supplied loaded hourly rate may produce a clearly labelled estimate; it is not observed cash saving, tariff, billing eligibility or ROI. The report may recommend `continue measuring`, `change the workflow`, `do not roll out` or a limited pilot. Every result retains limitations, sample size, missingness, exceptions and failure/pending delivery state.
+
 For organizational culture/team-building questions use appropriately governed voluntary feedback and human interpretation, not inferred psychological diagnoses from telemetry. Show uncertainty and confounding in operational comparisons. Distinguish time saved, usable capacity and realized money saved.
 
 Implement one complete synthetic improvement cycle: discover a routing delay → propose a reviewed duty-queue/wording/workflow change → show evidence and diff → run scenarios → authorized owner publishes → limited pilot → compare → keep/rollback. Models propose, not activate permissions or clinical procedures. No autonomous training on confidential private data.
@@ -541,13 +570,13 @@ Measure real human effort in the demonstration: repeated typing, navigation away
 
 Do not rebuild everything in one unreviewable change. The autonomous session continues across these complete slices. Internal scope remains binding, but one unavailable external key must not freeze unrelated engineering.
 
-| Pass                                 | Dependency-ordered output                                                                                                                                                                                                                                    | Existing gates |
-| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------- |
-| A — acceptance parity and diagnosis  | Same-runtime transport smoke plus authorized read, safe classified diagnostics, fallback failure, replacement credential/local runtime prerequisite and a separately recorded full application conversation result                                           | G0/G4          |
-| B — prove the coworker end to end    | Actual-model ordinary dialogue → authorized read → specific clarification → faithful draft → correction → optional GenUI → explicit approval → PostgreSQL/Medplum/provider read-back in a real browser; held-out language and audio evidence remain separate | G1/G4/G7       |
-| C — close the reliable ward product  | Converged acceptance service for direct and assistant actions, resource-native recovery, durable inbound/conflicts, two consecutive shifts/addenda, collaboration/topics/library and accurate provider reconciliation                                        | G1/G2/G3       |
-| D — close institution and operations | Governed role/station publication, staff/HR privacy, OIDC/BFF/RLS, second-site configuration, service evidence/analytics/reviewed improvement, two replicas/workers, restore/retention/deployment and final visual/performance/clean integrated CI           | G3/G5/G6/G7    |
-| Release review                       | Exact final implementation SHA, clean artifact identities, current matrix/dossier, all remaining EXTERNAL owners/actions, merge recommendation and repository-owner approval                                                                                 | G0–G7          |
+| Pass                                | Dependency-ordered output                                                                                                                                                                                                                               | Existing gates |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
+| A — acceptance parity and diagnosis | Same-runtime transport smoke plus authorized read, safe classified diagnostics, fallback failure, replacement credential/local runtime prerequisite and a separately recorded full application conversation result                                      | G0/G4          |
+| B — complete measured ward loop     | Provider import → handover/plan → interruption → same-draft correction → selected approval → team communication → PostgreSQL/Medplum/provider read-back → defer/outgoing addendum/receiving acceptance, with report-once metrics and visible exceptions | G1/G2/G4/G6/G7 |
+| C — close institution/collaboration | Shared ACL threads, audience publication, topics/files, governed role/station publication, OIDC/BFF/RLS, second-site operation, value report/completeness review and one reviewed improvement cycle                                                     | G3/G5/G6       |
+| D — close operating/release proof   | Isolated two-instance/worker concurrency, previous-release migration and full PostgreSQL/Medplum/files/config restore, retention/egress, final visual/performance/model/audio evidence and clean integrated CI                                          | G1/G4/G5/G7    |
+| Release review                      | Exact final implementation SHA, clean artifact identities, current matrix/dossier, all remaining EXTERNAL owners/actions, merge recommendation and repository-owner approval                                                                            | G0–G7          |
 
 Start provider/clinical/security stakeholder prerequisites in parallel only with authorization. Do not make every future feature a prerequisite for finding out whether the natural conversation works. Conversely, after proving the conversation, continue closing the remaining agreed internal scope rather than declaring the full product complete.
 
@@ -568,6 +597,8 @@ Preserve inherited acceptance IDs and map the following closures into them; thes
 **Configuration:** selected approved MD reaches actual model request, unrelated guides excluded, meaningful prose-only change without TypeScript, structural metadata diff, old sessions pinned/current revocation immediate, invalid/traversal/symlink/remote include rejected, second multi-department institution and supported provider instance with no source fork, undeclared capability cannot be introduced by Markdown.
 
 **Files and learning:** real upload/quarantine/view/search/withdrawal, safe previews and expired access, uploaded prompt injection cannot call unauthorized tools, staff/personnel file isolation, one work event reused without duplicates, actual taxonomy filters, one human-approved improvement/pilot/rollback with simulated metrics clearly labelled.
+
+**Organizational value:** same-definition comparison of actual available alternatives; unknown baseline, negative improvement, incomplete samples, duplicate/retried and corrected events, reopened work, role/time-zone changes, failed workflows, pending/rejected/uncertain delivery and unknown costs. Assert that observed, customer-reported, estimated and synthetic results never merge; review/correction/failure/reconciliation burden is included; private-chat/presence/care-timer data is absent; and opportunity value is never relabelled cash saving or billing.
 
 **AI/audio:** successfully configured model through the UI, held-out texts, second model conformance without permission changes, real microphone ASR review, TTS matching readout, failures/refusal/rate limits/timeouts/unsupported schema and budget caps; fixtures remain separate from real-model results.
 
@@ -653,5 +684,8 @@ Recheck official documentation against the actual installed dependency versions 
 - **EU1:** EU AI Act transparency/application guidance: https://digital-strategy.ec.europa.eu/en/faqs/transparency-obligations-under-article-50-ai-act — screen relevant cross-border application; obtain current legal review rather than copying blanket deadlines.
 - **V1:** WiCare Doc-L: https://www.wigasoft.ch/dokumentationsloesungen/wicare-doc-l/ — public Gate/SOAP/export features do not authorize every write.
 - **V2:** careCoach: https://www.topcare.ch/ — existing product/mobile/voice/integration capabilities are the baseline to beat, not private API contracts.
+- **M1:** IHI Model for Improvement measures: https://www.ihi.org/library/model-for-improvement/establishing-measures — combine outcome, process and balancing measures and test changes in bounded cycles.
+- **M2:** FDPIC employee monitoring: https://www.edoeb.admin.ch/de/technische-mittel-zur-ueberwachung-am-arbeitsplatz — workplace measurement must remain necessary, proportionate and transparent; it is not permission for covert behavior scoring.
+- **M3:** Anthropic healthcare and OpenAI healthcare platform descriptions: https://www.anthropic.com/news/healthcare-life-sciences and https://openai.com/index/openai-for-healthcare/ — generic healthcare conversation/integration capabilities are a moving market baseline, not evidence of customer-specific comparative performance.
 
 Obtain actual institution-approved SOPs, applicable professional/cantonal guidance, provider specifications and required legal/clinical reviews before real activation. Do not replace unavailable sources with a coding agent's assumptions.

@@ -59,6 +59,10 @@ import {
 import type { WorkdayCommand } from "../core/workday.js";
 import type { RuntimeProfileConfiguration } from "./runtime-profile.js";
 import { runtimeBuildInfo } from "./build-info.js";
+import {
+  buildOrganizationalValueReport,
+  organizationalValueInputSchema,
+} from "../core/organizational-value.js";
 
 const roleSchema = z.enum([
   "care-assistant",
@@ -1116,7 +1120,8 @@ export function buildApp(
     if (request.method !== "POST" || !route?.startsWith("/api/v1/")) return;
     if (
       route === "/api/v1/assistant/transcribe" ||
-      route === "/api/v1/assistant/query"
+      route === "/api/v1/assistant/query" ||
+      route === "/api/v1/analytics/organizational-value/report"
     )
       return;
     const commandId = request.headers["x-command-id"];
@@ -1290,6 +1295,32 @@ export function buildApp(
         tts: tts.status(),
       },
     };
+  });
+
+  app.post("/api/v1/analytics/organizational-value/report", (request) => {
+    const actor = service.user(userId(request));
+    const authorization = decide(
+      actor,
+      "analytics:aggregate",
+      actor.defaultPurpose,
+    );
+    if (!authorization.allow)
+      throw new DomainError(
+        "AUTH_DENIED",
+        "Der Organisationswert-Bericht ist für diese Rolle nicht freigegeben.",
+        403,
+      );
+    const input = organizationalValueInputSchema.parse(request.body);
+    if (
+      input.definition.organizationId !== siteConfiguration.institutionId ||
+      input.definition.wardId !== siteConfiguration.department.id
+    )
+      throw new DomainError(
+        "AUTH_DENIED",
+        "Die Auswertung gehört nicht zur aktiven Institution und Abteilung.",
+        403,
+      );
+    return buildOrganizationalValueReport(input);
   });
 
   app.get(

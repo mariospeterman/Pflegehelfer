@@ -44,6 +44,11 @@ import {
   resolveRuntimeGuidance,
   runtimeSitePack,
 } from "./runtime-instructions.js";
+import {
+  canonicalClaimTokens,
+  verifyNaturalDialogueAgainstSources,
+  type SourceBoundAtom,
+} from "./source-claim-binding.js";
 
 export interface AssistantRequest {
   prompt: string;
@@ -347,88 +352,6 @@ function boundedClarificationQuestion(
   return unsupportedDeclarativePremise ? null : clarification;
 }
 
-function canonicalClaimTokens(text: string): string[] {
-  const normalized = text
-    .toLocaleLowerCase("de-CH")
-    .replace(/,/g, ".")
-    .normalize("NFKC");
-  const tokens = new Set<string>();
-  for (const match of normalized.matchAll(/\b\d+(?:[./]\d+)?\b/gu))
-    tokens.add(match[0]);
-  const groups: Array<[RegExp, string]> = [
-    [
-      /\b(?:offen\p{L}*|steht noch aus|nicht erledigt|angenommen|wartend)\b/iu,
-      "state:open",
-    ],
-    [
-      /\b(?:erledigt|abgeschlossen|vollständig erledigt)\b/iu,
-      "state:completed",
-    ],
-    [/\b(?:in arbeit|begonnen)\b/iu, "state:in-progress"],
-    [/\b(?:pausiert|unterbrochen)\b/iu, "state:paused"],
-    [/\b(?:blutdruck|rr)\b/iu, "concept:blood-pressure"],
-    [/\b(?:temperatur|temp\.?|grad)\b|°c/iu, "concept:temperature"],
-    [/\b(?:puls|herzfrequenz)\b|\/min/iu, "concept:pulse"],
-    [/\b(?:sauerstoff|sättigung|saettigung|spo₂|spo2)\b|%/iu, "concept:oxygen"],
-    [/\bgewicht\b|\bkg\b/iu, "concept:weight"],
-  ];
-  for (const [pattern, token] of groups)
-    if (pattern.test(normalized)) tokens.add(token);
-  return [...tokens];
-}
-
-function atomClaimTokens(atom: string): Set<string> {
-  return new Set(canonicalClaimTokens(atom));
-}
-
-function clauseIsSupported(
-  clause: string,
-  atoms: readonly string[],
-  protectedTerms: readonly string[],
-): boolean {
-  const materialTokens = canonicalClaimTokens(clause);
-  const hasPatientTerm = containsProtectedTerm(clause, protectedTerms);
-  const hasCurrentMeasurementClaim =
-    /\b(?:aktuell|jetzt|derzeit|momentan)\b/iu.test(clause) &&
-    materialTokens.length > 0;
-  if (hasCurrentMeasurementClaim) return false;
-  if (materialTokens.length === 0 && !hasPatientTerm) return true;
-  const normalizedClause = clause.toLocaleLowerCase("de-CH");
-  return atoms.some((atom) => {
-    const normalizedAtom = atom.toLocaleLowerCase("de-CH");
-    const available = atomClaimTokens(atom);
-    const supportsTokens = materialTokens.every((token) =>
-      available.has(token),
-    );
-    const supportsPatient =
-      !hasPatientTerm ||
-      protectedTerms.some(
-        (term) =>
-          normalizedClause.includes(term.toLocaleLowerCase("de-CH")) &&
-          normalizedAtom.includes(term.toLocaleLowerCase("de-CH")),
-      );
-    return supportsTokens && supportsPatient;
-  });
-}
-
-/**
- * Validate each factual clause against one exact rendered row. This preserves
- * natural connective prose while preventing a state/value from one row being
- * attached to another row merely because both words occur somewhere.
- */
-function verifiedNaturalDialogue(
-  text: string,
-  atoms: readonly string[],
-  protectedTerms: readonly string[],
-): string | null {
-  const dialogue = text.trim();
-  if (dialogue.length === 0 || dialogue.length > 1_200) return null;
-  const supported = splitNaturalClauses(dialogue).filter((clause) =>
-    clauseIsSupported(clause, atoms, protectedTerms),
-  );
-  return supported.length > 0 ? supported.join(" ") : null;
-}
-
 function safeSourceFreePatientDialogue(
   text: string,
   protectedTerms: readonly string[],
@@ -535,7 +458,7 @@ function verifiedCoworkerContent(
       (candidate) =>
         candidate.referenceId === referenceId && candidate.path === path,
     );
-  const renderedAtoms: string[] = [];
+  const renderedAtoms: SourceBoundAtom[] = [];
   const consumed = new Set<string>();
   const claimKey = (referenceId: string, path: string) =>
     `${referenceId}\u0000${path}`;
@@ -594,8 +517,9 @@ function verifiedCoworkerContent(
       const occurred = Number.isNaN(Date.parse(effectiveAt))
         ? effectiveAt
         : formatOrganizationTimestamp(effectiveAt);
-      const atom = `${label}: ${displayValue} ${unit} · gemessen am ${occurred} · ${status}.`;
-      if (!renderedAtoms.includes(atom)) renderedAtoms.push(atom);
+      const text = `${label}: ${displayValue} ${unit} · gemessen am ${occurred} · ${status}.`;
+      if (!renderedAtoms.some((atom) => atom.text === text))
+        renderedAtoms.push({ text, entityLabels: [label] });
       return false;
     })
   )
@@ -637,8 +561,13 @@ function verifiedCoworkerContent(
           candidate.path.startsWith(`${base}.`)
         )
           consumed.add(claimKey(candidate.referenceId, candidate.path));
-      const atom = `${patientLabel} · ${title}: ${taskStateLabel(state)}.`;
-      if (!renderedAtoms.includes(atom)) renderedAtoms.push(atom);
+      const text = `${patientLabel} · ${title}: ${taskStateLabel(state)}.`;
+      if (!renderedAtoms.some((atom) => atom.text === text))
+        renderedAtoms.push({
+          text,
+          entityLabels: [title],
+          subjectLabels: [patientLabel],
+        });
       return false;
     })
   )
@@ -683,8 +612,13 @@ function verifiedCoworkerContent(
           candidate.path.startsWith(`${base}.`)
         )
           consumed.add(claimKey(candidate.referenceId, candidate.path));
-      const atom = `${patientLabel} · Nachricht an ${recipientRole}: ${request} · ${state}.`;
-      if (!renderedAtoms.includes(atom)) renderedAtoms.push(atom);
+      const text = `${patientLabel} · Nachricht an ${recipientRole}: ${request} · ${state}.`;
+      if (!renderedAtoms.some((atom) => atom.text === text))
+        renderedAtoms.push({
+          text,
+          entityLabels: [request, recipientRole],
+          subjectLabels: [patientLabel],
+        });
       return false;
     })
   )
@@ -711,7 +645,10 @@ function verifiedCoworkerContent(
         : parent === "careGoals"
           ? "Pflegeziel"
           : (fieldLabels[last] ?? last);
-    renderedAtoms.push(`${label}: ${formatEvidenceValue(claim.value)}.`);
+    renderedAtoms.push({
+      text: `${label}: ${formatEvidenceValue(claim.value)}.`,
+      entityLabels: [label],
+    });
   }
   if (renderedAtoms.length === 0 && run.status !== "clarification-needed")
     return null;
@@ -729,16 +666,17 @@ function verifiedCoworkerContent(
       ? "Es wurde keine Aktion vorbereitet oder ausgeführt."
       : "";
   const dialogue =
-    verifiedNaturalDialogue(
+    verifyNaturalDialogueAgainstSources(
       run.text,
       renderedAtoms,
       options.protectedPatientTerms,
     ) ?? "Hier sind die belegten Angaben.";
-  const facts = boundedAtomText(renderedAtoms, suffix);
+  const factTexts = renderedAtoms.map(({ text }) => text);
+  const facts = boundedAtomText(factTexts, suffix);
   return dialogue && facts
     ? {
         dialogue: suffix ? `${dialogue} ${suffix}` : dialogue,
-        clinicalFacts: renderedAtoms,
+        clinicalFacts: factTexts,
       }
     : null;
 }

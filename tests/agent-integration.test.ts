@@ -721,6 +721,107 @@ describe("runtime-guided assistant agent", () => {
     expect(verifyAssistantEvidenceDigest(sourceRemoved)).toBe(false);
   });
 
+  it("binds a task-state assertion to the selected task row in the assistant caller", async () => {
+    const clinical = new PflegehelferService();
+    const checkpoint = clinical.checkpoint();
+    const mobilization = checkpoint.state.tasks.find(
+      ({ id }) => id === "t-mobilise-luca",
+    )!;
+    for (const task of checkpoint.state.tasks)
+      if (task.patientId === "p-luca" && task.id !== mobilization.id)
+        task.state = "completed";
+    checkpoint.state.tasks.push({
+      ...structuredClone(mobilization),
+      id: "t-morning-care-luca",
+      title: "Morgenpflege",
+      state: "in-progress",
+      source: {
+        ...structuredClone(mobilization.source),
+        externalId: "Task/t-morning-care-luca",
+      },
+    });
+    clinical.restoreCheckpoint(checkpoint);
+
+    const gateway = fixtureGateway((turn, request) => {
+      if (turn === 0)
+        return {
+          kind: "tool-call",
+          toolName: "get_open_tasks",
+          input: {},
+          text: null,
+          draftReferenceId: null,
+          sourceReferenceIds: [],
+        };
+      const reference = evidenceHandle(request, "get_open_tasks");
+      return {
+        kind: "answer",
+        toolName: null,
+        input: null,
+        text: "Luca Demo: Die Mobilisation mit Rollator ist in Arbeit.",
+        draftReferenceId: null,
+        sourceReferenceIds: reference ? [reference] : [],
+        evidenceClaims: reference
+          ? [
+              {
+                referenceId: reference,
+                path: "tasks.0.patientLabel",
+                value: "207 · Luca Demo",
+              },
+              {
+                referenceId: reference,
+                path: "tasks.0.title",
+                value: "Mobilisation mit Rollator",
+              },
+              {
+                referenceId: reference,
+                path: "tasks.0.state",
+                value: "accepted",
+              },
+              {
+                referenceId: reference,
+                path: "tasks.1.patientLabel",
+                value: "207 · Luca Demo",
+              },
+              {
+                referenceId: reference,
+                path: "tasks.1.title",
+                value: "Morgenpflege",
+              },
+              {
+                referenceId: reference,
+                path: "tasks.1.state",
+                value: "in-progress",
+              },
+            ]
+          : [],
+      };
+    });
+
+    const response = await new AssistantService(clinical, gateway).query(
+      "u-nurse",
+      {
+        prompt: "Wie ist der Stand der Aufgaben bei Luca?",
+        patientId: "p-luca",
+        workingContext: workingContext(),
+      },
+    );
+
+    expect(response.components[0]).toEqual({
+      type: "AssistantText",
+      message: "Hier sind die belegten Angaben.",
+    });
+    expect(JSON.stringify(response.components)).not.toContain(
+      "Mobilisation mit Rollator ist in Arbeit",
+    );
+    expect(response.components[1]).toMatchObject({
+      type: "ClinicalFacts",
+      items: [
+        "207 · Luca Demo · Mobilisation mit Rollator: offen.",
+        "207 · Luca Demo · Morgenpflege: in Arbeit.",
+      ],
+    });
+  });
+
   it("keeps multiple cited facts inspectable without requiring a rendered card", async () => {
     const gateway = fixtureGateway((turn, request) => {
       if (turn === 0)

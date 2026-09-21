@@ -35,6 +35,8 @@ The employee can ask a scoped team question, mention a permitted person or role 
 5. **Role/site/collaboration:** one binary configures multiple synthetic institutions, sites, wards, role/capability profiles and published workflow versions. Scoped threads, directory mentions and event replay reauthorise every read.
 6. **Knowledge/evidence/deployment:** approved knowledge keeps owner/version/audience/retraction; service evidence is distinct from billing eligibility; analytics are aggregate and small-cell suppressed; clean install, migration, backup/restore, rollback and deployment blockers have executable evidence.
 
+Organizational-value reporting compares the institution's actually available current process, feasible incumbent improvement and any approved general-assistant alternative against Pflegehelfer using the same declared eligible work and definitions. Unknown baselines are not measured, negative results remain visible, and observed, customer-reported, estimated and synthetic evidence never shares a headline. Review, correction, failure and downstream reconciliation count as burden. Private chats, presence, care timers and covert interaction surveillance are not productivity inputs; released time is not automatically cash saving, tariff evidence or customer benefit.
+
 ## Readiness language
 
 Use `SYNTHETIC-DEMO`, `TECHNICAL-PILOT-CANDIDATE` and `INSTITUTIONALLY-APPROVED-PILOT`. Simulator success, schema-only tables, fixture model output and undocumented vendor calls are never production evidence. Private WiCare, careCoach, SAP/device, nurse-call and institution Loop contracts remain operation-specific `EXTERNAL_VENDOR_GATE`s until supplied and tested.

@@ -605,3 +605,57 @@ reported build ID `pfh-40f62f22170a`, `dirty:false`. GitHub Actions run
 `35490168863` passed install, `verify`, security, the complete memory browser
 matrix and operations from a clean checkout in 3m17s. This later publication
 evidence does not change the implementation SHA or advance a PARTIAL gate.
+
+## Outcome-closure merge, task claim binding and value-report boundary — 2026-09-21
+
+Reviewed starting head: `4595e7c33635f51aac2781d284e065a43b9831ee` on
+`codex/genui-production-showcase`, draft PR #1. GitHub Actions run
+`35490423770` was successful at that head. The supplied outcome closure was
+merged into `PFLEGEHELFER_COMPLETION.md`; it was not added as a competing
+master contract. G0–G7, inherited MD/AG/CT/WF/TX/AI/VA/UI and C1–C16 remain
+binding, and all earlier evidence above remains dated historical evidence.
+
+The supplied isolated task-claim cases were reproduced against the production
+source-claim verifier. The production `AssistantService` caller was also
+exercised with two same-patient task rows carrying different states. The repair
+uses row-bound task/concept labels plus exact selected evidence rather than a
+new patient/task phrase whitelist. A state can no longer be borrowed from
+another matched task row. Local grammatical negation prevents the same
+completion term from producing both open and completed tokens. If any factual
+clause conflicts with its bound row, the whole model-authored factual dialogue
+is withheld and exact server-rendered facts remain; clauses are not silently
+spliced into changed meaning. Model tools, write authorization, proposal review
+and one-use command authority were not widened or removed.
+
+The same increment adds a bounded organizational-value report calculator and
+an `analytics:aggregate`-authorized, active-institution/department API route.
+Its versioned definition records the real comparison alternatives declared by
+the evaluator. Observed, customer-reported, estimated and synthetic evidence
+are aggregated separately. Human effort includes capture, review, correction,
+failed attempts and downstream reconciliation. Identical retried observations
+deduplicate; changed retry content fails. Unknown baseline stays not measured,
+negative released time can recommend `do-not-roll-out`, and modeled opportunity
+value is explicitly not cash saving. No patient content, private-chat mining,
+presence/care-timer scoring, tariff or billing inference is part of the input.
+
+Verification on the working increment:
+
+- focused source-binding, caller, value-report and API suites: 4 files / 51
+  tests passed;
+- `pnpm verify`: repository formatting, zero-warning lint, both TypeScript
+  configurations, 440 enabled tests with 25 declared skips, and PWA/API
+  production builds passed;
+- measured PWA main chunk remained 2,368.71 kB minified / 689.05 kB gzip, so
+  the existing G7 performance item remains open;
+- `verify:security`, `verify:ops` and `verify:airgap` passed; the operations
+  check verified only its labelled synthetic backup checksum;
+- no hosted/local model, ASR/TTS, destructive shared fixture, integrated
+  PostgreSQL/Medplum/provider journey or browser matrix was invoked in this
+  slice. Existing connected-model and G1–G7 closure claims therefore remain
+  PARTIAL/NOT READY exactly as recorded in the matrix.
+
+The report boundary is not yet durable analytics completion. It still needs
+ward-loop event projections, export and authorized UI, small-cell handling in
+the persisted query layer, and the governed improvement publish/pilot/rollback
+cycle. Actual institution comparator observations and customer benefit remain
+external evidence and were not invented.
