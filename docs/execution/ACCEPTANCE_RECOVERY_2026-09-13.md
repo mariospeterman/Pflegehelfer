@@ -703,3 +703,148 @@ a newly issued model credential or approved local runtime; institutions supply
 their approved comparator observations, privacy/clinical decisions and vendor
 contracts. None of those external owners blocks the addendum, projection,
 shared ACL/file, OIDC/RLS, publication, retention or restore engineering.
+
+## Product-closure merge, real-model diagnosis and organization economics — 2026-09-21
+
+Implementation SHA: `f7ee5e7ebb71038733a943a35f376b05c972158a`.
+
+Reviewed starting head: `eed4ac34fd11b2b4ea5709ad302241ec6cc9f210`
+on `codex/genui-production-showcase`, draft PR #1. The supplied product closure
+was read in full and merged into `PFLEGEHELFER_COMPLETION.md`, not introduced as
+a second contract. G0–G7, inherited MD/AG/CT/WF/TX/AI/VA/UI and C1–C16 remain
+binding. The user's later monetization correction explicitly supersedes every
+named-seat, per-user and minimum-seat-credit formula while leaving security
+roles and clinical permissions unchanged.
+
+### Configured model result
+
+The ignored developer environment contained an already configured legitimate
+server-side hosted-model key. It was not printed, copied or committed. A hard
+process-local cap of 12 hosted calls/hour was set for this run. The first
+bounded same-runtime `pfhctl model test` reached the configured provider with
+fallback disabled and reproduced `invalid_json_schema` at
+`text.format.schema`: the agent tool input used a dynamic additional-properties
+schema that the provider's strict structured-output contract rejects.
+
+The production `ModelGateway` transport now uses one fixed, nullable, bounded
+tool-input object and still delegates exact tool validation to the existing
+authorized registry. No new agent pipeline, phrase whitelist or write
+authorization was added. Thirty-five focused model/agent regressions passed.
+The single bounded retry progressed past schema validation and returned
+provider code `credit_balance_exhausted`, type `insufficient_quota`, with
+fallback `false`. No further paid retries were made. This is precise connection
+and repair evidence, not transport smoke or application-scenario acceptance.
+Ordinary dialogue → authorized read → clarification → faithful draft →
+correction → approval → external read-back therefore remains **NOT READY**
+until the account owner makes credit available or approves a local runtime.
+
+### Organization agreement and pooled usage
+
+The existing modular application now has one institution-scoped commercial
+boundary:
+
+- migration 011 adds optimistic-versioned organization configuration and an
+  idempotent provider-receipt ledger in the operational PostgreSQL database;
+- separate unpriced Kronenhof and Alpenblick seeds define pilot, one-time
+  deployment/onboarding, organization subscription and pooled usage. An
+  alternate-site process check loaded Alpenblick's own organization,
+  local-inference mode and site scope rather than inheriting Kronenhof terms;
+- effective-dated provider rates use currency minor units, pool quantities
+  before rounding and keep non-cached input, cached input, output and speech
+  units distinct. BYO keys are not charged twice and local inference does not
+  create cloud API fees;
+- absent rates/usage remain unavailable, charging is fixed off, and no
+  employee/account/device/role/seat pricing field or payment collector exists;
+- measured hard limits are checked only before a new model request. Manual
+  work, existing records and already-approved delivery remain independent;
+- management/IT can version configuration; quality/safety is read-only; IT
+  alone can import usage receipts. JSON and CSV monthly outputs remain labelled
+  review drafts and preserve provider-reported, estimated and unavailable
+  counts.
+
+The organizational-value decision guard also now requires non-zero measured
+delivery and adjudicated-faithfulness denominators before a positive pilot
+suggestion. Favorable timing without those quality measurements returns
+`continue-measuring`.
+
+### Actual-store and browser evidence
+
+The existing Compose installation was started without resetting volumes.
+PostgreSQL 16, Medplum 5.1.37, Redis and the independent stateful provider
+simulator reported healthy. The integrated API reported HTTP 200,
+`status:ready`, profile `integrated-demo`, persistent durability and valid
+audit. Migration 011 was applied through the immutable ledger.
+
+One deliberately labelled estimated synthetic receipt
+`synthetic-estimate-2026-09-21-1` was imported for the active organization. The
+management form saved the unchanged review configuration once. After API
+restart, PostgreSQL returned configuration version 2 and the estimate count 1;
+the prepared monthly amount remained `null`/unavailable. Quality/safety could
+read JSON and download the CSV but received no edit form and a POST returned 403. A nurse received 403 for the CSV. The CSV retained
+`estimated_receipts,1,count` and `prepared_amount_minor,unavailable,CHF`.
+
+The existing PWA was inspected in the browser at desktop and 390×844. The
+organization panel remained inside the OpenUI shell, had no horizontal page
+overflow, exposed the monthly download, hid quality edit controls and logged no
+console errors. Evidence images are local artifacts, not product acceptance:
+`artifacts/organization-economics-desktop-2026-09-21.png` and
+`artifacts/organization-economics-mobile-2026-09-21.png`.
+
+This slice did not execute the complete two-shift ward loop through PostgreSQL,
+Medplum and the simulator, and it did not run destructive shared-store
+fixtures. No vendor capability, institutional approval, customer benefit or
+real invoice is claimed.
+
+### Verification
+
+- focused organization/model/value/migration/site regressions passed; the
+  organization/model subset finished at 22 tests and the expanded focused set
+  at 49 tests;
+- `pnpm verify` passed formatting, zero-warning lint, both TypeScript targets,
+  452 enabled tests with 25 declared environment skips, and PWA/API production
+  builds;
+- the main PWA chunk measured 2,374.48 kB minified / 690.71 kB gzip, so G7
+  performance remains open;
+- `verify:security`, `verify:ops` and `verify:airgap` passed. The operations
+  check verified only its labelled synthetic backup/restore checksum;
+- the first `verify:e2e` attempt timed out before tests because its web-server
+  bootstrap exceeded the fixed 120-second clean-build ceiling. After the same
+  build completed separately, the unmodified Playwright command reused the
+  memory server and passed 67 enabled journeys with 23 declared skips across
+  360, 390, 768, 1024 and 1440 px in 18.1 minutes. This is memory-profile
+  evidence and is not relabelled integrated-store acceptance.
+
+G0 remains PASS. G1–G7 remain PARTIAL exactly as indexed in
+`COMPLETION_MATRIX.md`. In particular, connected model/audio acceptance, the
+complete measured ward loop, collaboration/files, governed publication,
+OIDC/BFF/RLS, durable value projections/improvement, isolated concurrency,
+previous-release migration/restore, retention/egress and final performance are
+still open.
+
+### Exact resume point
+
+Migration 011 is now organization economics, so the earlier handoff's addendum
+migration number is superseded. Continue independent work with migration 012:
+
+1. implement immutable institution/site/handover/patient/encounter/version-bound
+   post-cutoff addenda without mutating the frozen handover content/hash;
+2. add memory/PostgreSQL parity, existing workday command/view authorization,
+   duplicate/altered replay and two-shift receiver tests in an isolated database;
+3. emit one typed process event and project it into the value report without
+   duplicating a patient service;
+4. then close the remaining G3/G5 collaboration, files, publication and
+   identity/RLS slices while the model-credit prerequisite remains external.
+
+Resume with:
+
+```sh
+git switch codex/genui-production-showcase
+git pull --ff-only origin codex/genui-production-showcase
+pnpm verify
+pnpm exec vitest run tests/interrupted-shift.test.ts --reporter=dot
+```
+
+Use a dedicated database/project/provider namespace for destructive
+PostgreSQL/Medplum/provider proofs. Do not reset the preserved demonstration
+stores. Re-run the progressive real model test only after the external credit
+or approved-local-runtime condition changes; do not count fallback.

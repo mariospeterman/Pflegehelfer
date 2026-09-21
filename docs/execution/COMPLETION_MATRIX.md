@@ -10,6 +10,9 @@ Current conversational implementation:
 Current source-binding/value-report implementation:
 `cecb38ac549a04a1de50c5836bde788348d348d5`
 
+Current model-schema/organization-economics implementation:
+`f7ee5e7ebb71038733a943a35f376b05c972158a`
+
 This is the short evidence index for the binding contract in
 [`PFLEGEHELFER_COMPLETION.md`](PFLEGEHELFER_COMPLETION.md). `PASS` requires code,
 an acceptance test and current runtime evidence. `PARTIAL` means repository work
