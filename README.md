@@ -162,17 +162,17 @@ Pflegehelfer uses a modular TypeScript backend and a single PWA. The model is an
 The diagram shows the intended service boundaries. Inbound processing, collaboration, institutional identity and other unfinished parts remain subject to the status matrix.
 
 flowchart TD
-    UI["Pflegehelfer PWA\nOpenUI · text · voice"]
-    CONTEXT["Authenticated context\nApproved role/workflow guidance"]
-    AGENT["Bounded conversational agent"]
-    TOOLS["Authorized read and draft tools"]
-    REVIEW["Human review / explicit action"]
-    COMMAND["Validated local command acceptance"]
-    PG[("Operational PostgreSQL")]
-    FHIR[("Medplum / FHIR")]
-    WORKERS["Delivery and reconciliation workers"]
-    ADAPTERS["Capability-based provider adapters"]
-    PROVIDERS["Designated institutional systems"]
+UI["Pflegehelfer PWA\nOpenUI · text · voice"]
+CONTEXT["Authenticated context\nApproved role/workflow guidance"]
+AGENT["Bounded conversational agent"]
+TOOLS["Authorized read and draft tools"]
+REVIEW["Human review / explicit action"]
+COMMAND["Validated local command acceptance"]
+PG[("Operational PostgreSQL")]
+FHIR[("Medplum / FHIR")]
+WORKERS["Delivery and reconciliation workers"]
+ADAPTERS["Capability-based provider adapters"]
+PROVIDERS["Designated institutional systems"]
 
     UI --> CONTEXT --> AGENT
     AGENT --> TOOLS
@@ -290,22 +290,22 @@ The project already loads directory-based instruction packs and shared role/work
 
 config/
 ├── assistant/
-│   └── BASE.md
+│ └── BASE.md
 ├── shared/
-│   ├── guidance-catalog.json
-│   ├── roles/
-│   └── workflows/
+│ ├── guidance-catalog.json
+│ ├── roles/
+│ └── workflows/
 └── sites/
-    ├── <typed-site-configuration>.json
-    └── packs/
-        ├── tertianum-kronenhof/
-        │   ├── site.json
-        │   ├── SITE.md
-        │   ├── departments/
-        │   ├── stations/
-        │   ├── providers/
-        │   └── workflows/
-        └── alpenblick-demo/
+├── <typed-site-configuration>.json
+└── packs/
+├── tertianum-kronenhof/
+│ ├── site.json
+│ ├── SITE.md
+│ ├── departments/
+│ ├── stations/
+│ ├── providers/
+│ └── workflows/
+└── alpenblick-demo/
 
 Shared files and pack-specific references are deliberate: the published manifest binds the selected instruction content and configuration versions.
 
@@ -443,7 +443,7 @@ Run the integrated synthetic environment
 The implementation currently lives on the development branch:
 
 git clone --branch codex/genui-production-showcase \
-  https://github.com/mariospeterman/Pflegehelfer.git
+https://github.com/mariospeterman/Pflegehelfer.git
 cd Pflegehelfer
 
 pnpm install --frozen-lockfile
@@ -568,12 +568,12 @@ This is a planned commercial direction, not an implemented billing system, publi
 
 Verification and development
 
-pnpm verify             # Format, lint, types, unit tests and builds
-pnpm verify:e2e         # Playwright journeys
-pnpm verify:security    # Repository security checks
-pnpm verify:ops         # Operations checks
-pnpm verify:airgap      # Current preflight/security checks
-pnpm verify:full        # Combined repository verification commands
+pnpm verify # Format, lint, types, unit tests and builds
+pnpm verify:e2e # Playwright journeys
+pnpm verify:security # Repository security checks
+pnpm verify:ops # Operations checks
+pnpm verify:airgap # Current preflight/security checks
+pnpm verify:full # Combined repository verification commands
 
 The current default Playwright configuration starts the memory-demo profile. Real PostgreSQL, Medplum, independent-provider and connected-model results must therefore be identified separately. Environment-dependent skips are not passing integration tests.
 
@@ -585,17 +585,17 @@ The repository's licence position should be clarified with the maintainer before
 
 Repository structure
 
-config/                  Reviewed guidance, site packs and typed configuration
-src/ai/                  Model, voice, knowledge and agent boundaries
-src/core/                Workflow, policy, proposals and integration contracts
-src/infrastructure/      Persistence and clinical workspace implementations
-src/pwa/                 OpenUI PWA and presentation components
-src/server/              API, runtime profiles and simulator services
-tools/                   CLI, validation and development tooling
-scripts/                 Build, environment and verification scripts
-tests/                   Unit, regression, integration and browser tests
-docs/                    Architecture, workflows, evidence and design references
-compose.yaml             Local integrated development infrastructure
+config/ Reviewed guidance, site packs and typed configuration
+src/ai/ Model, voice, knowledge and agent boundaries
+src/core/ Workflow, policy, proposals and integration contracts
+src/infrastructure/ Persistence and clinical workspace implementations
+src/pwa/ OpenUI PWA and presentation components
+src/server/ API, runtime profiles and simulator services
+tools/ CLI, validation and development tooling
+scripts/ Build, environment and verification scripts
+tests/ Unit, regression, integration and browser tests
+docs/ Architecture, workflows, evidence and design references
+compose.yaml Local integrated development infrastructure
 
 Documentation
 
