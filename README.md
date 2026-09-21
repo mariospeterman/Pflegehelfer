@@ -41,7 +41,7 @@ These are the product's design commitments. The implementation status below show
 
 Project status
 
-Status snapshot: 21 September 2026, based on development commit eed4ac34. The current G0–G7 matrix is the primary readiness reference; dated tests and recovery results are recorded in the acceptance ledger.
+Status snapshot: 21 September 2026. The current G0–G7 matrix is the primary readiness reference and records exact implementation SHAs; dated tests and recovery results are recorded in the acceptance ledger.
 
 Area
 
@@ -73,11 +73,11 @@ Named/role-queue communications exist; full shared-thread ACLs, durable unread/r
 
 Analytics and improvement
 
-An authorized value-report calculation boundary exists; persistent event collection, complete reporting UI/export and governed improvement publication remain in progress.
+An authorized value-report calculation boundary and a synthetic organization-level subscription/pooled-usage review panel with JSON/CSV statements exist. Charging and payment collection are disabled; persistent value-event collection, speech receipts, isolated limit concurrency and governed improvement publication remain in progress.
 
 Connected model and audio
 
-Adapters and same-runtime smoke tests exist; the complete real-model, ASR and TTS acceptance journeys remain unpassed.
+The same-runtime probe, no-fallback rule and sanitized diagnostics exist. A real provider schema defect was repaired, but the bounded retry reached an external credit failure; transport/application model, ASR and TTS acceptance journeys remain unpassed.
 
 Institutional deployment
 
