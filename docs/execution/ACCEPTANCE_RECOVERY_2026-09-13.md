@@ -608,6 +608,8 @@ evidence does not change the implementation SHA or advance a PARTIAL gate.
 
 ## Outcome-closure merge, task claim binding and value-report boundary — 2026-09-21
 
+Implementation SHA: `cecb38ac549a04a1de50c5836bde788348d348d5`.
+
 Reviewed starting head: `4595e7c33635f51aac2781d284e065a43b9831ee` on
 `codex/genui-production-showcase`, draft PR #1. GitHub Actions run
 `35490423770` was successful at that head. The supplied outcome closure was
@@ -638,7 +640,7 @@ negative released time can recommend `do-not-roll-out`, and modeled opportunity
 value is explicitly not cash saving. No patient content, private-chat mining,
 presence/care-timer scoring, tariff or billing inference is part of the input.
 
-Verification on the working increment:
+Verification on the implementation worktree immediately before commit:
 
 - focused source-binding, caller, value-report and API suites: 4 files / 51
   tests passed;
