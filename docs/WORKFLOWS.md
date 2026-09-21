@@ -8,6 +8,8 @@ The executable demo rules are the strictly validated `config/sites/tertianum-kro
 
 The model may choose how to explain, query or help navigate the current obligation; the workflow service alone owns mandatory steps, responsibility and transitions. Questions and interruptions do not silently complete, supersede or discard pending work. Runtime Markdown changes assistance only after governed publication and never changes executable permissions by itself.
 
+Organization commercial configuration is likewise not workflow authority. A monthly subscription or AI budget does not add a role, patient relationship or provider operation. When a measured hard AI limit is exhausted, only a new model request may pause; direct deterministic controls and workers delivering an already-approved command continue.
+
 ## Nursing day (`nursing-day`, version 2)
 
 | Order | Step             | Completion                                             |

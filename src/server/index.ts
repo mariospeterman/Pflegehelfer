@@ -11,6 +11,12 @@ import {
   InMemoryOperationalStore,
   PostgresOperationalStore,
 } from "../infrastructure/operational-store.js";
+import {
+  InMemoryCommercialStore,
+  PostgresCommercialStore,
+} from "../infrastructure/commercial-store.js";
+import { loadOrganizationCommercialConfig } from "../core/organization-economics.js";
+import { siteConfiguration } from "../core/site-config.js";
 import { runtimeProfileFromEnvironment } from "./runtime-profile.js";
 
 const port = Number.parseInt(process.env.PORT ?? "4173", 10);
@@ -39,6 +45,13 @@ const operationalStore = operationalUrl
   ? new PostgresOperationalStore(operationalUrl)
   : new InMemoryOperationalStore();
 await operationalStore.initialize();
+const commercialStore = operationalUrl
+  ? new PostgresCommercialStore(operationalUrl)
+  : new InMemoryCommercialStore();
+const commercialConfiguration = loadOrganizationCommercialConfig();
+if (commercialConfiguration.organizationId !== siteConfiguration.institutionId)
+  throw new Error("COMMERCIAL_CONFIGURATION_SCOPE_MISMATCH");
+await commercialStore.initialize(commercialConfiguration);
 const [projectedCheckpoint, locallyAcceptedCheckpoint] = await Promise.all([
   workspace.loadCheckpoint(),
   operationalStore.loadLatestAcceptedCheckpoint(),
@@ -60,7 +73,12 @@ await workspace.initialize(startupResources, service.checkpoint(), {
   // clinical projection job. Startup must not bypass that durable queue.
   reconcile: projectedCheckpoint === null && locallyAcceptedCheckpoint === null,
 });
-const app = buildApp(service, { workspace, operationalStore, runtime });
+const app = buildApp(service, {
+  workspace,
+  operationalStore,
+  commercialStore,
+  runtime,
+});
 
 const close = async (signal: string) => {
   app.log.info({ signal }, "graceful shutdown");

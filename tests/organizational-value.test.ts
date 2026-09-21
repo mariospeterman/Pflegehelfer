@@ -245,6 +245,31 @@ describe("organizational value report", () => {
     );
   });
 
+  it("does not suggest a pilot when delivery or faithfulness evidence is missing", () => {
+    const baseline = effortObservation("quality-baseline", "current-process", {
+      capture: 50,
+      review: 20,
+      correction: 10,
+      failedAttempts: 5,
+      downstreamReconciliation: 15,
+    });
+    const target = effortObservation("quality-target", "pflegehelfer", {
+      capture: 20,
+      review: 10,
+      correction: 5,
+      failedAttempts: 0,
+      downstreamReconciliation: 5,
+    });
+    delete target.deliveries;
+    delete target.faithfulnessReview;
+    const report = buildOrganizationalValueReport(input([baseline, target]));
+    expect(report.comparison.direction).toBe("improvement");
+    expect(report.decision).toBe("continue-measuring");
+    expect(report.limitations).toContain(
+      "Mandatory delivery and adjudicated faithfulness evidence with non-zero denominators is incomplete.",
+    );
+  });
+
   it("deduplicates identical retries and rejects changed retry content", () => {
     const observation = effortObservation("retry-safe", "current-process", {
       capture: 50,

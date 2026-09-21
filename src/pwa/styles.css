@@ -950,10 +950,102 @@ input:focus-visible {
   min-height: 44px;
   white-space: nowrap;
 }
+.organization-economics {
+  width: min(820px, calc(100% - 32px));
+  margin: 12px auto 0;
+  padding: 14px 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: var(--shadow-soft);
+}
+.organization-economics summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  cursor: pointer;
+}
+.organization-economics summary span:first-child {
+  display: grid;
+  gap: 3px;
+}
+.organization-economics summary small,
+.organization-economics > small,
+.organization-economics p {
+  color: var(--muted);
+}
+.budget-state {
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: var(--surface-soft);
+  font-size: 12px;
+  font-weight: 740;
+  white-space: nowrap;
+}
+.budget-state.paused {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+.organization-economics dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.organization-economics dl div {
+  display: grid;
+  gap: 3px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-soft);
+}
+.organization-economics dt {
+  color: var(--muted);
+  font-size: 11px;
+}
+.organization-economics dd {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+}
+.organization-economics form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 14px 0;
+}
+.organization-economics form label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.organization-economics form input,
+.organization-economics form select {
+  min-height: 44px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  padding: 0 10px;
+  background: var(--surface);
+  color: var(--text);
+}
 @media (max-width: 620px) {
   .countersignature-panel > div {
     align-items: stretch;
     flex-direction: column;
+  }
+  .organization-economics summary,
+  .organization-economics form {
+    grid-template-columns: 1fr;
+  }
+  .organization-economics summary {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .organization-economics dl {
+    grid-template-columns: 1fr;
   }
 }
 

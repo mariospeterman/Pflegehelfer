@@ -48,6 +48,66 @@ describe("authorized model context boundary", () => {
     };
     inspect(schema);
   });
+
+  it("does not emit dynamic additional-properties schemas for agent tool input", async () => {
+    let requestBody: Record<string, unknown> | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: string, init?: RequestInit) => {
+        if (typeof init?.body !== "string")
+          throw new Error("Expected a serialized request body.");
+        requestBody = JSON.parse(init.body) as Record<string, unknown>;
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              output_text: JSON.stringify({
+                kind: "conversation",
+                toolName: null,
+                input: null,
+                text: "Gern.",
+                draftReferenceId: null,
+                sourceReferenceIds: [],
+                evidenceClaims: [],
+                presentation: null,
+              }),
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        );
+      }),
+    );
+    await new ModelGateway({
+      PFH_AI_MODE: "hosted-test",
+      PFH_DEMO_MODE: "true",
+      PFH_LLM_DATA_CLASSIFICATION: "synthetic-only",
+      PFH_ALLOW_EXTERNAL_AI: "true",
+      PFH_LLM_API_KEY: "x",
+      PFH_LLM_BASE_URL: "https://synthetic-model.example.invalid/v1",
+      PFH_LLM_MODEL: "fixture",
+    }).testSynthetic();
+    const schema = (
+      requestBody?.text as {
+        format?: { schema?: Record<string, unknown> };
+      }
+    )?.format?.schema;
+    expect(schema).toBeDefined();
+    const dynamicObjects: string[] = [];
+    const inspect = (node: unknown, path = "$"): void => {
+      if (Array.isArray(node)) {
+        node.forEach((value, index) => inspect(value, `${path}[${index}]`));
+        return;
+      }
+      if (!node || typeof node !== "object") return;
+      const object = node as Record<string, unknown>;
+      if (object.type === "object" && object.additionalProperties !== false)
+        dynamicObjects.push(path);
+      Object.entries(object).forEach(([key, value]) =>
+        inspect(value, `${path}.${key}`),
+      );
+    };
+    inspect(schema);
+    expect(dynamicObjects).toEqual([]);
+  });
   it("does not implicitly trust link-local metadata endpoints", () => {
     expect(() =>
       validateLocalAiEndpoint("http://169.254.169.254/latest", {}),
@@ -419,5 +479,102 @@ describe("authorized model context boundary", () => {
       },
     });
     expect(JSON.stringify(result)).not.toContain("credential value");
+  });
+
+  it("pauses new inference at the organization limit without calling the provider", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    const result = await new ModelGateway(
+      {
+        PFH_AI_MODE: "hosted-test",
+        PFH_DEMO_MODE: "true",
+        PFH_LLM_DATA_CLASSIFICATION: "synthetic-only",
+        PFH_ALLOW_EXTERNAL_AI: "true",
+        PFH_LLM_API_KEY: "x",
+        PFH_LLM_BASE_URL: "https://synthetic-model.example.invalid/v1",
+        PFH_LLM_MODEL: "fixture",
+      },
+      {
+        canStartNewInference: () =>
+          Promise.resolve({
+            allowed: false,
+            reason: "organization-ai-spending-limit-reached",
+          }),
+        recordProviderUsage: () => Promise.resolve(),
+      },
+    ).testSynthetic();
+    expect(result).toMatchObject({
+      ready: false,
+      fallbackUsed: false,
+      failure: {
+        stage: "request",
+        code: "rate-limited",
+        message: "organization-ai-spending-limit-reached",
+      },
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("records idempotent provider-reported token categories after a successful response", async () => {
+    const receipts: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              id: "resp_synthetic_usage_1",
+              output_text: JSON.stringify({
+                kind: "conversation",
+                toolName: null,
+                input: null,
+                text: "Gern.",
+                draftReferenceId: null,
+                sourceReferenceIds: [],
+                evidenceClaims: [],
+                presentation: null,
+              }),
+              usage: {
+                input_tokens: 120,
+                input_tokens_details: { cached_tokens: 20 },
+                output_tokens: 12,
+                total_tokens: 132,
+              },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        ),
+      ),
+    );
+    const gateway = new ModelGateway(
+      {
+        PFH_AI_MODE: "hosted-test",
+        PFH_DEMO_MODE: "true",
+        PFH_LLM_DATA_CLASSIFICATION: "synthetic-only",
+        PFH_ALLOW_EXTERNAL_AI: "true",
+        PFH_LLM_API_KEY: "x",
+        PFH_LLM_BASE_URL: "https://synthetic-model.example.invalid/v1",
+        PFH_LLM_MODEL: "fixture",
+      },
+      {
+        canStartNewInference: () =>
+          Promise.resolve({ allowed: true, reason: "available" }),
+        recordProviderUsage: (receipt) => {
+          receipts.push(receipt);
+          return Promise.resolve();
+        },
+      },
+    );
+    await gateway.testSynthetic();
+    expect(receipts[0]).toMatchObject({
+      receiptId: "resp_synthetic_usage_1",
+      source: "provider-reported",
+      quantities: [
+        { unit: "input-token", quantity: 100 },
+        { unit: "cached-input-token", quantity: 20 },
+        { unit: "output-token", quantity: 12 },
+      ],
+      providerOutcome: "completed",
+    });
   });
 });

@@ -63,6 +63,18 @@ import {
   buildOrganizationalValueReport,
   organizationalValueInputSchema,
 } from "../core/organizational-value.js";
+import {
+  buildOrganizationStatement,
+  loadOrganizationCommercialConfig,
+  organizationCommercialConfigSchema,
+  organizationStatementCsv,
+  organizationStatementPeriodSchema,
+  organizationUsageReceiptSchema,
+} from "../core/organization-economics.js";
+import {
+  InMemoryCommercialStore,
+  type CommercialStore,
+} from "../infrastructure/commercial-store.js";
 
 const roleSchema = z.enum([
   "care-assistant",
@@ -272,6 +284,7 @@ export function buildApp(
     demoMode?: boolean;
     workspace?: ClinicalWorkspace;
     operationalStore?: OperationalStore;
+    commercialStore?: CommercialStore;
     modelGateway?: ModelGateway;
     runtime?: RuntimeProfileConfiguration;
     loggerStream?: Writable;
@@ -282,6 +295,12 @@ export function buildApp(
   const workspace = options.workspace ?? new InMemoryClinicalWorkspace();
   const operationalStore =
     options.operationalStore ?? new InMemoryOperationalStore();
+  const commercialStore =
+    options.commercialStore ?? new InMemoryCommercialStore();
+  const commercialSeed = loadOrganizationCommercialConfig();
+  if (commercialSeed.organizationId !== siteConfiguration.institutionId)
+    throw new Error("COMMERCIAL_CONFIGURATION_SCOPE_MISMATCH");
+  const commercialReady = commercialStore.initialize(commercialSeed);
   const runtime =
     options.runtime ??
     ({
@@ -302,7 +321,38 @@ export function buildApp(
         : createProductionProviderRegistry(),
       demoMode ? "synthetic-simulator" : "production",
     );
-  const models = options.modelGateway ?? new ModelGateway();
+  const models =
+    options.modelGateway ??
+    new ModelGateway(process.env, {
+      canStartNewInference: async () => {
+        await commercialReady;
+        const period = new Date().toISOString().slice(0, 7);
+        const configuration = await commercialStore.getConfiguration(
+          siteConfiguration.institutionId,
+        );
+        const statement = buildOrganizationStatement(
+          configuration,
+          await commercialStore.listUsage(
+            siteConfiguration.institutionId,
+            period,
+          ),
+          period,
+        );
+        return statement.budget.newInference === "paused"
+          ? {
+              allowed: false,
+              reason: "organization-ai-spending-limit-reached",
+            }
+          : { allowed: true, reason: "organization-ai-budget-available" };
+      },
+      recordProviderUsage: async (receipt) => {
+        await commercialReady;
+        await commercialStore.recordUsage({
+          ...receipt,
+          organizationId: siteConfiguration.institutionId,
+        });
+      },
+    });
   const asr = new AsrGateway();
   const tts = new TtsGateway();
   const knowledge = new ApprovedKnowledgeService();
@@ -1322,6 +1372,137 @@ export function buildApp(
       );
     return buildOrganizationalValueReport(input);
   });
+
+  const requireOrganizationEconomicsRole = (
+    request: FastifyRequest,
+    writable = false,
+  ) => {
+    const actor = service.user(userId(request));
+    const allowed = writable
+      ? ["management", "it"]
+      : ["management", "it", "quality-safety"];
+    if (!allowed.includes(actor.role))
+      throw new DomainError(
+        "AUTH_DENIED",
+        "Organisationsvertrag und Nutzungskosten sind für diese Rolle nicht freigegeben.",
+        403,
+      );
+    return actor;
+  };
+
+  app.get("/api/v1/admin/organization-economics", async (request) => {
+    requireOrganizationEconomicsRole(request);
+    await commercialReady;
+    const query = z
+      .object({ period: organizationStatementPeriodSchema.optional() })
+      .strict()
+      .parse(request.query);
+    const period = query.period ?? new Date().toISOString().slice(0, 7);
+    const configuration = await commercialStore.getConfiguration(
+      siteConfiguration.institutionId,
+    );
+    const receipts = await commercialStore.listUsage(
+      siteConfiguration.institutionId,
+      period,
+    );
+    return {
+      configuration,
+      statement: buildOrganizationStatement(configuration, receipts, period),
+    };
+  });
+
+  app.get(
+    "/api/v1/admin/organization-economics/statement.csv",
+    async (request, reply) => {
+      requireOrganizationEconomicsRole(request);
+      await commercialReady;
+      const query = z
+        .object({ period: organizationStatementPeriodSchema.optional() })
+        .strict()
+        .parse(request.query);
+      const period = query.period ?? new Date().toISOString().slice(0, 7);
+      const configuration = await commercialStore.getConfiguration(
+        siteConfiguration.institutionId,
+      );
+      const receipts = await commercialStore.listUsage(
+        siteConfiguration.institutionId,
+        period,
+      );
+      const statement = buildOrganizationStatement(
+        configuration,
+        receipts,
+        period,
+      );
+      return reply
+        .header("content-type", "text/csv; charset=utf-8")
+        .header(
+          "content-disposition",
+          `attachment; filename="pflegehelfer-organization-statement-${period}.csv"`,
+        )
+        .send(organizationStatementCsv(statement));
+    },
+  );
+
+  app.post(
+    "/api/v1/admin/organization-economics/configuration",
+    async (request) => {
+      requireOrganizationEconomicsRole(request, true);
+      await commercialReady;
+      const body = z
+        .object({
+          expectedVersion: z.number().int().positive(),
+          configuration: organizationCommercialConfigSchema,
+        })
+        .strict()
+        .parse(request.body);
+      if (body.configuration.organizationId !== siteConfiguration.institutionId)
+        throw new DomainError(
+          "AUTH_DENIED",
+          "Die Vertragskonfiguration gehört nicht zur aktiven Institution.",
+          403,
+        );
+      try {
+        return await commercialStore.updateConfiguration(
+          body.configuration,
+          body.expectedVersion,
+        );
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          error.message === "COMMERCIAL_CONFIGURATION_VERSION_CONFLICT"
+        )
+          throw new DomainError(
+            "VERSION_CONFLICT",
+            "Die Organisationskonfiguration wurde zwischenzeitlich geändert.",
+            409,
+          );
+        throw error;
+      }
+    },
+  );
+
+  app.post(
+    "/api/v1/admin/organization-economics/usage-receipts",
+    async (request, reply) => {
+      const actor = requireOrganizationEconomicsRole(request, true);
+      if (actor.role !== "it")
+        throw new DomainError(
+          "AUTH_DENIED",
+          "Nur IT darf Provider-Nutzungsbelege importieren.",
+          403,
+        );
+      await commercialReady;
+      const receipt = organizationUsageReceiptSchema.parse(request.body);
+      if (receipt.organizationId !== siteConfiguration.institutionId)
+        throw new DomainError(
+          "AUTH_DENIED",
+          "Der Nutzungsbeleg gehört nicht zur aktiven Institution.",
+          403,
+        );
+      const inserted = await commercialStore.recordUsage(receipt);
+      return reply.code(inserted ? 201 : 200).send({ inserted, receipt });
+    },
+  );
 
   app.get(
     "/api/v1/operations/clinical-projections/manual-head",
@@ -3367,7 +3548,7 @@ export function buildApp(
   }
 
   app.addHook("onClose", async () => {
-    await operationalStore.close();
+    await Promise.all([operationalStore.close(), commercialStore.close()]);
   });
 
   return app;

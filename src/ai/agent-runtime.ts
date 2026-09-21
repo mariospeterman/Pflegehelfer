@@ -256,6 +256,7 @@ export interface AgentFailureDiagnostic {
   elapsedMs: number;
   tokenUsage?: {
     input?: number;
+    cachedInput?: number;
     output?: number;
     total?: number;
   };

@@ -14,6 +14,8 @@ The coworker states the current step, shows source-linked facts/work, accepts na
 
 Ordinary questions lead with a concise natural answer based on cited records; they do not create a form or proposal. The model selects exact authorized facts and an optional bounded presentation, while the server renders each displayed record fact with its subject, value/state and provenance kept together. Model wording may guide the turn but is never presented as a clinical source. A write review preserves the employee's attributed meaning and shows only the relevant editable choices. Refresh restores the latest pending review with revalidated authority instead of requiring re-dictation. If no model is accepted, the UI says so and offers a clearly labelled verbatim draft rather than simulated understanding.
 
+Authorized management/IT/quality users can expand a compact organization-economics panel in the same shell. It shows contract-defined scope, provider-reported versus estimated/unavailable usage, pooled allowance, cost/margin, alerts, limits and a non-charging monthly review draft. Management/IT can update the organization subscription, inference supply mode, pooled allowance and spending limit with version checks. It never displays a price per employee/role/device or grants clinical access.
+
 ## Team and voice
 
 `@name`/`@role` create visible recipient obligations with sent, acknowledged, answered, escalated and closed states, linked to patient/workflow/source/resulting task. The assistant may draft/route but cannot impersonate an answer.

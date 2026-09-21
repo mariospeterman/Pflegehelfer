@@ -6,6 +6,10 @@ import {
   type ConversationOpening,
 } from "./assistant/AssistantSurface";
 import type { WorkdayView } from "../core/workday";
+import type {
+  OrganizationCommercialConfig,
+  OrganizationStatement,
+} from "../core/organization-economics";
 import {
   assistantClientContextHeaders,
   rotateAssistantClientContext,
@@ -248,6 +252,293 @@ function CountersignaturePanel({
         );
       })}
     </section>
+  );
+}
+
+function money(amountMinor: number | null, currency: string): string {
+  if (amountMinor === null) return "Nicht verfügbar";
+  return new Intl.NumberFormat("de-CH", {
+    style: "currency",
+    currency,
+  }).format(amountMinor / 100);
+}
+
+function moneyInput(amountMinor: number | null): string {
+  return amountMinor === null ? "" : (amountMinor / 100).toFixed(2);
+}
+
+function parseMoneyInput(value: string): number | null {
+  const normalized = value.trim().replace(",", ".");
+  if (normalized === "") return null;
+  if (!/^\d+(?:\.\d{1,2})?$/.test(normalized))
+    throw new Error("Betrag mit höchstens zwei Dezimalstellen eingeben.");
+  const [major, fraction = ""] = normalized.split(".");
+  return Number(major) * 100 + Number(fraction.padEnd(2, "0"));
+}
+
+function OrganizationEconomicsPanel({
+  userId,
+  canEdit,
+}: {
+  userId: string;
+  canEdit: boolean;
+}) {
+  const [data, setData] = useState<{
+    configuration: OrganizationCommercialConfig;
+    statement: OrganizationStatement;
+  } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [subscription, setSubscription] = useState("");
+  const [allowance, setAllowance] = useState("");
+  const [limit, setLimit] = useState("");
+  const [supplyMode, setSupplyMode] =
+    useState<OrganizationCommercialConfig["usage"]["supplyMode"]>(
+      "hosted-provider",
+    );
+  const downloadStatement = useCallback(async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const period = new Date().toISOString().slice(0, 7);
+      const response = await fetch(
+        `/api/v1/admin/organization-economics/statement.csv?period=${period}`,
+        {
+          headers: {
+            "x-demo-user": userId,
+            ...assistantClientContextHeaders(),
+          },
+        },
+      );
+      if (!response.ok) {
+        const failure = (await response.json()) as { message?: string };
+        throw new Error(failure.message ?? "Monatsauszug nicht verfügbar.");
+      }
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `pflegehelfer-organization-statement-${period}.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (failure) {
+      setError(
+        failure instanceof Error
+          ? failure.message
+          : "Monatsauszug nicht verfügbar.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }, [userId]);
+  const loadEconomics = useCallback(async () => {
+    try {
+      const result = await api<{
+        configuration: OrganizationCommercialConfig;
+        statement: OrganizationStatement;
+      }>("/api/v1/admin/organization-economics", userId);
+      setData(result);
+      setSubscription(
+        moneyInput(result.configuration.subscription.monthlyAmountMinor),
+      );
+      setAllowance(
+        moneyInput(result.configuration.usage.includedAllowanceMinor),
+      );
+      setLimit(moneyInput(result.configuration.usage.spendingLimitMinor));
+      setSupplyMode(result.configuration.usage.supplyMode);
+      setError(null);
+    } catch (failure) {
+      setError(
+        failure instanceof Error
+          ? failure.message
+          : "Kostenansicht nicht verfügbar.",
+      );
+    }
+  }, [userId]);
+  useEffect(() => void loadEconomics(), [loadEconomics]);
+  if (!data)
+    return (
+      <section
+        className="organization-economics"
+        aria-label="Organisation und Nutzungskosten"
+      >
+        <strong>Organisation & Nutzungskosten</strong>
+        <p>{error ?? "Kostenansicht wird geladen…"}</p>
+      </section>
+    );
+  const { configuration, statement } = data;
+  return (
+    <details className="organization-economics">
+      <summary>
+        <span>
+          <strong>Organisation & Nutzungskosten</strong>
+          <small>
+            {statement.preparedAmountMinor === null
+              ? "Monatsbetrag nicht vollständig messbar"
+              : `${money(statement.preparedAmountMinor, statement.currency)} · Entwurf`}
+          </small>
+        </span>
+        <span className={`budget-state ${statement.budget.newInference}`}>
+          KI:{" "}
+          {statement.budget.newInference === "paused"
+            ? "pausiert"
+            : statement.budget.newInference === "allowed"
+              ? "verfügbar"
+              : "Kosten offen"}
+        </span>
+      </summary>
+      <p>
+        Eine Organisationsvereinbarung für definierte Standorte, Abläufe,
+        Integrationen und Support. Mitarbeitende, Konten, Geräte und Rollen
+        werden nicht einzeln verrechnet.
+      </p>
+      <dl>
+        <div>
+          <dt>Pilot</dt>
+          <dd>{configuration.pilot.status}</dd>
+        </div>
+        <div>
+          <dt>Bereitstellung</dt>
+          <dd>
+            {configuration.deployment.status} ·{" "}
+            {configuration.deployment.hosting}
+          </dd>
+        </div>
+        <div>
+          <dt>Monatsabo</dt>
+          <dd>
+            {money(statement.subscription.amountMinor, statement.currency)}
+          </dd>
+        </div>
+        <div>
+          <dt>Providerkosten</dt>
+          <dd>
+            {money(statement.usage.providerCostMinor, statement.currency)}
+          </dd>
+        </div>
+        <div>
+          <dt>Zusätzliche KI-Nutzung</dt>
+          <dd>
+            {money(statement.usage.additionalUsageMinor, statement.currency)}
+          </dd>
+        </div>
+        <div>
+          <dt>Messbasis</dt>
+          <dd>
+            {statement.usage.sourceCoverage.providerReported} Providerbelege ·{" "}
+            {statement.usage.sourceCoverage.estimated} geschätzt ·{" "}
+            {statement.usage.sourceCoverage.unavailable} nicht verfügbar
+          </dd>
+        </div>
+      </dl>
+      <button
+        type="button"
+        className="secondary"
+        disabled={busy}
+        onClick={() => void downloadStatement()}
+      >
+        Monatsauszug herunterladen
+      </button>
+      {canEdit && (
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            setBusy(true);
+            setError(null);
+            try {
+              const next = structuredClone(configuration);
+              next.subscription.monthlyAmountMinor =
+                parseMoneyInput(subscription);
+              next.usage.includedAllowanceMinor =
+                parseMoneyInput(allowance) ?? 0;
+              next.usage.spendingLimitMinor = parseMoneyInput(limit);
+              next.usage.supplyMode = supplyMode;
+              void api<OrganizationCommercialConfig>(
+                "/api/v1/admin/organization-economics/configuration",
+                userId,
+                {
+                  method: "POST",
+                  body: JSON.stringify({
+                    expectedVersion: configuration.version,
+                    configuration: next,
+                  }),
+                },
+              )
+                .then(() => loadEconomics())
+                .catch((failure: unknown) =>
+                  setError(
+                    failure instanceof Error
+                      ? failure.message
+                      : "Speichern fehlgeschlagen.",
+                  ),
+                )
+                .finally(() => setBusy(false));
+            } catch (failure) {
+              setError(
+                failure instanceof Error
+                  ? failure.message
+                  : "Ungültige Eingabe.",
+              );
+              setBusy(false);
+            }
+          }}
+        >
+          <label>
+            Bereitstellung der KI
+            <select
+              value={supplyMode}
+              onChange={(event) =>
+                setSupplyMode(event.target.value as typeof supplyMode)
+              }
+            >
+              <option value="hosted-provider">Gehosteter Provider</option>
+              <option value="customer-owned-key">
+                API-Schlüssel der Organisation
+              </option>
+              <option value="local-inference">
+                Lokale / air-gapped Inferenz
+              </option>
+            </select>
+          </label>
+          <label>
+            Monatsabo ({statement.currency})
+            <input
+              inputMode="decimal"
+              value={subscription}
+              onChange={(event) => setSubscription(event.target.value)}
+            />
+          </label>
+          <label>
+            Gepoolte KI-Gutschrift ({statement.currency})
+            <input
+              inputMode="decimal"
+              value={allowance}
+              onChange={(event) => setAllowance(event.target.value)}
+            />
+          </label>
+          <label>
+            Ausgabenlimit ({statement.currency}, leer = nicht festgelegt)
+            <input
+              inputMode="decimal"
+              value={limit}
+              onChange={(event) => setLimit(event.target.value)}
+            />
+          </label>
+          <button className="secondary" disabled={busy}>
+            {busy ? "Wird gespeichert…" : "Geprüfte Konfiguration speichern"}
+          </button>
+        </form>
+      )}
+      {error && (
+        <div role="alert" className="assistant-error">
+          {error}
+        </div>
+      )}
+      <small>
+        Zahlungen sind deaktiviert. Ein ausgeschöpftes KI-Budget stoppt nur neue
+        Inferenz; manuelle Arbeit, bestehende Datensätze und bereits
+        freigegebene Zustellungen bleiben verfügbar.
+      </small>
+    </details>
   );
 }
 
@@ -1281,6 +1572,14 @@ export function App() {
             setNotice(message);
           }}
         />
+        {["management", "it", "quality-safety"].includes(
+          snapshot.currentUser.role,
+        ) && (
+          <OrganizationEconomicsPanel
+            userId={userId}
+            canEdit={["management", "it"].includes(snapshot.currentUser.role)}
+          />
+        )}
         <AssistantSurface
           patient={patient}
           userId={userId}

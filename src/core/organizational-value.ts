@@ -689,6 +689,13 @@ export function buildOrganizationalValueReport(
     targetFaithfulness?.status === "measured"
       ? targetFaithfulness.value.factualErrorRate
       : null;
+  const qualityReady =
+    targetDelivery?.status === "measured" &&
+    targetDelivery.value.eligible > 0 &&
+    targetFaithfulness?.status === "measured" &&
+    targetFaithfulness.value.reviewedRecords > 0 &&
+    deliveryFailureRate !== null &&
+    faithfulnessErrorRate !== null;
   const enoughActivities =
     (target?.eligibleActivities ?? 0) >=
     input.definition.targets.minimumEligibleActivities;
@@ -700,7 +707,7 @@ export function buildOrganizationalValueReport(
       faithfulnessErrorRate >
         input.definition.targets.maximumFaithfulnessErrorRate);
   const decision =
-    !comparisonReady || !enoughActivities
+    !comparisonReady || !enoughActivities || !qualityReady
       ? "continue-measuring"
       : direction === "negative"
         ? "do-not-roll-out"
@@ -717,6 +724,10 @@ export function buildOrganizationalValueReport(
   if (!comparisonReady)
     limitations.push(
       "The configured baseline and target were not both measured in the same evidence class.",
+    );
+  if (!qualityReady)
+    limitations.push(
+      "Mandatory delivery and adjudicated faithfulness evidence with non-zero denominators is incomplete.",
     );
   if (input.definition.comparisonDataClass === "synthetic")
     limitations.push(

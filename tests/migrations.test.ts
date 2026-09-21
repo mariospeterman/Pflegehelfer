@@ -23,6 +23,7 @@ describe("immutable migration ledger", () => {
         version: 10,
         name: "010_assistant_client_context_constraints.sql",
       },
+      { version: 11, name: "011_organization_economics.sql" },
     ]);
     expect(
       migrations.every(({ checksum }) => /^[a-f0-9]{64}$/.test(checksum)),

@@ -6,7 +6,7 @@
 
 **Working branch:** `codex/genui-production-showcase`
 
-**Reviewed branch/PR head:** `4595e7c33635f51aac2781d284e065a43b9831ee`
+**Reviewed branch/PR head:** `eed4ac34fd11b2b4ea5709ad302241ec6cc9f210`
 
 **Current conversational implementation:** `43edbdbcf55e920c947cf133f8cead3e207cb9f5`
 
@@ -16,6 +16,8 @@
 > One natural, role-aware coworker; useful model-composed interfaces; reviewed organizational instructions; faithful documentation; enforced permissions; recoverable delivery.
 
 The 20 September outcome-closure input is merged here rather than retained as a second master contract. Its priority correction is binding: Pflegehelfer must reduce avoidable re-entry and coordination burden while preserving reviewed meaning, correct destination delivery and responsibility ownership across shifts. A generic Swiss-branded chat experience, Markdown, air-gap capability or model neutrality alone is not the product outcome.
+
+The 21 September product-closure input is also merged here. Its dependency order is binding: first attempt the configured no-fallback model through the actual conversational read/draft/revision/approval/delivery path, then continue independent G1–G7 work when a provider dependency is unavailable. The user's same-day monetization correction supersedes every earlier named-seat/per-user/minimum-credit formula: active commercial scope is organization-based and never grants or removes a clinical permission.
 
 ## 0. Mission and precedence
 
@@ -51,7 +53,7 @@ At the reviewed head and the current local implementation:
 - The 20 September conversational increment makes the connected probe use the same bounded agent adapter, instruction assembly and tool loop as the PWA; exposes sanitized stage/provider diagnostics; and makes fallback ineligible for connected acceptance. It also preserves harmless patient-workspace dialogue and specific explanatory clarification while validating factual clauses against exact referenced rows. This is implementation evidence, not successful hosted-model scenario acceptance.
 - Directory-v2 manifests and a shared catalog of role/workflow guidance exist. File loading is not yet the complete administrator publication or multi-department product.
 - Production WiCare/careCoach/SAP/device operations are disabled vendor gates; simulator tests do not verify private interfaces.
-- The reviewed source-binding predicate can associate one task's completion state with another task for the same patient and can misread locally negated completion wording. The isolated supplied probe is reproduction evidence only; closure requires the production module and caller regression.
+- The source-binding defect reported on 20 September is fixed in the production verifier and caller regression: completion stays associated with the selected task row and locally negated completion is not asserted positively. This remains a bounded regression, not proof for arbitrary clinical prose and not a reason to grow a phrase whitelist.
 
 Do not reopen already-fixed defects. Inspect newer commits and the local index first. Live service/build health in the user's report is reported evidence until tested. No live-demo password, API key or database URL belongs in this contract, Git or test artifacts.
 
@@ -498,11 +500,28 @@ For organizational culture/team-building questions use appropriately governed vo
 
 Implement one complete synthetic improvement cycle: discover a routing delay → propose a reviewed duty-queue/wording/workflow change → show evidence and diff → run scenarios → authorized owner publishes → limited pilot → compare → keep/rollback. Models propose, not activate permissions or clinical procedures. No autonomous training on confidential private data.
 
+Before any positive rollout suggestion, both delivery and adjudicated-faithfulness evidence must be measured with non-zero denominators, the required sample/coverage must be present, and unresolved material inconsistencies must be absent. Favorable timing alone is `continue measuring`, not a pilot recommendation. Pending, uncertain, rejected and outside-window destinations are disjoint; unknown quality never passes a guardrail.
+
 TimesFM or other forecasting remains optional later for aggregate workloads/occupancy/task volumes if reliable history and backtesting beat simple baselines. Do not install a forecasting service now, infer patient prognosis or score employees under this project closure.
+
+### 20.2 Organization agreement, pooled AI usage and reviewable statements
+
+Commercial entitlements and security roles are separate. No employee, named user, account, device, login, presence signal, acting role or station is a charging unit, and changing the commercial package never changes clinical access. All previous AI-seat/per-user and minimum-credited-to-seat formulas are superseded, including their illustrative CHF 100/150/200 figures.
+
+The configurable commercial lifecycle is:
+
+1. a paid discovery and implementation pilot that assesses the actual workflows, available integrations and baseline, agrees bounded scope, delivers the pilot and evaluates measurable benefit;
+2. one-time deployment/onboarding for managed cloud or on-premises/air-gapped installation, with integration, migration, training and necessary hardware separately and transparently quoted;
+3. one monthly organization subscription covering its contract-defined sites, workflows, integrations, maintenance and support—not every institution at one assumed price; and
+4. additional pooled organization-level AI/speech usage, using actual provider-reported units, effective-dated rates and any disclosed service margin.
+
+Provider receipts retain input/output/cache token categories and applicable speech units. Estimated and unavailable usage remain labelled; unknown is never zero. A customer-owned API key may show usage but Pflegehelfer does not charge the same provider consumption again. Local/air-gapped inference has no fictitious cloud API charge: agreed compute, maintenance and support belong in explicit contract lines. Integer minor units and explicit currency/effective dates are mandatory; payment collection and autonomous invoicing remain disabled.
+
+Authorized management/IT/quality views show scope, usage provenance, pooled allowance, provider cost, disclosed margin, alerts, configurable spending limit and a review-draft monthly statement. Exhausting a measured hard limit may pause only new paid inference. Manual work, existing records, export and delivery/recovery of already-approved commands remain available. The ledger is idempotent per provider receipt and tenant scoped; transport retries, notes, tags and multiple participants do not multiply customer usage.
 
 ## 21. Real model, ASR and TTS acceptance
 
-The currently documented runtime is fallback. Resolve the replacement-key/accepted local-runtime prerequisite early with authorized access. Distinguish authentication, unavailable credit, rate limiting, network errors, unsupported API/schema and actual model incompetence. Do not repeat a credit failure indefinitely or generalize from an old tiny model to all local inference.
+Use the currently configured legitimate server-side key for bounded synthetic tests; do not expose it or demand a replacement solely because older evidence described a different incident. Distinguish authentication, unavailable credit, rate limiting, network errors, unsupported API/schema and actual model incompetence. Do not repeat a credit failure indefinitely or generalize from an old tiny model to all local inference.
 
 Connected acceptance has two explicit levels. The **transport/model smoke** uses the production model adapter and bounded runtime for a tiny nonclinical text turn followed by one authorized synthetic read. The separate **application conversation acceptance** uses the normal backend/PWA path and isolated real stores for clarification, draft persistence, correction, review, delivery and read-back. A successful smoke records `smoke-tested`; it does not set `scenario-accepted` or production approval. Deterministic substitution, a legacy extraction planner or any fallback result fails connected acceptance.
 
@@ -570,13 +589,14 @@ Measure real human effort in the demonstration: repeated typing, navigation away
 
 Do not rebuild everything in one unreviewable change. The autonomous session continues across these complete slices. Internal scope remains binding, but one unavailable external key must not freeze unrelated engineering.
 
-| Pass                                | Dependency-ordered output                                                                                                                                                                                                                               | Existing gates |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
-| A — acceptance parity and diagnosis | Same-runtime transport smoke plus authorized read, safe classified diagnostics, fallback failure, replacement credential/local runtime prerequisite and a separately recorded full application conversation result                                      | G0/G4          |
-| B — complete measured ward loop     | Provider import → handover/plan → interruption → same-draft correction → selected approval → team communication → PostgreSQL/Medplum/provider read-back → defer/outgoing addendum/receiving acceptance, with report-once metrics and visible exceptions | G1/G2/G4/G6/G7 |
-| C — close institution/collaboration | Shared ACL threads, audience publication, topics/files, governed role/station publication, OIDC/BFF/RLS, second-site operation, value report/completeness review and one reviewed improvement cycle                                                     | G3/G5/G6       |
-| D — close operating/release proof   | Isolated two-instance/worker concurrency, previous-release migration and full PostgreSQL/Medplum/files/config restore, retention/egress, final visual/performance/model/audio evidence and clean integrated CI                                          | G1/G4/G5/G7    |
-| Release review                      | Exact final implementation SHA, clean artifact identities, current matrix/dossier, all remaining EXTERNAL owners/actions, merge recommendation and repository-owner approval                                                                            | G0–G7          |
+| Pass                                    | Dependency-ordered output                                                                                                                                                                                                                               | Existing gates |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
+| A — acceptance parity and diagnosis     | Same-runtime transport smoke plus authorized read, safe classified diagnostics, fallback failure, replacement credential/local runtime prerequisite and a separately recorded full application conversation result                                      | G0/G4          |
+| B — complete measured ward loop         | Provider import → handover/plan → interruption → same-draft correction → selected approval → team communication → PostgreSQL/Medplum/provider read-back → defer/outgoing addendum/receiving acceptance, with report-once metrics and visible exceptions | G1/G2/G4/G6/G7 |
+| C — close institution/collaboration     | Shared ACL threads, audience publication, topics/files, governed role/station publication, OIDC/BFF/RLS, second-site operation, value report/completeness review and one reviewed improvement cycle                                                     | G3/G5/G6       |
+| D — evidence and organization economics | Persisted performance events, evidence-complete report/UI/export, paid-pilot/deployment/organization-subscription configuration, pooled provider-reported AI/speech usage, limits and review-draft monthly statement; no payment collection             | G5/G6/G7       |
+| E — close operating/release proof       | Isolated two-instance/worker concurrency, previous-release migration and full PostgreSQL/Medplum/files/config restore, retention/egress, final visual/performance/model/audio evidence and clean integrated CI                                          | G1/G4/G5/G7    |
+| Release review                          | Exact final implementation SHA, clean artifact identities, current matrix/dossier, all remaining EXTERNAL owners/actions, merge recommendation and repository-owner approval                                                                            | G0–G7          |
 
 Start provider/clinical/security stakeholder prerequisites in parallel only with authorization. Do not make every future feature a prerequisite for finding out whether the natural conversation works. Conversely, after proving the conversation, continue closing the remaining agreed internal scope rather than declaring the full product complete.
 
@@ -599,6 +619,8 @@ Preserve inherited acceptance IDs and map the following closures into them; thes
 **Files and learning:** real upload/quarantine/view/search/withdrawal, safe previews and expired access, uploaded prompt injection cannot call unauthorized tools, staff/personnel file isolation, one work event reused without duplicates, actual taxonomy filters, one human-approved improvement/pilot/rollback with simulated metrics clearly labelled.
 
 **Organizational value:** same-definition comparison of actual available alternatives; unknown baseline, negative improvement, incomplete samples, duplicate/retried and corrected events, reopened work, role/time-zone changes, failed workflows, pending/rejected/uncertain delivery and unknown costs. Assert that observed, customer-reported, estimated and synthetic results never merge; review/correction/failure/reconciliation burden is included; private-chat/presence/care-timer data is absent; and opportunity value is never relabelled cash saving or billing.
+
+**Organization economics:** pilot/deployment/subscription separation; no user/seat/device/role charging fields; provider-reported token/cache/speech units with effective-dated integer-minor-unit rates; pooled allowance/alerts/limit; BYO-key no-double-charge; local inference no cloud fee; duplicate receipts/concurrent limits/missing usage; budget exhaustion blocks only new inference and never manual access or approved delivery; statement remains review-draft with payment disabled.
 
 **AI/audio:** successfully configured model through the UI, held-out texts, second model conformance without permission changes, real microphone ASR review, TTS matching readout, failures/refusal/rate limits/timeouts/unsupported schema and budget caps; fixtures remain separate from real-model results.
 
