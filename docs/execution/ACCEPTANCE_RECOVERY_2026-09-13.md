@@ -848,3 +848,14 @@ Use a dedicated database/project/provider namespace for destructive
 PostgreSQL/Medplum/provider proofs. Do not reset the preserved demonstration
 stores. Re-run the progressive real model test only after the external credit
 or approved-local-runtime condition changes; do not count fallback.
+
+Publication evidence: concurrent remote README/About commits were merged by a
+normal merge, not rebased or force-pushed. Their unformatted README initially
+caused GitHub Actions run `35647626912` to stop at the formatting gate; this
+failed run is retained rather than hidden. Head
+`09ab4ddabcf03fda3d1804bd4a8c27e1d272852b` formatted that merged file without
+changing implementation behavior. GitHub Actions run `35647759639` then passed
+install, `pnpm verify`, security, the complete memory-profile Playwright matrix
+and operations in 3m38s. This publication result does not change implementation
+SHA `f7ee5e7ebb71038733a943a35f376b05c972158a` or promote any PARTIAL/external
+gate.
