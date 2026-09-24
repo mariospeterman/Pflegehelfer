@@ -12,6 +12,7 @@ import type {
 } from "../core/organization-economics";
 import {
   assistantClientContextHeaders,
+  createAssistantContextBindingCoordinator,
   rotateAssistantClientContext,
 } from "./assistant-context";
 import {
@@ -1058,7 +1059,9 @@ export function App() {
     return stored === "light" || stored === "dark" ? stored : "system";
   });
   const generation = useRef(0);
-  const boundAssistantPatientId = useRef<string | null | undefined>(undefined);
+  const assistantContextBinding = useRef(
+    createAssistantContextBindingCoordinator(),
+  );
 
   const load = useCallback(
     async (selectedPatientOverride?: string | null) => {
@@ -1074,13 +1077,15 @@ export function App() {
           data.patients.some((item) => item.id === requestedPatientId)
             ? requestedPatientId
             : null;
-        if (boundAssistantPatientId.current !== preferredPatientId) {
-          await api("/api/v1/assistant/context", userId, {
-            method: "POST",
-            body: JSON.stringify({ patientId: preferredPatientId }),
-          });
-          boundAssistantPatientId.current = preferredPatientId;
-        }
+        await assistantContextBinding.current.ensure(
+          { userId, patientId: preferredPatientId },
+          () =>
+            api("/api/v1/assistant/context", userId, {
+              method: "POST",
+              body: JSON.stringify({ patientId: preferredPatientId }),
+            }),
+        );
+        if (current !== generation.current) return;
         const conversationData = await api<{
           conversations: ConversationDescriptor[];
         }>("/api/v1/assistant/conversation", userId);
@@ -1300,7 +1305,7 @@ export function App() {
         method: "POST",
         body: JSON.stringify({ patientId: id }),
       });
-      boundAssistantPatientId.current = id;
+      assistantContextBinding.current.markBound({ userId, patientId: id });
       if (requestGeneration !== generation.current || requestUserId !== userId)
         return false;
       const conversationData = await api<{
@@ -1335,7 +1340,7 @@ export function App() {
   const changeUser = (next: string) => {
     generation.current += 1;
     rotateAssistantClientContext();
-    boundAssistantPatientId.current = undefined;
+    assistantContextBinding.current.reset();
     setContextBusy(false);
     sessionStorage.setItem("pfh-demo-user", next);
     sessionStorage.removeItem("pfh-patient-context");
@@ -1607,7 +1612,10 @@ export function App() {
             online={connected}
             onExecuted={async (message, activePatientId) => {
               if (activePatientId) {
-                boundAssistantPatientId.current = activePatientId;
+                assistantContextBinding.current.markBound({
+                  userId,
+                  patientId: activePatientId,
+                });
                 setSelectedPatientId(activePatientId);
                 sessionStorage.setItem("pfh-patient-context", activePatientId);
               }
@@ -1654,7 +1662,10 @@ export function App() {
                   method: "POST",
                   body: JSON.stringify({ patientId: activePatientId }),
                 });
-                boundAssistantPatientId.current = activePatientId;
+                assistantContextBinding.current.markBound({
+                  userId,
+                  patientId: activePatientId,
+                });
                 setSelectedPatientId(activePatientId);
                 sessionStorage.setItem("pfh-patient-context", activePatientId);
               }
