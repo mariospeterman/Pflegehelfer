@@ -754,6 +754,11 @@ export class ModelGateway {
   private readonly hostedMaxCallsPerHour: number;
   private readonly hostedCallTimes: number[] = [];
   private verifiedAt: number | null = null;
+  private lastSyntheticFailure: {
+    stage: AgentFailureDiagnostic["stage"];
+    code: AgentFailureDiagnostic["code"];
+    at: string;
+  } | null = null;
 
   agentMode(): AiRuntimeMode {
     return this.mode;
@@ -1294,7 +1299,24 @@ export class ModelGateway {
           : this.mode === "deterministic"
             ? "deterministic"
             : "none";
-    if (!["hosted-test", "local-openai"].includes(this.mode))
+    if (!["hosted-test", "local-openai"].includes(this.mode)) {
+      const failure = agentFailure({
+        stage: "configuration",
+        code: "not-configured",
+        message: "agent-model-not-configured",
+        requestedModel: this.model,
+        runtimeMode: this.mode,
+        adapter,
+        apiVersion,
+        configurationDigest,
+        promptDigest: sha256("synthetic-agent-acceptance"),
+        started,
+      });
+      this.lastSyntheticFailure = {
+        stage: failure.stage,
+        code: failure.code,
+        at: new Date().toISOString(),
+      };
       return {
         ready: false,
         mode: this.mode,
@@ -1309,19 +1331,9 @@ export class ModelGateway {
         fallbackUsed: false,
         configurationDigest,
         probes: [],
-        failure: agentFailure({
-          stage: "configuration",
-          code: "not-configured",
-          message: "agent-model-not-configured",
-          requestedModel: this.model,
-          runtimeMode: this.mode,
-          adapter,
-          apiVersion,
-          configurationDigest,
-          promptDigest: sha256("synthetic-agent-acceptance"),
-          started,
-        }),
+        failure,
       };
+    }
 
     const context = {
       organizationId: "synthetic-acceptance-organization",
@@ -1387,6 +1399,11 @@ export class ModelGateway {
           promptDigest: sha256("synthetic-transport-smoke"),
           started: smokeStarted,
         });
+      this.lastSyntheticFailure = {
+        stage: failure.stage,
+        code: failure.code,
+        at: new Date().toISOString(),
+      };
       return {
         ready: false,
         mode: this.mode,
@@ -1470,7 +1487,16 @@ export class ModelGateway {
           started: readStarted,
         }));
     const ready = smokeReady && readReady;
-    if (ready) this.verifiedAt = Date.now();
+    if (ready) {
+      this.verifiedAt = Date.now();
+      this.lastSyntheticFailure = null;
+    } else if (failure) {
+      this.lastSyntheticFailure = {
+        stage: failure.stage,
+        code: failure.code,
+        at: new Date().toISOString(),
+      };
+    }
     return {
       ready,
       mode: this.mode,
@@ -1556,7 +1582,9 @@ export class ModelGateway {
         message: response.ok
           ? this.verifiedAt
             ? "Sprachmodell im echten Agent-Transport und autorisierten Lesepfad bestätigt; die vollständige Anwendungsszenario-Akzeptanz steht separat aus."
-            : "Sprachmodell-Gateway erreichbar; echter synthetischer Strukturierungstest steht noch aus."
+            : this.lastSyntheticFailure
+              ? `Sprachmodell-Gateway erreichbar; letzter echter synthetischer Test fehlgeschlagen (${this.lastSyntheticFailure.code}, Stufe ${this.lastSyntheticFailure.stage}, ${this.lastSyntheticFailure.at}). Fallback zählt nicht als Akzeptanz.`
+              : "Sprachmodell-Gateway erreichbar; echter synthetischer Strukturierungstest steht noch aus."
           : `Sprachmodell-Gateway antwortet mit HTTP ${response.status}.`,
       };
     } catch {

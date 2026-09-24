@@ -75,6 +75,16 @@ import {
   InMemoryCommercialStore,
   type CommercialStore,
 } from "../infrastructure/commercial-store.js";
+import {
+  workspaceAudienceSchema,
+  workspaceProfileFieldSchema,
+  workspaceProjectLinkSchema,
+  type WorkspaceAudience,
+  type WorkspaceAttachment,
+  type WorkspaceComment,
+  type WorkspaceProfileProposal,
+  type WorkspaceProject,
+} from "../core/workspace.js";
 
 const roleSchema = z.enum([
   "care-assistant",
@@ -1194,7 +1204,12 @@ export function buildApp(
             path: request.url.split("?", 1)[0],
             body: request.body ?? null,
           })
-        : JSON.stringify(request.body ?? null);
+        : route === "/api/v1/workspace/attachments"
+          ? canonicalJson({
+              url: request.url,
+              contentHash: request.headers["x-content-sha256"] ?? null,
+            })
+          : JSON.stringify(request.body ?? null);
     const requestHash = createHash("sha256")
       .update(requestHashInput)
       .digest("hex");
@@ -1631,6 +1646,678 @@ export function buildApp(
             }
           : null,
     };
+  });
+
+  const workspaceAccess = (request: FastifyRequest) => {
+    const actor = service.user(userId(request));
+    const snapshot = service.snapshot(actor.id, actor.defaultPurpose);
+    return { actor, snapshot };
+  };
+  const workspaceCommand = (request: FastifyRequest) => {
+    const command = requestCommandKeys.get(request);
+    if (!command)
+      throw new DomainError(
+        "INVALID_STATE",
+        "Für diese Änderung fehlt die Befehlsbindung.",
+        409,
+      );
+    return { commandKey: command.key, requestHash: command.requestHash };
+  };
+  const requireWorkspacePatient = (
+    snapshot: ReturnType<PflegehelferService["snapshot"]>,
+    patientId: string,
+  ) => {
+    const patient = snapshot.patients.find((item) => item.id === patientId);
+    if (!patient)
+      throw new DomainError(
+        "AUTH_DENIED",
+        "Dieser Patientenkontext ist nicht freigegeben.",
+        403,
+      );
+    return patient;
+  };
+  const patientTeamMemberIds = (
+    patientId: string,
+    users: ReturnType<PflegehelferService["snapshot"]>["users"],
+  ) =>
+    users
+      .filter((candidate) => {
+        try {
+          return service
+            .snapshot(candidate.id, candidate.defaultPurpose)
+            .patients.some((patient) => patient.id === patientId);
+        } catch {
+          return false;
+        }
+      })
+      .map((candidate) => candidate.id);
+  const validateTopicIds = (topicIds: readonly string[]) => {
+    const governed = new Set(
+      siteConfiguration.governedTopics.map((topic) => topic.id),
+    );
+    if (topicIds.some((topicId) => !governed.has(topicId)))
+      throw new DomainError(
+        "VALIDATION",
+        "Mindestens ein Thema ist nicht freigegeben.",
+        400,
+      );
+  };
+  const invalidateWorkspace = async (
+    actorIds: readonly string[],
+    payload: Record<string, unknown>,
+  ) => {
+    await Promise.all(
+      [...new Set(actorIds)].map((actorId) =>
+        operationalStore.appendUiInvalidation(actorId, payload),
+      ),
+    );
+    publishInvalidation();
+  };
+
+  app.get("/api/v1/status", async (request) => {
+    const { actor, snapshot } = workspaceAccess(request);
+    const session = await operationalStore.getOrStartSession(
+      actor.id,
+      actor.role,
+    );
+    const [postgresqlReady, medplum, model, providers, delivery] =
+      await Promise.all([
+        operationalStore.health(),
+        workspace.status(),
+        models.status(),
+        service.providerRegistry.status(service.providerProfile),
+        operationalStore.deliveryDiagnostics(),
+      ]);
+    return {
+      capturedAt: new Date().toISOString(),
+      api: { reachable: true, authenticated: true },
+      session: {
+        state: session.status,
+        actorId: actor.id,
+        role: actor.role,
+        startedAt: session.startedAt,
+        expiresAt: new Date(
+          new Date(session.startedAt).getTime() +
+            siteConfiguration.sessionTtlHours * 60 * 60_000,
+        ).toISOString(),
+      },
+      stores: { postgresql: { ready: postgresqlReady }, medplum },
+      ai: { model, asr: asr.status(), tts: tts.status() },
+      delivery,
+      providers: providers.map((provider) => ({
+        provider: provider.provider,
+        profile: provider.profile,
+        operationalStatus: provider.operationalStatus,
+        health: provider.health?.status ?? null,
+      })),
+      visibleProviderHealth: snapshot.providerHealth,
+    };
+  });
+
+  app.get("/api/v1/workspace/comments", async (request) => {
+    const { actor, snapshot } = workspaceAccess(request);
+    const query = z
+      .object({
+        patientId: z.string().min(1).max(120).optional(),
+        topicId: z.string().min(1).max(120).optional(),
+        scope: z.enum(["all", "direct"]).default("all"),
+      })
+      .strict()
+      .parse(request.query);
+    if (query.patientId) requireWorkspacePatient(snapshot, query.patientId);
+    if (query.topicId) validateTopicIds([query.topicId]);
+    const comments = await operationalStore.listWorkspaceComments({
+      actorId: actor.id,
+      visiblePatientIds: snapshot.patients.map((patient) => patient.id),
+      ...(query.patientId ? { patientId: query.patientId } : {}),
+      ...(query.scope === "direct" ? { patientId: null } : {}),
+      ...(query.topicId ? { topicId: query.topicId } : {}),
+    });
+    return { comments };
+  });
+
+  app.get("/api/v1/workspace/team-members", (request) => {
+    const { snapshot } = workspaceAccess(request);
+    const query = z
+      .object({ patientId: z.string().min(1).max(120) })
+      .strict()
+      .parse(request.query);
+    requireWorkspacePatient(snapshot, query.patientId);
+    const memberIds = new Set(
+      patientTeamMemberIds(query.patientId, snapshot.users),
+    );
+    return {
+      members: snapshot.users
+        .filter((candidate) => memberIds.has(candidate.id))
+        .map((candidate) => ({
+          id: candidate.id,
+          displayName: candidate.displayName,
+          role: candidate.role,
+        })),
+    };
+  });
+
+  app.post("/api/v1/workspace/comments", async (request, reply) => {
+    const { actor, snapshot } = workspaceAccess(request);
+    const command = workspaceCommand(request);
+    const body = z
+      .object({
+        patientId: z.string().min(1).max(120).nullable(),
+        audienceKind: z.enum(["patient-team", "direct"]),
+        body: z.string().trim().min(1).max(2000),
+        recipientIds: z.array(z.string().min(1).max(120)).max(12).default([]),
+        recipientRoleIds: z.array(roleSchema).max(12).default([]),
+        topicIds: z.array(z.string().min(1).max(120)).max(12).default([]),
+        parentId: z.uuid().nullable().default(null),
+      })
+      .strict()
+      .parse(request.body);
+    validateTopicIds(body.topicIds);
+    let audience: WorkspaceAudience;
+    if (body.audienceKind === "patient-team") {
+      if (!body.patientId)
+        throw new DomainError(
+          "VALIDATION",
+          "Ein Behandlungsteam-Kommentar benötigt einen Patientenkontext.",
+          400,
+        );
+      requireWorkspacePatient(snapshot, body.patientId);
+      const memberIds = patientTeamMemberIds(body.patientId, snapshot.users);
+      if (
+        body.recipientIds.some(
+          (recipientId) => !memberIds.includes(recipientId),
+        )
+      )
+        throw new DomainError(
+          "AUTH_DENIED",
+          "Mindestens eine erwähnte Person hat keinen Zugriff auf diesen Kontext.",
+          403,
+        );
+      const memberRoles = new Set(
+        snapshot.users
+          .filter((candidate) => memberIds.includes(candidate.id))
+          .map((candidate) => candidate.role),
+      );
+      if (
+        body.recipientRoleIds.some(
+          (recipientRole) => !memberRoles.has(recipientRole),
+        )
+      )
+        throw new DomainError(
+          "AUTH_DENIED",
+          "Mindestens eine erwähnte Rolle gehört nicht zum freigegebenen Behandlungsteam.",
+          403,
+        );
+      audience = workspaceAudienceSchema.parse({
+        kind: "patient-team",
+        memberIds,
+      });
+    } else {
+      if (body.patientId !== null || body.recipientIds.length !== 1)
+        throw new DomainError(
+          "VALIDATION",
+          "Eine Direktnachricht benötigt genau eine ausgewählte Person und keinen Patientenkontext.",
+          400,
+        );
+      const recipient = snapshot.users.find(
+        (candidate) => candidate.id === body.recipientIds[0],
+      );
+      if (!recipient || recipient.id === actor.id)
+        throw new DomainError(
+          "AUTH_DENIED",
+          "Diese Person ist für eine Direktnachricht nicht auswählbar.",
+          403,
+        );
+      audience = workspaceAudienceSchema.parse({
+        kind: "direct",
+        memberIds: [actor.id, recipient.id],
+      });
+    }
+    const createdAt = new Date().toISOString();
+    const record: WorkspaceComment = {
+      id: randomUUID(),
+      patientId: body.patientId,
+      authorId: actor.id,
+      body: body.body,
+      audience,
+      recipientIds: body.recipientIds,
+      recipientRoleIds: body.recipientRoleIds,
+      topicIds: body.topicIds,
+      parentId: body.parentId,
+      createdAt,
+      unread: false,
+    };
+    const result = await operationalStore.createWorkspaceComment({
+      record,
+      ...command,
+    });
+    await invalidateWorkspace(audience.memberIds, {
+      kind: "workspace-comment",
+      commentId: result.value.id,
+    });
+    return reply.code(result.replayed ? 200 : 201).send(result);
+  });
+
+  app.post("/api/v1/workspace/comments/:commentId/read", async (request) => {
+    const { actor, snapshot } = workspaceAccess(request);
+    const { commentId } = z
+      .object({ commentId: z.uuid() })
+      .strict()
+      .parse(request.params);
+    const visible = await operationalStore.listWorkspaceComments({
+      actorId: actor.id,
+      visiblePatientIds: snapshot.patients.map((patient) => patient.id),
+    });
+    if (!visible.some((comment) => comment.id === commentId))
+      throw new DomainError("NOT_FOUND", "Kommentar nicht gefunden.", 404);
+    await operationalStore.markWorkspaceCommentRead(actor.id, commentId);
+    return { commentId, read: true };
+  });
+
+  app.get("/api/v1/workspace/attachments", async (request) => {
+    const { actor, snapshot } = workspaceAccess(request);
+    const query = z
+      .object({
+        patientId: z.string().min(1).max(120).optional(),
+        topicId: z.string().min(1).max(120).optional(),
+      })
+      .strict()
+      .parse(request.query);
+    if (query.patientId) requireWorkspacePatient(snapshot, query.patientId);
+    if (query.topicId) validateTopicIds([query.topicId]);
+    const attachments = await operationalStore.listWorkspaceAttachments({
+      actorId: actor.id,
+      visiblePatientIds: snapshot.patients.map((patient) => patient.id),
+      ...(query.patientId ? { patientId: query.patientId } : {}),
+      ...(query.topicId ? { topicId: query.topicId } : {}),
+    });
+    return { attachments };
+  });
+
+  app.post("/api/v1/workspace/attachments", async (request, reply) => {
+    const { actor, snapshot } = workspaceAccess(request);
+    const command = workspaceCommand(request);
+    const query = z
+      .object({
+        patientId: z.string().min(1).max(120).optional(),
+        audienceKind: z.enum(["private", "patient-team"]).default("private"),
+        topicIds: z.string().max(500).optional(),
+      })
+      .strict()
+      .parse(request.query);
+    const topicIds = query.topicIds
+      ? query.topicIds.split(",").filter(Boolean)
+      : [];
+    validateTopicIds(topicIds);
+    if (query.patientId) requireWorkspacePatient(snapshot, query.patientId);
+    if (query.audienceKind === "patient-team" && !query.patientId)
+      throw new DomainError(
+        "VALIDATION",
+        "Eine Teamdatei benötigt einen Patientenkontext.",
+        400,
+      );
+    const file = await request.file();
+    if (!file)
+      throw new DomainError("VALIDATION", "Keine Datei ausgewählt.", 400);
+    const bytes = await file.toBuffer();
+    try {
+      const sha256 = createHash("sha256").update(bytes).digest("hex");
+      if (request.headers["x-content-sha256"] !== sha256)
+        throw new DomainError(
+          "VALIDATION",
+          "Dateiinhalt stimmt nicht mit der gebundenen Prüfsumme überein.",
+          400,
+        );
+      const signatureMatches =
+        (file.mimetype === "application/pdf" &&
+          bytes.subarray(0, 5).toString("ascii") === "%PDF-") ||
+        (file.mimetype === "image/png" &&
+          bytes
+            .subarray(0, 8)
+            .equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) ||
+        (file.mimetype === "image/jpeg" &&
+          bytes[0] === 0xff &&
+          bytes[1] === 0xd8 &&
+          bytes[2] === 0xff) ||
+        (file.mimetype === "text/plain" && !bytes.includes(0));
+      if (!signatureMatches)
+        throw new DomainError(
+          "VALIDATION",
+          "Dateityp und Inhaltssignatur stimmen nicht überein.",
+          400,
+        );
+      const mediaType = z
+        .enum(["application/pdf", "image/png", "image/jpeg", "text/plain"])
+        .parse(file.mimetype);
+      const memberIds =
+        query.audienceKind === "patient-team"
+          ? patientTeamMemberIds(query.patientId!, snapshot.users)
+          : [actor.id];
+      const audience = workspaceAudienceSchema.parse({
+        kind: query.audienceKind,
+        memberIds,
+      });
+      const safeName =
+        file.filename.split(/[\\/]/).at(-1)?.slice(0, 180) || "Datei";
+      const record: WorkspaceAttachment = {
+        id: randomUUID(),
+        patientId: query.patientId ?? null,
+        uploadedBy: actor.id,
+        fileName: safeName,
+        mediaType,
+        size: bytes.byteLength,
+        sha256,
+        audience,
+        topicIds,
+        state: "available",
+        createdAt: new Date().toISOString(),
+        withdrawnAt: null,
+      };
+      const result = await operationalStore.storeWorkspaceAttachment({
+        record,
+        bytes,
+        ...command,
+      });
+      await invalidateWorkspace(memberIds, {
+        kind: "workspace-attachment",
+        attachmentId: result.value.id,
+      });
+      return reply.code(result.replayed ? 200 : 201).send(result);
+    } finally {
+      bytes.fill(0);
+    }
+  });
+
+  app.get(
+    "/api/v1/workspace/attachments/:attachmentId/content",
+    async (request, reply) => {
+      const { actor, snapshot } = workspaceAccess(request);
+      const { attachmentId } = z
+        .object({ attachmentId: z.uuid() })
+        .strict()
+        .parse(request.params);
+      const content = await operationalStore.loadWorkspaceAttachment(
+        actor.id,
+        attachmentId,
+        snapshot.patients.map((patient) => patient.id),
+      );
+      if (!content || content.record.state !== "available")
+        throw new DomainError("NOT_FOUND", "Datei nicht gefunden.", 404);
+      return reply
+        .header("content-type", content.record.mediaType)
+        .header("cache-control", "no-store")
+        .header("x-content-type-options", "nosniff")
+        .header(
+          "content-disposition",
+          `inline; filename*=UTF-8''${encodeURIComponent(content.record.fileName)}`,
+        )
+        .send(Buffer.from(content.bytes));
+    },
+  );
+
+  app.post(
+    "/api/v1/workspace/attachments/:attachmentId/withdraw",
+    async (request) => {
+      const { actor, snapshot } = workspaceAccess(request);
+      const command = workspaceCommand(request);
+      const { attachmentId } = z
+        .object({ attachmentId: z.uuid() })
+        .strict()
+        .parse(request.params);
+      const visible = await operationalStore.loadWorkspaceAttachment(
+        actor.id,
+        attachmentId,
+        snapshot.patients.map((patient) => patient.id),
+      );
+      if (!visible)
+        throw new DomainError("NOT_FOUND", "Datei nicht gefunden.", 404);
+      const result = await operationalStore.withdrawWorkspaceAttachment({
+        actorId: actor.id,
+        attachmentId,
+        ...command,
+      });
+      await invalidateWorkspace(result.value.audience.memberIds, {
+        kind: "workspace-attachment-withdrawn",
+        attachmentId,
+      });
+      return result;
+    },
+  );
+
+  app.get("/api/v1/workspace/projects", async (request) => {
+    const { actor, snapshot } = workspaceAccess(request);
+    const projects = await operationalStore.listWorkspaceProjects(actor.id);
+    const allowedTaskIds = new Set(snapshot.tasks.map((task) => task.id));
+    const comments = await operationalStore.listWorkspaceComments({
+      actorId: actor.id,
+      visiblePatientIds: snapshot.patients.map((patient) => patient.id),
+    });
+    const allowedCommentIds = new Set(comments.map((comment) => comment.id));
+    const attachments = await operationalStore.listWorkspaceAttachments({
+      actorId: actor.id,
+      visiblePatientIds: snapshot.patients.map((patient) => patient.id),
+    });
+    const allowedAttachmentIds = new Set(
+      attachments
+        .filter((attachment) => attachment.state === "available")
+        .map((attachment) => attachment.id),
+    );
+    return {
+      projects: projects.map((project) => ({
+        ...project,
+        links: project.links.filter((link) =>
+          link.kind === "task"
+            ? allowedTaskIds.has(link.id)
+            : link.kind === "comment"
+              ? allowedCommentIds.has(link.id)
+              : allowedAttachmentIds.has(link.id),
+        ),
+      })),
+    };
+  });
+
+  app.post("/api/v1/workspace/projects", async (request, reply) => {
+    const { actor, snapshot } = workspaceAccess(request);
+    const command = workspaceCommand(request);
+    const body = z
+      .object({
+        title: z.string().trim().min(3).max(160),
+        purpose: z.string().trim().min(3).max(500),
+        memberIds: z.array(z.string().min(1).max(120)).max(40),
+      })
+      .strict()
+      .parse(request.body);
+    const directoryIds = new Set(snapshot.users.map((user) => user.id));
+    if (body.memberIds.some((memberId) => !directoryIds.has(memberId)))
+      throw new DomainError(
+        "AUTH_DENIED",
+        "Mindestens ein Projektmitglied ist nicht freigegeben.",
+        403,
+      );
+    const memberIds = [...new Set([actor.id, ...body.memberIds])];
+    const now = new Date().toISOString();
+    const record: WorkspaceProject = {
+      id: randomUUID(),
+      title: body.title,
+      purpose: body.purpose,
+      ownerId: actor.id,
+      memberIds,
+      status: "active",
+      links: [],
+      version: 1,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const result = await operationalStore.createWorkspaceProject({
+      record,
+      ...command,
+    });
+    await invalidateWorkspace(memberIds, {
+      kind: "workspace-project",
+      projectId: record.id,
+    });
+    return reply.code(result.replayed ? 200 : 201).send(result);
+  });
+
+  app.post("/api/v1/workspace/projects/:projectId/links", async (request) => {
+    const { actor, snapshot } = workspaceAccess(request);
+    const command = workspaceCommand(request);
+    const { projectId } = z
+      .object({ projectId: z.uuid() })
+      .strict()
+      .parse(request.params);
+    const body = z
+      .object({
+        expectedVersion: z.number().int().positive(),
+        link: workspaceProjectLinkSchema,
+      })
+      .strict()
+      .parse(request.body);
+    let linkAllowed = false;
+    if (body.link.kind === "task")
+      linkAllowed = snapshot.tasks.some((task) => task.id === body.link.id);
+    if (body.link.kind === "comment")
+      linkAllowed = (
+        await operationalStore.listWorkspaceComments({
+          actorId: actor.id,
+          visiblePatientIds: snapshot.patients.map((patient) => patient.id),
+        })
+      ).some((comment) => comment.id === body.link.id);
+    if (body.link.kind === "attachment")
+      linkAllowed = Boolean(
+        await operationalStore.loadWorkspaceAttachment(
+          actor.id,
+          body.link.id,
+          snapshot.patients.map((patient) => patient.id),
+        ),
+      );
+    if (!linkAllowed)
+      throw new DomainError(
+        "AUTH_DENIED",
+        "Der verknüpfte Datensatz ist nicht freigegeben.",
+        403,
+      );
+    const result = await operationalStore.linkWorkspaceProject({
+      actorId: actor.id,
+      projectId,
+      expectedVersion: body.expectedVersion,
+      link: body.link,
+      ...command,
+    });
+    await invalidateWorkspace(result.value.memberIds, {
+      kind: "workspace-project-linked",
+      projectId,
+    });
+    return result;
+  });
+
+  app.get("/api/v1/workspace/profile", async (request) => {
+    const { snapshot } = workspaceAccess(request);
+    const query = z
+      .object({ patientId: z.string().min(1).max(120) })
+      .strict()
+      .parse(request.query);
+    requireWorkspacePatient(snapshot, query.patientId);
+    const fields = await operationalStore.listWorkspaceProfileFields([
+      query.patientId,
+    ]);
+    return { fields };
+  });
+
+  app.post("/api/v1/workspace/profile/prepare", async (request, reply) => {
+    const { actor, snapshot } = workspaceAccess(request);
+    if (!["registered-nurse", "administration"].includes(actor.role))
+      throw new DomainError(
+        "AUTH_DENIED",
+        "Profiländerungen sind für diese Rolle nicht freigegeben.",
+        403,
+      );
+    const command = workspaceCommand(request);
+    const body = z
+      .object({
+        patientId: z.string().min(1).max(120),
+        fieldKey: workspaceProfileFieldSchema.shape.fieldKey,
+        label: z.string().trim().min(1).max(120),
+        proposedValue: z.string().trim().min(1).max(1000),
+        expectedVersion: z.number().int().nonnegative(),
+        sourceLabel: z.string().trim().min(1).max(240),
+      })
+      .strict()
+      .parse(request.body);
+    requireWorkspacePatient(snapshot, body.patientId);
+    const current = (
+      await operationalStore.listWorkspaceProfileFields([body.patientId])
+    ).find((field) => field.fieldKey === body.fieldKey);
+    if ((current?.version ?? 0) !== body.expectedVersion)
+      throw new DomainError(
+        "VERSION_CONFLICT",
+        "Das Profil wurde zwischenzeitlich geändert.",
+        409,
+      );
+    const audience = workspaceAudienceSchema.parse({
+      kind: "patient-team",
+      memberIds: patientTeamMemberIds(body.patientId, snapshot.users),
+    });
+    const proposal: WorkspaceProfileProposal = {
+      id: randomUUID(),
+      patientId: body.patientId,
+      fieldKey: body.fieldKey,
+      label: body.label,
+      currentValue: current?.value ?? null,
+      proposedValue: body.proposedValue,
+      expectedVersion: body.expectedVersion,
+      sourceLabel: body.sourceLabel,
+      audience,
+      actorId: actor.id,
+      state: "pending",
+      createdAt: new Date().toISOString(),
+      acceptedAt: null,
+    };
+    const result = await operationalStore.prepareWorkspaceProfileUpdate({
+      proposal,
+      ...command,
+    });
+    return reply.code(result.replayed ? 200 : 201).send(result);
+  });
+
+  app.post("/api/v1/workspace/profile/:proposalId/accept", async (request) => {
+    const { actor, snapshot } = workspaceAccess(request);
+    if (!["registered-nurse", "administration"].includes(actor.role))
+      throw new DomainError(
+        "AUTH_DENIED",
+        "Profiländerungen sind für diese Rolle nicht freigegeben.",
+        403,
+      );
+    const command = workspaceCommand(request);
+    const { proposalId } = z
+      .object({ proposalId: z.uuid() })
+      .strict()
+      .parse(request.params);
+    const result = await operationalStore.acceptWorkspaceProfileUpdate({
+      actorId: actor.id,
+      proposalId,
+      visiblePatientIds: snapshot.patients.map((patient) => patient.id),
+      ...command,
+    });
+    const auditEntry = service.audit.append({
+      actor,
+      action: "workspace-profile:update",
+      patientId: result.value.field.patientId,
+      purpose: actor.defaultPurpose,
+      outcome: "success",
+      detail: {
+        fieldKey: result.value.field.fieldKey,
+        version: result.value.field.version,
+        proposalId,
+      },
+    });
+    await operationalStore.appendAudit(auditEntry);
+    await invalidateWorkspace(result.value.proposal.audience.memberIds, {
+      kind: "workspace-profile-updated",
+      patientId: result.value.field.patientId,
+      fieldKey: result.value.field.fieldKey,
+    });
+    return result;
   });
 
   app.get("/api/v1/events", async (request, reply) => {

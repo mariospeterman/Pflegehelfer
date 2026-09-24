@@ -30,7 +30,7 @@ export default defineConfig({
     screenshot: "only-on-failure",
   },
   webServer: {
-    command: "pnpm demo:test-memory",
+    command: "PFH_TTS_MODE=browser-demo pnpm demo:test-memory",
     url: "http://127.0.0.1:4173/health",
     reuseExistingServer: true,
     timeout: 120_000,

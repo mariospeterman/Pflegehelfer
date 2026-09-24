@@ -849,6 +849,61 @@ PostgreSQL/Medplum/provider proofs. Do not reset the preserved demonstration
 stores. Re-run the progressive real model test only after the external credit
 or approved-local-runtime condition changes; do not count fallback.
 
+## UI wiring recovery evidence — 2026-09-24
+
+The supplied UI wiring closure and owner guide were reconciled into the single
+completion contract without creating a second application, state authority or
+command path. Starting from reviewed remote head
+`bb9b646f98efcd5410fd3ee9656bb78acd689d7c`, the actual OpenUI/AI SDK surface
+was reduced to one compact header, one subject-bound conversation and one
+attachment/dictation/send composer. Patient profile, history, values and team
+lenses now open directly and do not manufacture a prompt or model request. The
+ward plan exists only under `Pläne`; it is no longer mounted inside a private
+patient conversation.
+
+Migration 012 adds institution/site-scoped workspace records for comments,
+private attachments, projects/links and reviewed profile fields/proposals. The
+existing operational-store boundary implements memory and PostgreSQL parity,
+command-receipt idempotency, audience checks, patient visibility, digest-bound
+attachment content and optimistic profile/project versions. Generic role
+recipients remain role queues; individual recipients are selected only from an
+authorized team list. Projects reference existing task IDs and do not own a
+duplicate task lifecycle.
+
+An isolated PostgreSQL database
+`pflegehelfer_codex_workspace_20260924_1042` proved comment, attachment bytes
+and accepted profile-field restart/read-back, then was dropped. The preserved
+integrated demonstration store was not reset. Memory/API tests also proved
+unauthorized patient denial, private-file denial, replay, team-member filtering
+and project membership/task linking. The complete unit run passed 457 enabled
+tests with 26 declared environment skips. Both TypeScript targets and scoped
+zero-warning lint passed. A production build passed; its main PWA chunk was
+2,398.01 kB minified / 695.79 kB gzip, so performance acceptance remains open.
+
+The integrated browser was inspected at 1440×900 and emulated 390×844 in light
+and dark modes. The inspected views included the compact patient conversation,
+drawer, full patient profile, profile review, Library, Team, source-bound
+summary and separated operating status. Focused Playwright checks passed the
+single conversation, direct lenses, source-linked history restoration,
+granular approval, patient isolation, superseded correction, semantic
+per-message speech and fixed-composer layouts. Actual-device testing and the
+complete integrated shared-work matrix remain unpassed.
+
+The legitimate configured model key was used only for the bounded non-writing
+synthetic probe. The request reached the provider and failed HTTP 429 with
+sanitized `credit_balance_exhausted` / `insufficient_quota`; fallback was
+`false`. The status endpoint retains that sanitized last failure so a later
+successful `/models` request cannot masquerade as acceptance. Server TTS
+remains externally gated; browser-demo speech passed with an actual supported
+`SpeechSynthesis` test double. ASR positive acceptance remains blocked. No
+fallback, disabled state or browser-demo audio is counted as connected model,
+ASR or server-TTS acceptance.
+
+G0 remains PASS. G1–G7 remain PARTIAL. In particular, the complete measured
+two-shift ward loop, governed publication, OIDC/BFF/RLS, live two-user
+realtime/revocation, previous-release restore, retention/egress, real
+model/audio scenarios, actual devices and final performance are still open.
+
 Publication evidence: concurrent remote README/About commits were merged by a
 normal merge, not rebased or force-pushed. Their unformatted README initially
 caused GitHub Actions run `35647626912` to stop at the formatting gate; this

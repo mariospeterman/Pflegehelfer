@@ -427,28 +427,36 @@ describe("authorized model context boundary", () => {
   it("fails connected acceptance with a sanitized provider cause and no fallback", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(() =>
-        Promise.resolve(
-          new Response(
-            JSON.stringify({
-              error: {
-                code: "invalid_api_key",
-                type: "invalid_request_error",
-                message: "credential value must never escape diagnostics",
-              },
-            }),
-            {
-              status: 401,
-              headers: {
-                "content-type": "application/json",
-                "x-request-id": "req_synthetic_123",
-              },
-            },
-          ),
-        ),
-      ),
+      vi.fn((input: string | URL | Request) => {
+        const url =
+          typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.href
+              : input.url;
+        return Promise.resolve(
+          url.endsWith("/models")
+            ? new Response("{}", { status: 200 })
+            : new Response(
+                JSON.stringify({
+                  error: {
+                    code: "invalid_api_key",
+                    type: "invalid_request_error",
+                    message: "credential value must never escape diagnostics",
+                  },
+                }),
+                {
+                  status: 401,
+                  headers: {
+                    "content-type": "application/json",
+                    "x-request-id": "req_synthetic_123",
+                  },
+                },
+              ),
+        );
+      }),
     );
-    const result = await new ModelGateway({
+    const gateway = new ModelGateway({
       PFH_AI_MODE: "hosted-test",
       PFH_DEMO_MODE: "true",
       PFH_LLM_DATA_CLASSIFICATION: "synthetic-only",
@@ -456,7 +464,8 @@ describe("authorized model context boundary", () => {
       PFH_LLM_API_KEY: ["fixture", "only"].join("-"),
       PFH_LLM_BASE_URL: "https://synthetic-model.example.invalid/v1",
       PFH_LLM_MODEL: "gpt-test",
-    }).testSynthetic();
+    });
+    const result = await gateway.testSynthetic();
 
     expect(result).toMatchObject({
       ready: false,
@@ -479,6 +488,14 @@ describe("authorized model context boundary", () => {
       },
     });
     expect(JSON.stringify(result)).not.toContain("credential value");
+    const status = await gateway.status();
+    expect(status).toMatchObject({
+      ready: false,
+      acceptance: "ready-for-test",
+    });
+    expect(status.message).toContain(
+      "letzter echter synthetischer Test fehlgeschlagen (authentication, Stufe provider",
+    );
   });
 
   it("pauses new inference at the organization limit without calling the provider", async () => {

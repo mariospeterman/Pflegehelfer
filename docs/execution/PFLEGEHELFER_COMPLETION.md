@@ -1,12 +1,12 @@
 # Pflegehelfer — One Product, Natural Coworker, Verified Completion
 
-**Contract revision:** 21 September 2026
+**Contract revision:** 24 September 2026
 
 **Repository:** `mariospeterman/Pflegehelfer`
 
 **Working branch:** `codex/genui-production-showcase`
 
-**Reviewed branch/PR head:** `eed4ac34fd11b2b4ea5709ad302241ec6cc9f210`
+**Reviewed branch/PR head:** `bb9b646f98efcd5410fd3ee9656bb78acd689d7c`
 
 **Current conversational implementation:** `43edbdbcf55e920c947cf133f8cead3e207cb9f5`
 
@@ -18,6 +18,8 @@
 The 20 September outcome-closure input is merged here rather than retained as a second master contract. Its priority correction is binding: Pflegehelfer must reduce avoidable re-entry and coordination burden while preserving reviewed meaning, correct destination delivery and responsibility ownership across shifts. A generic Swiss-branded chat experience, Markdown, air-gap capability or model neutrality alone is not the product outcome.
 
 The 21 September product-closure input is also merged here. Its dependency order is binding: first attempt the configured no-fallback model through the actual conversational read/draft/revision/approval/delivery path, then continue independent G1–G7 work when a provider dependency is unavailable. The user's same-day monetization correction supersedes every earlier named-seat/per-user/minimum-credit formula: active commercial scope is organization-based and never grants or removes a clinical permission.
+
+The 24 September UI-wiring closure and owner walkthrough are merged here as focused acceptance, not a new product direction. They require one compact application shell, one conversation feed and one bottom composer; source-backed destinations instead of prompt-shaped navigation; explicit actor, subject and audience; actual supported per-message playback; and truthful independent network, API, session, model, audio and delivery states. Every visible control must resolve through an authorized API/tool, named data owner, durable read-back and error/conflict behavior. A clickable route, TypeScript union, disabled placeholder or successful memory fixture is not wired acceptance.
 
 ## 0. Mission and precedence
 
@@ -572,6 +574,22 @@ Do not promise a PWA can enforce screenshot prevention, full device attestation/
 Reproduce the reported ~688 KB gzip initial main chunk, inspect dependency attribution and split optional profiles/charts/media/admin code where measured. Avoid bringing server SDKs/Node crypto/broad generated schemas into the browser unnecessarily. Do not migrate frameworks or create artificial chunk files solely to lower one number.
 
 Measure cold/warm start, JS parse time, first usable composer, model first content, tool latency, draft readiness, approval response and delivery lag separately. Set budgets after a representative-device baseline. Report regression/improvement instead of unverifiable “ultra-fast” claims.
+
+### 23.1 UI destination and wiring acceptance
+
+The compact header has one menu/collapse control, one central keyboard-accessible selector for the general assistant plus authorized patient/staff work contexts, and one actual own-profile/settings control. Synthetic identity switching is explicitly labelled and kept inside the demo-only account menu. Selecting a subject never changes the authenticated actor. Patient/staff identity is compact in the conversation and opens a permission-filtered full profile without sending a chat message or starting work.
+
+The shared navigation definition exposes real **Pläne**, **Projekte**, **Bibliothek**, **Patienten**, **Team** and role-appropriate **Anbieter** destinations. Profile, timeline, values, team, library and topic/filter selections read authorized services directly; they do not append a fabricated user prompt or incur model work. Projects group existing tasks, threads and files without creating another task authority. Project membership never grants access to a linked clinical record. Provider status distinguishes simulated capability, live external gates, local acceptance, Medplum projection and verified provider read-back.
+
+Ward-wide handover and plan controls belong to the general work context or an explicitly opened plan view. They are not always mounted inside a private patient conversation. The OpenUI surface contributes the existing allowlisted message/component renderer and server-owned history without mounting a second sidebar, header, thread picker or composer. One main scroll container and one safe-area-aware bottom composer preserve focus, drafts and per-thread scroll across profile sheets, drawers and scope changes.
+
+The composer supports auto-growing text, attachment selection/validation/subject/audience, dictated transcript review, send and active stop/cancel states. Enter sends only outside IME composition; Shift+Enter creates a line break. Failed requests keep recoverable input and do not duplicate accepted messages. Slow upload/model/ASR results retain their captured thread/patient/context revision and cannot appear under a later scope.
+
+Every completed readable assistant message exposes an accessible read-aloud action when a configured playback route is supported. It reads the selected message's semantic visible text and intelligible labels/units, never raw OpenUI source, hidden authority or regenerated wording. Only one playback runs; stop/pause/restart follow the supported adapter and playback stops on context change/sign-out. A returned audio response is transport evidence; positive acceptance additionally requires actual browser/device playback. An unavailable adapter produces a precise disabled explanation and does not block typed work.
+
+Shared profile changes, comments, `@` recipients and `#` filters use existing authorized subject and reviewed-command boundaries. Profile changes show current/proposed value, source, audience and destination, enforce resource version conflicts and retain attributed history. Comments are append-only attributed records, not edits to signed history. `@` resolves an authorized person or duty queue without first-user guessing or access expansion. `#` stores governed retrieval metadata and never promotes a negative/historical phrase into a diagnosis, warning, alarm or billing fact.
+
+Status is a structured capability surface, not one broad “Offline” boolean. Browser network hint, authenticated API reachability, session expiry, PostgreSQL/Medplum state, model, ASR, TTS and each delivery destination have independent last-success/error semantics. An optional workday or model failure does not relabel a reachable API as offline; a queue count of zero without a successful read is not “synchronized”. Public AI-disabled operation and authenticated connected-model acceptance remain separate modes.
 
 ## 24. Realistic synthetic data and testing scope
 

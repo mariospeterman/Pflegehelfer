@@ -34,6 +34,20 @@ import type {
   VoiceTranscriptOriginal,
   VoiceTranscriptProvenance,
 } from "../core/voice-provenance.js";
+import {
+  workspaceAttachmentSchema,
+  workspaceCommentSchema,
+  workspaceProfileFieldSchema,
+  workspaceProfileProposalSchema,
+  workspaceProjectSchema,
+  type WorkspaceAudience,
+  type WorkspaceAttachment,
+  type WorkspaceComment,
+  type WorkspaceProfileField,
+  type WorkspaceProfileProposal,
+  type WorkspaceProject,
+  type WorkspaceProjectLink,
+} from "../core/workspace.js";
 
 export type {
   WorkdayCommand,
@@ -306,6 +320,16 @@ export interface DeliveryDiagnostics {
   providerDeliveries: Record<string, number>;
 }
 
+export interface WorkspaceAttachmentContent {
+  record: WorkspaceAttachment;
+  bytes: Uint8Array;
+}
+
+export interface WorkspaceMutationResult<T> {
+  value: T;
+  replayed: boolean;
+}
+
 export interface WorkingSessionView {
   id: string;
   organizationId: string;
@@ -492,6 +516,75 @@ export interface OperationalStore {
     patientIds: readonly string[],
   ): Promise<{ unresolved: number; conflicts: number }>;
   deliveryDiagnostics(): Promise<DeliveryDiagnostics>;
+  listWorkspaceComments(input: {
+    actorId: string;
+    visiblePatientIds: readonly string[];
+    patientId?: string | null;
+    topicId?: string | null;
+  }): Promise<WorkspaceComment[]>;
+  createWorkspaceComment(input: {
+    record: WorkspaceComment;
+    commandKey: string;
+    requestHash: string;
+  }): Promise<WorkspaceMutationResult<WorkspaceComment>>;
+  markWorkspaceCommentRead(actorId: string, commentId: string): Promise<void>;
+  listWorkspaceAttachments(input: {
+    actorId: string;
+    visiblePatientIds: readonly string[];
+    patientId?: string | null;
+    topicId?: string | null;
+  }): Promise<WorkspaceAttachment[]>;
+  storeWorkspaceAttachment(input: {
+    record: WorkspaceAttachment;
+    bytes: Uint8Array;
+    commandKey: string;
+    requestHash: string;
+  }): Promise<WorkspaceMutationResult<WorkspaceAttachment>>;
+  loadWorkspaceAttachment(
+    actorId: string,
+    attachmentId: string,
+    visiblePatientIds: readonly string[],
+  ): Promise<WorkspaceAttachmentContent | null>;
+  withdrawWorkspaceAttachment(input: {
+    actorId: string;
+    attachmentId: string;
+    commandKey: string;
+    requestHash: string;
+  }): Promise<WorkspaceMutationResult<WorkspaceAttachment>>;
+  listWorkspaceProjects(actorId: string): Promise<WorkspaceProject[]>;
+  createWorkspaceProject(input: {
+    record: WorkspaceProject;
+    commandKey: string;
+    requestHash: string;
+  }): Promise<WorkspaceMutationResult<WorkspaceProject>>;
+  linkWorkspaceProject(input: {
+    actorId: string;
+    projectId: string;
+    expectedVersion: number;
+    link: WorkspaceProjectLink;
+    commandKey: string;
+    requestHash: string;
+  }): Promise<WorkspaceMutationResult<WorkspaceProject>>;
+  listWorkspaceProfileFields(
+    visiblePatientIds: readonly string[],
+  ): Promise<WorkspaceProfileField[]>;
+  prepareWorkspaceProfileUpdate(input: {
+    proposal: WorkspaceProfileProposal;
+    commandKey: string;
+    requestHash: string;
+  }): Promise<WorkspaceMutationResult<WorkspaceProfileProposal>>;
+  acceptWorkspaceProfileUpdate(input: {
+    actorId: string;
+    proposalId: string;
+    visiblePatientIds: readonly string[];
+    commandKey: string;
+    requestHash: string;
+  }): Promise<
+    WorkspaceMutationResult<{
+      proposal: WorkspaceProfileProposal;
+      field: WorkspaceProfileField;
+    }>
+  >;
   releaseIntentAuthority(tokenHash: string): Promise<void>;
   revokeResponseAuthorities(actorId: string, responseId: string): Promise<void>;
   suspendActorAuthorities(actorId: string): Promise<void>;
@@ -572,6 +665,21 @@ export class InMemoryOperationalStore implements OperationalStore {
       createdAt: string;
     }
   > = [];
+  private readonly workspaceComments = new Map<string, WorkspaceComment>();
+  private readonly workspaceCommentReads = new Map<string, Set<string>>();
+  private readonly workspaceAttachments = new Map<
+    string,
+    WorkspaceAttachmentContent
+  >();
+  private readonly workspaceProjects = new Map<string, WorkspaceProject>();
+  private readonly workspaceProfileFields = new Map<
+    string,
+    WorkspaceProfileField
+  >();
+  private readonly workspaceProfileProposals = new Map<
+    string,
+    WorkspaceProfileProposal
+  >();
   initialize(): Promise<void> {
     return Promise.resolve();
   }
@@ -1667,6 +1775,358 @@ export class InMemoryOperationalStore implements OperationalStore {
       providerDeliveries: {},
     });
   }
+  /* In-memory implementations intentionally preserve the asynchronous store
+     interface while completing without I/O. */
+  /* eslint-disable @typescript-eslint/require-await */
+  async listWorkspaceComments(input: {
+    actorId: string;
+    visiblePatientIds: readonly string[];
+    patientId?: string | null;
+    topicId?: string | null;
+  }): Promise<WorkspaceComment[]> {
+    const visible = new Set(input.visiblePatientIds);
+    return [...this.workspaceComments.values()]
+      .filter(
+        (record) =>
+          record.audience.memberIds.includes(input.actorId) &&
+          (record.patientId === null || visible.has(record.patientId)),
+      )
+      .filter(
+        (record) =>
+          input.patientId === undefined || record.patientId === input.patientId,
+      )
+      .filter(
+        (record) => !input.topicId || record.topicIds.includes(input.topicId),
+      )
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+      .map((record) => ({
+        ...structuredClone(record),
+        unread:
+          record.authorId !== input.actorId &&
+          !this.workspaceCommentReads.get(record.id)?.has(input.actorId),
+      }));
+  }
+  async createWorkspaceComment(input: {
+    record: WorkspaceComment;
+    commandKey: string;
+    requestHash: string;
+  }): Promise<WorkspaceMutationResult<WorkspaceComment>> {
+    const replay = this.replayWorkspaceCommand<WorkspaceComment>(
+      input.commandKey,
+      input.requestHash,
+    );
+    if (replay) return replay;
+    this.workspaceComments.set(input.record.id, structuredClone(input.record));
+    this.storeWorkspaceCommand(
+      input.commandKey,
+      input.requestHash,
+      input.record,
+    );
+    return { value: structuredClone(input.record), replayed: false };
+  }
+  markWorkspaceCommentRead(actorId: string, commentId: string): Promise<void> {
+    const readers = this.workspaceCommentReads.get(commentId) ?? new Set();
+    readers.add(actorId);
+    this.workspaceCommentReads.set(commentId, readers);
+    return Promise.resolve();
+  }
+  async listWorkspaceAttachments(input: {
+    actorId: string;
+    visiblePatientIds: readonly string[];
+    patientId?: string | null;
+    topicId?: string | null;
+  }): Promise<WorkspaceAttachment[]> {
+    const visible = new Set(input.visiblePatientIds);
+    return [...this.workspaceAttachments.values()]
+      .map((item) => item.record)
+      .filter(
+        (record) =>
+          record.audience.memberIds.includes(input.actorId) &&
+          (record.patientId === null || visible.has(record.patientId)),
+      )
+      .filter(
+        (record) =>
+          input.patientId === undefined || record.patientId === input.patientId,
+      )
+      .filter(
+        (record) => !input.topicId || record.topicIds.includes(input.topicId),
+      )
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+      .map((record) => structuredClone(record));
+  }
+  async storeWorkspaceAttachment(input: {
+    record: WorkspaceAttachment;
+    bytes: Uint8Array;
+    commandKey: string;
+    requestHash: string;
+  }): Promise<WorkspaceMutationResult<WorkspaceAttachment>> {
+    const replay = this.replayWorkspaceCommand<WorkspaceAttachment>(
+      input.commandKey,
+      input.requestHash,
+    );
+    if (replay) return replay;
+    this.workspaceAttachments.set(input.record.id, {
+      record: structuredClone(input.record),
+      bytes: Uint8Array.from(input.bytes),
+    });
+    this.storeWorkspaceCommand(
+      input.commandKey,
+      input.requestHash,
+      input.record,
+    );
+    return { value: structuredClone(input.record), replayed: false };
+  }
+  async loadWorkspaceAttachment(
+    actorId: string,
+    attachmentId: string,
+    visiblePatientIds: readonly string[],
+  ): Promise<WorkspaceAttachmentContent | null> {
+    const stored = this.workspaceAttachments.get(attachmentId);
+    if (
+      !stored ||
+      !stored.record.audience.memberIds.includes(actorId) ||
+      (stored.record.patientId !== null &&
+        !visiblePatientIds.includes(stored.record.patientId))
+    )
+      return null;
+    return {
+      record: structuredClone(stored.record),
+      bytes: Uint8Array.from(stored.bytes),
+    };
+  }
+  async withdrawWorkspaceAttachment(input: {
+    actorId: string;
+    attachmentId: string;
+    commandKey: string;
+    requestHash: string;
+  }): Promise<WorkspaceMutationResult<WorkspaceAttachment>> {
+    const replay = this.replayWorkspaceCommand<WorkspaceAttachment>(
+      input.commandKey,
+      input.requestHash,
+    );
+    if (replay) return replay;
+    const stored = this.workspaceAttachments.get(input.attachmentId);
+    if (!stored)
+      throw new DomainError("NOT_FOUND", "Datei nicht gefunden.", 404);
+    if (stored.record.uploadedBy !== input.actorId)
+      throw new DomainError(
+        "AUTH_DENIED",
+        "Nur die hochladende Person darf diese Datei zurückziehen.",
+        403,
+      );
+    stored.record = {
+      ...stored.record,
+      state: "withdrawn",
+      withdrawnAt: new Date().toISOString(),
+    };
+    this.storeWorkspaceCommand(
+      input.commandKey,
+      input.requestHash,
+      stored.record,
+    );
+    return { value: structuredClone(stored.record), replayed: false };
+  }
+  async listWorkspaceProjects(actorId: string): Promise<WorkspaceProject[]> {
+    return [...this.workspaceProjects.values()]
+      .filter((record) => record.memberIds.includes(actorId))
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .map((record) => structuredClone(record));
+  }
+  async createWorkspaceProject(input: {
+    record: WorkspaceProject;
+    commandKey: string;
+    requestHash: string;
+  }): Promise<WorkspaceMutationResult<WorkspaceProject>> {
+    const replay = this.replayWorkspaceCommand<WorkspaceProject>(
+      input.commandKey,
+      input.requestHash,
+    );
+    if (replay) return replay;
+    this.workspaceProjects.set(input.record.id, structuredClone(input.record));
+    this.storeWorkspaceCommand(
+      input.commandKey,
+      input.requestHash,
+      input.record,
+    );
+    return { value: structuredClone(input.record), replayed: false };
+  }
+  async linkWorkspaceProject(input: {
+    actorId: string;
+    projectId: string;
+    expectedVersion: number;
+    link: WorkspaceProjectLink;
+    commandKey: string;
+    requestHash: string;
+  }): Promise<WorkspaceMutationResult<WorkspaceProject>> {
+    const replay = this.replayWorkspaceCommand<WorkspaceProject>(
+      input.commandKey,
+      input.requestHash,
+    );
+    if (replay) return replay;
+    const current = this.workspaceProjects.get(input.projectId);
+    if (!current || !current.memberIds.includes(input.actorId))
+      throw new DomainError("NOT_FOUND", "Projekt nicht gefunden.", 404);
+    if (current.version !== input.expectedVersion)
+      throw new DomainError(
+        "VERSION_CONFLICT",
+        "Das Projekt wurde zwischenzeitlich geändert.",
+        409,
+      );
+    const duplicate = current.links.some(
+      (link) => link.kind === input.link.kind && link.id === input.link.id,
+    );
+    const next: WorkspaceProject = {
+      ...current,
+      links: duplicate ? current.links : [...current.links, input.link],
+      version: current.version + 1,
+      updatedAt: new Date().toISOString(),
+    };
+    this.workspaceProjects.set(next.id, structuredClone(next));
+    this.storeWorkspaceCommand(input.commandKey, input.requestHash, next);
+    return { value: structuredClone(next), replayed: false };
+  }
+  async listWorkspaceProfileFields(
+    visiblePatientIds: readonly string[],
+  ): Promise<WorkspaceProfileField[]> {
+    const visible = new Set(visiblePatientIds);
+    return [...this.workspaceProfileFields.values()]
+      .filter((record) => visible.has(record.patientId))
+      .sort((left, right) => left.fieldKey.localeCompare(right.fieldKey))
+      .map((record) => structuredClone(record));
+  }
+  async prepareWorkspaceProfileUpdate(input: {
+    proposal: WorkspaceProfileProposal;
+    commandKey: string;
+    requestHash: string;
+  }): Promise<WorkspaceMutationResult<WorkspaceProfileProposal>> {
+    const replay = this.replayWorkspaceCommand<WorkspaceProfileProposal>(
+      input.commandKey,
+      input.requestHash,
+    );
+    if (replay) return replay;
+    const current = this.workspaceProfileFields.get(
+      `${input.proposal.patientId}:${input.proposal.fieldKey}`,
+    );
+    if ((current?.version ?? 0) !== input.proposal.expectedVersion)
+      throw new DomainError(
+        "VERSION_CONFLICT",
+        "Das Profil wurde zwischenzeitlich geändert.",
+        409,
+      );
+    this.workspaceProfileProposals.set(
+      input.proposal.id,
+      structuredClone(input.proposal),
+    );
+    this.storeWorkspaceCommand(
+      input.commandKey,
+      input.requestHash,
+      input.proposal,
+    );
+    return { value: structuredClone(input.proposal), replayed: false };
+  }
+  async acceptWorkspaceProfileUpdate(input: {
+    actorId: string;
+    proposalId: string;
+    visiblePatientIds: readonly string[];
+    commandKey: string;
+    requestHash: string;
+  }): Promise<
+    WorkspaceMutationResult<{
+      proposal: WorkspaceProfileProposal;
+      field: WorkspaceProfileField;
+    }>
+  > {
+    const proposal = this.workspaceProfileProposals.get(input.proposalId);
+    if (
+      !proposal ||
+      proposal.actorId !== input.actorId ||
+      !input.visiblePatientIds.includes(proposal.patientId)
+    )
+      throw new DomainError("NOT_FOUND", "Profiländerung nicht gefunden.", 404);
+    const replay = this.replayWorkspaceCommand<{
+      proposal: WorkspaceProfileProposal;
+      field: WorkspaceProfileField;
+    }>(input.commandKey, input.requestHash);
+    if (replay) return replay;
+    const key = `${proposal.patientId}:${proposal.fieldKey}`;
+    const current = this.workspaceProfileFields.get(key);
+    if ((current?.version ?? 0) !== proposal.expectedVersion) {
+      proposal.state = "conflict";
+      throw new DomainError(
+        "VERSION_CONFLICT",
+        "Das Profil wurde zwischenzeitlich geändert. Bitte Diff neu prüfen.",
+        409,
+      );
+    }
+    if (proposal.state !== "pending")
+      throw new DomainError(
+        "INVALID_STATE",
+        "Diese Profiländerung ist nicht mehr offen.",
+        409,
+      );
+    const acceptedAt = new Date().toISOString();
+    const field: WorkspaceProfileField = {
+      patientId: proposal.patientId,
+      fieldKey: proposal.fieldKey,
+      label: proposal.label,
+      value: proposal.proposedValue,
+      version: proposal.expectedVersion + 1,
+      sourceLabel: proposal.sourceLabel,
+      updatedBy: input.actorId,
+      updatedAt: acceptedAt,
+    };
+    const acceptedProposal: WorkspaceProfileProposal = {
+      ...proposal,
+      state: "accepted",
+      acceptedAt,
+    };
+    this.workspaceProfileFields.set(key, field);
+    this.workspaceProfileProposals.set(proposal.id, acceptedProposal);
+    const value = { proposal: acceptedProposal, field };
+    this.storeWorkspaceCommand(input.commandKey, input.requestHash, value);
+    return { value: structuredClone(value), replayed: false };
+  }
+  /* eslint-enable @typescript-eslint/require-await */
+  private replayWorkspaceCommand<T>(
+    commandKey: string,
+    requestHash: string,
+  ): WorkspaceMutationResult<T> | null {
+    const stored = this.acceptedCommands.get(commandKey);
+    if (!stored) return null;
+    if (stored.requestHash !== requestHash)
+      throw new DomainError(
+        "INVALID_STATE",
+        "Befehls-ID wurde bereits mit einem anderen Inhalt verwendet.",
+        409,
+      );
+    const payload = stored.receipt.payload as WorkspaceMutationResult<T> | T;
+    return {
+      value: structuredClone(
+        typeof payload === "object" &&
+          payload !== null &&
+          "value" in payload &&
+          "replayed" in payload
+          ? payload.value
+          : payload,
+      ),
+      replayed: true,
+    };
+  }
+  private storeWorkspaceCommand(
+    commandKey: string,
+    requestHash: string,
+    payload: unknown,
+  ): void {
+    this.acceptedCommands.set(commandKey, {
+      requestHash,
+      receipt: {
+        id: commandKey,
+        statusCode: 200,
+        payload: structuredClone({ value: payload, replayed: false }),
+        replayed: false,
+      },
+    });
+  }
   releaseIntentAuthority(tokenHash: string): Promise<void> {
     const authority = this.authorities.get(tokenHash);
     if (authority && authority.record.expiresAt >= Date.now()) {
@@ -1758,6 +2218,12 @@ export class InMemoryOperationalStore implements OperationalStore {
     this.voiceAuthorities.clear();
     this.acceptedCommands.clear();
     this.clinicalProjectionJobs.splice(0, this.clinicalProjectionJobs.length);
+    this.workspaceComments.clear();
+    this.workspaceCommentReads.clear();
+    this.workspaceAttachments.clear();
+    this.workspaceProjects.clear();
+    this.workspaceProfileFields.clear();
+    this.workspaceProfileProposals.clear();
     return Promise.resolve();
   }
   close(): Promise<void> {
@@ -4701,6 +5167,445 @@ export class PostgresOperationalStore
     }
     return diagnostics;
   }
+  async listWorkspaceComments(input: {
+    actorId: string;
+    visiblePatientIds: readonly string[];
+    patientId?: string | null;
+    topicId?: string | null;
+  }): Promise<WorkspaceComment[]> {
+    const result = await this.pool.query<{
+      payload: unknown;
+      read_by_actor: boolean;
+    }>(
+      `SELECT r.payload,
+              EXISTS (
+                SELECT 1 FROM workspace_comment_reads cr
+                WHERE cr.organization_id=r.organization_id
+                  AND cr.comment_id=r.id AND cr.actor_id=$2
+              ) read_by_actor
+       FROM workspace_records r
+       WHERE r.organization_id=$1 AND r.record_type='comment'
+         AND r.audience->'memberIds' ? $2
+         AND (r.patient_id IS NULL OR r.patient_id=ANY($3::text[]))
+       ORDER BY r.created_at`,
+      [organizationId, input.actorId, input.visiblePatientIds],
+    );
+    return result.rows
+      .map((row) => {
+        const record = workspaceCommentSchema.parse(row.payload);
+        return {
+          ...record,
+          unread: record.authorId !== input.actorId && !row.read_by_actor,
+        };
+      })
+      .filter(
+        (record) =>
+          input.patientId === undefined || record.patientId === input.patientId,
+      )
+      .filter(
+        (record) => !input.topicId || record.topicIds.includes(input.topicId),
+      );
+  }
+  createWorkspaceComment(input: {
+    record: WorkspaceComment;
+    commandKey: string;
+    requestHash: string;
+  }): Promise<WorkspaceMutationResult<WorkspaceComment>> {
+    return this.workspaceTransaction(input, async (client) => {
+      await client.query(
+        `INSERT INTO workspace_records
+           (organization_id,id,record_type,patient_id,actor_id,audience,payload)
+         VALUES ($1,$2,'comment',$3,$4,$5,$6)`,
+        [
+          organizationId,
+          input.record.id,
+          input.record.patientId,
+          input.record.authorId,
+          input.record.audience,
+          input.record,
+        ],
+      );
+      return input.record;
+    });
+  }
+  async markWorkspaceCommentRead(
+    actorId: string,
+    commentId: string,
+  ): Promise<void> {
+    const allowed = await this.pool.query<{ allowed: boolean }>(
+      `SELECT (audience->'memberIds' ? $3) allowed
+       FROM workspace_records
+       WHERE organization_id=$1 AND id=$2 AND record_type='comment'`,
+      [organizationId, commentId, actorId],
+    );
+    if (!allowed.rows[0]?.allowed)
+      throw new DomainError("NOT_FOUND", "Kommentar nicht gefunden.", 404);
+    await this.pool.query(
+      `INSERT INTO workspace_comment_reads
+         (organization_id,comment_id,actor_id)
+       VALUES ($1,$2,$3)
+       ON CONFLICT (organization_id,comment_id,actor_id)
+       DO UPDATE SET read_at=now()`,
+      [organizationId, commentId, actorId],
+    );
+  }
+  async listWorkspaceAttachments(input: {
+    actorId: string;
+    visiblePatientIds: readonly string[];
+    patientId?: string | null;
+    topicId?: string | null;
+  }): Promise<WorkspaceAttachment[]> {
+    const result = await this.pool.query<{ payload: unknown }>(
+      `SELECT payload FROM workspace_records
+       WHERE organization_id=$1 AND record_type='attachment'
+         AND audience->'memberIds' ? $2
+         AND (patient_id IS NULL OR patient_id=ANY($3::text[]))
+       ORDER BY created_at DESC`,
+      [organizationId, input.actorId, input.visiblePatientIds],
+    );
+    return result.rows
+      .map((row) => workspaceAttachmentSchema.parse(row.payload))
+      .filter(
+        (record) =>
+          input.patientId === undefined || record.patientId === input.patientId,
+      )
+      .filter(
+        (record) => !input.topicId || record.topicIds.includes(input.topicId),
+      );
+  }
+  storeWorkspaceAttachment(input: {
+    record: WorkspaceAttachment;
+    bytes: Uint8Array;
+    commandKey: string;
+    requestHash: string;
+  }): Promise<WorkspaceMutationResult<WorkspaceAttachment>> {
+    return this.workspaceTransaction(input, async (client) => {
+      await client.query(
+        `INSERT INTO workspace_records
+           (organization_id,id,record_type,patient_id,actor_id,audience,payload,blob_data)
+         VALUES ($1,$2,'attachment',$3,$4,$5,$6,$7)`,
+        [
+          organizationId,
+          input.record.id,
+          input.record.patientId,
+          input.record.uploadedBy,
+          input.record.audience,
+          input.record,
+          Buffer.from(input.bytes),
+        ],
+      );
+      return input.record;
+    });
+  }
+  async loadWorkspaceAttachment(
+    actorId: string,
+    attachmentId: string,
+    visiblePatientIds: readonly string[],
+  ): Promise<WorkspaceAttachmentContent | null> {
+    const result = await this.pool.query<{
+      payload: unknown;
+      blob_data: Buffer;
+      patient_id: string | null;
+      audience: WorkspaceAudience;
+    }>(
+      `SELECT payload,blob_data,patient_id,audience
+       FROM workspace_records
+       WHERE organization_id=$1 AND id=$2 AND record_type='attachment'`,
+      [organizationId, attachmentId],
+    );
+    const row = result.rows[0];
+    if (
+      !row ||
+      !row.audience.memberIds.includes(actorId) ||
+      (row.patient_id !== null && !visiblePatientIds.includes(row.patient_id))
+    )
+      return null;
+    return {
+      record: workspaceAttachmentSchema.parse(row.payload),
+      bytes: Uint8Array.from(row.blob_data),
+    };
+  }
+  withdrawWorkspaceAttachment(input: {
+    actorId: string;
+    attachmentId: string;
+    commandKey: string;
+    requestHash: string;
+  }): Promise<WorkspaceMutationResult<WorkspaceAttachment>> {
+    return this.workspaceTransaction(input, async (client) => {
+      const result = await client.query<{ payload: unknown }>(
+        `SELECT payload FROM workspace_records
+         WHERE organization_id=$1 AND id=$2 AND record_type='attachment'
+         FOR UPDATE`,
+        [organizationId, input.attachmentId],
+      );
+      const current = result.rows[0]
+        ? workspaceAttachmentSchema.parse(result.rows[0].payload)
+        : null;
+      if (!current)
+        throw new DomainError("NOT_FOUND", "Datei nicht gefunden.", 404);
+      if (current.uploadedBy !== input.actorId)
+        throw new DomainError(
+          "AUTH_DENIED",
+          "Nur die hochladende Person darf diese Datei zurückziehen.",
+          403,
+        );
+      const next: WorkspaceAttachment = {
+        ...current,
+        state: "withdrawn",
+        withdrawnAt: new Date().toISOString(),
+      };
+      await client.query(
+        `UPDATE workspace_records
+         SET payload=$3,version=version+1,updated_at=now()
+         WHERE organization_id=$1 AND id=$2`,
+        [organizationId, input.attachmentId, next],
+      );
+      return next;
+    });
+  }
+  async listWorkspaceProjects(actorId: string): Promise<WorkspaceProject[]> {
+    const result = await this.pool.query<{ payload: unknown }>(
+      `SELECT payload FROM workspace_records
+       WHERE organization_id=$1 AND record_type='project'
+         AND audience->'memberIds' ? $2
+       ORDER BY updated_at DESC`,
+      [organizationId, actorId],
+    );
+    return result.rows.map((row) => workspaceProjectSchema.parse(row.payload));
+  }
+  createWorkspaceProject(input: {
+    record: WorkspaceProject;
+    commandKey: string;
+    requestHash: string;
+  }): Promise<WorkspaceMutationResult<WorkspaceProject>> {
+    return this.workspaceTransaction(input, async (client) => {
+      await client.query(
+        `INSERT INTO workspace_records
+           (organization_id,id,record_type,actor_id,audience,version,payload)
+         VALUES ($1,$2,'project',$3,$4,$5,$6)`,
+        [
+          organizationId,
+          input.record.id,
+          input.record.ownerId,
+          { kind: "department", memberIds: input.record.memberIds },
+          input.record.version,
+          input.record,
+        ],
+      );
+      return input.record;
+    });
+  }
+  linkWorkspaceProject(input: {
+    actorId: string;
+    projectId: string;
+    expectedVersion: number;
+    link: WorkspaceProjectLink;
+    commandKey: string;
+    requestHash: string;
+  }): Promise<WorkspaceMutationResult<WorkspaceProject>> {
+    return this.workspaceTransaction(input, async (client) => {
+      const result = await client.query<{ payload: unknown }>(
+        `SELECT payload FROM workspace_records
+         WHERE organization_id=$1 AND id=$2 AND record_type='project'
+         FOR UPDATE`,
+        [organizationId, input.projectId],
+      );
+      const current = result.rows[0]
+        ? workspaceProjectSchema.parse(result.rows[0].payload)
+        : null;
+      if (!current || !current.memberIds.includes(input.actorId))
+        throw new DomainError("NOT_FOUND", "Projekt nicht gefunden.", 404);
+      if (current.version !== input.expectedVersion)
+        throw new DomainError(
+          "VERSION_CONFLICT",
+          "Das Projekt wurde zwischenzeitlich geändert.",
+          409,
+        );
+      const duplicate = current.links.some(
+        (link) => link.kind === input.link.kind && link.id === input.link.id,
+      );
+      const next: WorkspaceProject = {
+        ...current,
+        links: duplicate ? current.links : [...current.links, input.link],
+        version: current.version + 1,
+        updatedAt: new Date().toISOString(),
+      };
+      await client.query(
+        `UPDATE workspace_records
+         SET payload=$3,version=$4,updated_at=now()
+         WHERE organization_id=$1 AND id=$2`,
+        [organizationId, input.projectId, next, next.version],
+      );
+      return next;
+    });
+  }
+  async listWorkspaceProfileFields(
+    visiblePatientIds: readonly string[],
+  ): Promise<WorkspaceProfileField[]> {
+    const result = await this.pool.query<{ payload: unknown }>(
+      `SELECT payload FROM workspace_records
+       WHERE organization_id=$1 AND record_type='profile-field'
+         AND patient_id=ANY($2::text[])
+       ORDER BY patient_id,payload->>'fieldKey'`,
+      [organizationId, visiblePatientIds],
+    );
+    return result.rows.map((row) =>
+      workspaceProfileFieldSchema.parse(row.payload),
+    );
+  }
+  prepareWorkspaceProfileUpdate(input: {
+    proposal: WorkspaceProfileProposal;
+    commandKey: string;
+    requestHash: string;
+  }): Promise<WorkspaceMutationResult<WorkspaceProfileProposal>> {
+    return this.workspaceTransaction(input, async (client) => {
+      const current = await client.query<{ payload: unknown }>(
+        `SELECT payload FROM workspace_records
+         WHERE organization_id=$1 AND patient_id=$2
+           AND record_type='profile-field' AND payload->>'fieldKey'=$3
+         FOR UPDATE`,
+        [organizationId, input.proposal.patientId, input.proposal.fieldKey],
+      );
+      const field = current.rows[0]
+        ? workspaceProfileFieldSchema.parse(current.rows[0].payload)
+        : null;
+      if ((field?.version ?? 0) !== input.proposal.expectedVersion)
+        throw new DomainError(
+          "VERSION_CONFLICT",
+          "Das Profil wurde zwischenzeitlich geändert.",
+          409,
+        );
+      await client.query(
+        `INSERT INTO workspace_records
+           (organization_id,id,record_type,patient_id,actor_id,audience,payload)
+         VALUES ($1,$2,'profile-proposal',$3,$4,$5,$6)`,
+        [
+          organizationId,
+          input.proposal.id,
+          input.proposal.patientId,
+          input.proposal.actorId,
+          input.proposal.audience,
+          input.proposal,
+        ],
+      );
+      return input.proposal;
+    });
+  }
+  async acceptWorkspaceProfileUpdate(input: {
+    actorId: string;
+    proposalId: string;
+    visiblePatientIds: readonly string[];
+    commandKey: string;
+    requestHash: string;
+  }): Promise<
+    WorkspaceMutationResult<{
+      proposal: WorkspaceProfileProposal;
+      field: WorkspaceProfileField;
+    }>
+  > {
+    const authorized = await this.pool.query<{
+      patient_id: string | null;
+      actor_id: string;
+    }>(
+      `SELECT patient_id,actor_id FROM workspace_records
+       WHERE organization_id=$1 AND id=$2 AND record_type='profile-proposal'`,
+      [organizationId, input.proposalId],
+    );
+    const access = authorized.rows[0];
+    if (
+      !access ||
+      access.actor_id !== input.actorId ||
+      access.patient_id === null ||
+      !input.visiblePatientIds.includes(access.patient_id)
+    )
+      throw new DomainError("NOT_FOUND", "Profiländerung nicht gefunden.", 404);
+    return this.workspaceTransaction(input, async (client) => {
+      const proposalResult = await client.query<{ payload: unknown }>(
+        `SELECT payload FROM workspace_records
+         WHERE organization_id=$1 AND id=$2 AND record_type='profile-proposal'
+         FOR UPDATE`,
+        [organizationId, input.proposalId],
+      );
+      const proposal = proposalResult.rows[0]
+        ? workspaceProfileProposalSchema.parse(proposalResult.rows[0].payload)
+        : null;
+      if (
+        !proposal ||
+        proposal.actorId !== input.actorId ||
+        !input.visiblePatientIds.includes(proposal.patientId)
+      )
+        throw new DomainError(
+          "NOT_FOUND",
+          "Profiländerung nicht gefunden.",
+          404,
+        );
+      if (proposal.state !== "pending")
+        throw new DomainError(
+          "INVALID_STATE",
+          "Diese Profiländerung ist nicht mehr offen.",
+          409,
+        );
+      const fieldResult = await client.query<{
+        id: string;
+        payload: unknown;
+      }>(
+        `SELECT id::text,payload FROM workspace_records
+         WHERE organization_id=$1 AND patient_id=$2
+           AND record_type='profile-field' AND payload->>'fieldKey'=$3
+         FOR UPDATE`,
+        [organizationId, proposal.patientId, proposal.fieldKey],
+      );
+      const current = fieldResult.rows[0]
+        ? workspaceProfileFieldSchema.parse(fieldResult.rows[0].payload)
+        : null;
+      if ((current?.version ?? 0) !== proposal.expectedVersion)
+        throw new DomainError(
+          "VERSION_CONFLICT",
+          "Das Profil wurde zwischenzeitlich geändert. Bitte Diff neu prüfen.",
+          409,
+        );
+      const acceptedAt = new Date().toISOString();
+      const field: WorkspaceProfileField = {
+        patientId: proposal.patientId,
+        fieldKey: proposal.fieldKey,
+        label: proposal.label,
+        value: proposal.proposedValue,
+        version: proposal.expectedVersion + 1,
+        sourceLabel: proposal.sourceLabel,
+        updatedBy: input.actorId,
+        updatedAt: acceptedAt,
+      };
+      const acceptedProposal: WorkspaceProfileProposal = {
+        ...proposal,
+        state: "accepted",
+        acceptedAt,
+      };
+      const fieldId = fieldResult.rows[0]?.id ?? randomUUID();
+      await client.query(
+        `INSERT INTO workspace_records
+           (organization_id,id,record_type,patient_id,actor_id,audience,version,payload)
+         VALUES ($1,$2,'profile-field',$3,$4,$5,$6,$7)
+         ON CONFLICT (organization_id,id) DO UPDATE
+         SET actor_id=EXCLUDED.actor_id,audience=EXCLUDED.audience,
+             version=EXCLUDED.version,payload=EXCLUDED.payload,updated_at=now()`,
+        [
+          organizationId,
+          fieldId,
+          field.patientId,
+          input.actorId,
+          proposal.audience,
+          field.version,
+          field,
+        ],
+      );
+      await client.query(
+        `UPDATE workspace_records SET payload=$3,updated_at=now()
+         WHERE organization_id=$1 AND id=$2`,
+        [organizationId, proposal.id, acceptedProposal],
+      );
+      return { proposal: acceptedProposal, field };
+    });
+  }
   async releaseIntentAuthority(tokenHash: string): Promise<void> {
     await this.pool.query(
       `WITH released AS (
@@ -5195,6 +6100,14 @@ export class PostgresOperationalStore
     try {
       await client.query("BEGIN");
       await client.query(
+        `DELETE FROM workspace_comment_reads WHERE organization_id=$1`,
+        [organizationId],
+      );
+      await client.query(
+        `DELETE FROM workspace_records WHERE organization_id=$1`,
+        [organizationId],
+      );
+      await client.query(
         `DELETE FROM provider_receipts WHERE organization_id=$1`,
         [organizationId],
       );
@@ -5298,6 +6211,65 @@ export class PostgresOperationalStore
   }
   async close(): Promise<void> {
     await this.pool.end();
+  }
+  private async workspaceTransaction<T>(
+    input: { commandKey: string; requestHash: string },
+    operation: (client: pg.PoolClient) => Promise<T>,
+  ): Promise<WorkspaceMutationResult<T>> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const existing = await client.query<{
+        request_hash: string;
+        result_ref: unknown;
+      }>(
+        `SELECT request_hash,result_ref FROM command_receipts
+         WHERE organization_id=$1 AND command_key=$2 FOR UPDATE`,
+        [organizationId, input.commandKey],
+      );
+      if (existing.rows[0]) {
+        if (existing.rows[0].request_hash !== input.requestHash)
+          throw new DomainError(
+            "INVALID_STATE",
+            "Befehls-ID wurde bereits mit einem anderen Inhalt verwendet.",
+            409,
+          );
+        await client.query("COMMIT");
+        const stored = existing.rows[0].result_ref as
+          WorkspaceMutationResult<T> | T;
+        return {
+          value: structuredClone(
+            typeof stored === "object" &&
+              stored !== null &&
+              "value" in stored &&
+              "replayed" in stored
+              ? stored.value
+              : stored,
+          ),
+          replayed: true,
+        };
+      }
+      const value = await operation(client);
+      await client.query(
+        `INSERT INTO command_receipts
+           (organization_id,command_key,request_hash,status_code,result_ref,expires_at)
+         VALUES ($1,$2,$3,200,$4,$5)`,
+        [
+          organizationId,
+          input.commandKey,
+          input.requestHash,
+          { value, replayed: false },
+          new Date(Date.now() + sessionTtlMs),
+        ],
+      );
+      await client.query("COMMIT");
+      return { value: structuredClone(value), replayed: false };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
   private toView(row: Record<string, unknown>): WorkingSessionView {
     return {

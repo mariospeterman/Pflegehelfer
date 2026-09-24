@@ -7,7 +7,6 @@ import {
   type UserMessage,
 } from "@openuidev/react-headless";
 import type { Patient } from "../../core/types";
-import type { WorkdayCommand, WorkdayView } from "../../core/workday";
 import { clinicalAssistantLibrary } from "./clinical-library";
 import {
   ClinicalAssistantMessage,
@@ -23,7 +22,6 @@ import {
   ClinicalComposer,
   type MutableSubmissionChannel,
 } from "../conversation/ClinicalComposer";
-import { WorkdayPanel } from "../conversation/WorkdayPanel";
 
 export type { AssistantHandoff };
 
@@ -138,9 +136,6 @@ export function AssistantSurface({
   launchPrompt,
   onSelectPatient,
   onBusyChange,
-  workday,
-  availablePatients,
-  onWorkdayAction,
   externallyBusy,
 }: {
   patient: Patient | null;
@@ -153,13 +148,9 @@ export function AssistantSurface({
   launchPrompt: { id: number; text: string; autoSubmit?: boolean } | null;
   onSelectPatient: (patientId: string) => void;
   onBusyChange: (busy: boolean) => void;
-  workday: WorkdayView | null;
-  availablePatients: Patient[];
-  onWorkdayAction: (command: WorkdayCommand) => Promise<void>;
   externallyBusy: boolean;
 }) {
   const [error, setError] = useState<string | null>(null);
-  const [workdayBusy, setWorkdayBusy] = useState(false);
   const storage = useMemo(() => createConversationStorage(userId), [userId]);
   const submissionChannel = useMemo(() => createSubmissionChannel(), []);
   const llm = useMemo(
@@ -236,32 +227,12 @@ export function AssistantSurface({
                 ]
           }
         >
-          <AgentInterface.Sidebar />
           <AgentInterface.Route path="clinical-conversation">
             <AuthorizedThreadBootstrap />
             <AuthoritativeConversationRefresh
               storage={storage}
               onError={setError}
             />
-            <AgentInterface.MobileHeader
-              menuButton={false}
-              newChatButton={false}
-              agentName={
-                patient
-                  ? `Pflegehelfer zu ${patient.displayName}`
-                  : "Mein Assistent"
-              }
-            />
-            <AgentInterface.ThreadHeader>
-              <div className="openui-thread-label">
-                <span>
-                  {patient
-                    ? "Privater Patient:innen-Assistenzchat"
-                    : "Privater allgemeiner Assistenzchat"}
-                </span>
-                <small>{online ? "Verbunden" : "Offline · nur lesen"}</small>
-              </div>
-            </AgentInterface.ThreadHeader>
             <AgentInterface.ScrollArea scrollVariant="always">
               <div className="conversation-feed openui-feed">
                 <div className="conversation-opening">
@@ -279,25 +250,6 @@ export function AssistantSurface({
                     {patient.displayName} · Fall {patient.mrn}
                   </div>
                 )}
-                {workday && (
-                  <WorkdayPanel
-                    workday={workday}
-                    patients={availablePatients}
-                    busy={workdayBusy || externallyBusy}
-                    onPatient={onSelectPatient}
-                    onError={setError}
-                    onAction={async (command) => {
-                      setWorkdayBusy(true);
-                      onBusyChange(true);
-                      try {
-                        await onWorkdayAction(command);
-                      } finally {
-                        setWorkdayBusy(false);
-                        onBusyChange(false);
-                      }
-                    }}
-                  />
-                )}
                 <AgentInterface.Messages
                   assistantMessage={ClinicalAssistantMessage}
                   userMessage={ClinicalUserMessage}
@@ -310,7 +262,7 @@ export function AssistantSurface({
                 userId={userId}
                 patient={patient}
                 online={online}
-                externallyBusy={externallyBusy || workdayBusy}
+                externallyBusy={externallyBusy}
                 launchPrompt={launchPrompt}
                 submissionChannel={submissionChannel}
                 starters={

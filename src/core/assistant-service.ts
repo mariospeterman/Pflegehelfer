@@ -1983,7 +1983,7 @@ export class AssistantService {
             type: "PatientSummary",
             patientId: current.id,
             title: `${current.room} · ${current.displayName}`,
-            narrative: `${current.displayName} · Zimmer ${current.room} · Fall ${current.encounterId}. Strukturierte, rollenberechtigte Sicht; fehlende Angaben werden nicht als Verneinung dargestellt.`,
+            narrative: `${current.displayName} · Zimmer ${current.room} · Fall ${current.mrn}. Strukturierte, rollenberechtigte Sicht; fehlende Angaben werden nicht als Verneinung dargestellt.`,
             sections: [
               {
                 id: "identity",
@@ -1991,7 +1991,7 @@ export class AssistantService {
                 items: [
                   `Geburtsdatum ${current.birthDate}`,
                   `Zimmer ${current.room}`,
-                  `Fall ${current.encounterId}`,
+                  `Fall ${current.mrn}`,
                 ],
                 state: "confirmed" as const,
                 sourceLabel: `${current.source.provider} · Version ${current.source.version}`,

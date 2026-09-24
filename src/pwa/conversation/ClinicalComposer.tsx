@@ -29,7 +29,18 @@ interface AsrAvailability {
 const entityId = (entity: CriticalEntity) =>
   `${entity.kind}:${entity.start}:${entity.end}`;
 
-function ComposerIcon({ name }: { name: "microphone" | "stop" | "send" }) {
+function ComposerIcon({
+  name,
+}: {
+  name: "attach" | "microphone" | "stop" | "send";
+}) {
+  if (name === "attach") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="m8.5 12.5 6.8-6.8a3.2 3.2 0 0 1 4.5 4.5l-9.1 9.1a5 5 0 0 1-7.1-7.1l9-9" />
+      </svg>
+    );
+  }
   if (name === "microphone") {
     return (
       <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -93,6 +104,8 @@ export function ClinicalComposer({
     message: "Spracherkennung wird geprüft.",
   });
   const [voice, setVoice] = useState<VoiceReview | null>(null);
+  const [attachment, setAttachment] = useState<File | null>(null);
+  const fileInput = useRef<HTMLInputElement | null>(null);
   const recorder = useRef<MediaRecorder | null>(null);
   const media = useRef<MediaStream | null>(null);
   const chunks = useRef<Blob[]>([]);
@@ -195,6 +208,52 @@ export function ClinicalComposer({
     setTranscribing(false);
   }, [draftKey]);
 
+  useEffect(() => setAttachment(null), [draftKey]);
+
+  const uploadAttachment = async (file: File) => {
+    if (file.size < 1 || file.size > 8 * 1024 * 1024)
+      throw new Error("Anhänge müssen zwischen 1 Byte und 8 MB gross sein.");
+    if (
+      !["application/pdf", "image/png", "image/jpeg", "text/plain"].includes(
+        file.type,
+      )
+    )
+      throw new Error("Erlaubt sind PDF, PNG, JPEG und Textdateien.");
+    const sha256 = [
+      ...new Uint8Array(
+        await crypto.subtle.digest("SHA-256", await file.arrayBuffer()),
+      ),
+    ]
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("");
+    const parameters = new URLSearchParams({ audienceKind: "private" });
+    if (patient) parameters.set("patientId", patient.id);
+    const form = new FormData();
+    form.set("file", file, file.name);
+    const response = await fetch(
+      `/api/v1/workspace/attachments?${parameters.toString()}`,
+      {
+        method: "POST",
+        headers: {
+          "x-demo-user": userId,
+          ...assistantClientContextHeaders(),
+          "x-command-id": crypto.randomUUID(),
+          "x-content-sha256": sha256,
+        },
+        body: form,
+      },
+    );
+    const result = (await response.json()) as {
+      value?: { id: string; fileName: string };
+      message?: string;
+    };
+    if (!response.ok || !result.value)
+      throw new Error(
+        result.message ?? "Anhang konnte nicht gespeichert werden.",
+      );
+    return result.value;
+  };
+
   const submit = async () => {
     const prompt = value.trim();
     if (prompt.length < 2 || busy || !online) return;
@@ -216,12 +275,27 @@ export function ClinicalComposer({
       });
     }
     onError(null);
-    setValue("");
-    setVoice(null);
-    await processMessage({
-      role: "user",
-      content: [{ type: "text", text: prompt }],
-    });
+    try {
+      const storedAttachment = attachment
+        ? await uploadAttachment(attachment)
+        : null;
+      const submittedPrompt = storedAttachment
+        ? `${prompt}\n\nAnhang gespeichert: ${storedAttachment.fileName}.`
+        : prompt;
+      setValue("");
+      setVoice(null);
+      setAttachment(null);
+      await processMessage({
+        role: "user",
+        content: [{ type: "text", text: submittedPrompt }],
+      });
+    } catch (error) {
+      onError(
+        error instanceof Error
+          ? error.message
+          : "Anhang konnte nicht gespeichert werden.",
+      );
+    }
   };
 
   const startRecording = async () => {
@@ -442,6 +516,30 @@ export function ClinicalComposer({
           void submit();
         }}
       >
+        <input
+          ref={fileInput}
+          className="sr-only"
+          type="file"
+          accept="application/pdf,image/png,image/jpeg,text/plain"
+          onChange={(event) => {
+            const file = event.target.files?.[0] ?? null;
+            if (file && file.size > 8 * 1024 * 1024) {
+              onError("Anhänge dürfen höchstens 8 MB gross sein.");
+              event.target.value = "";
+              return;
+            }
+            setAttachment(file);
+          }}
+        />
+        <button
+          type="button"
+          className="attach"
+          aria-label="Datei anhängen"
+          disabled={busy || !online}
+          onClick={() => fileInput.current?.click()}
+        >
+          <ComposerIcon name="attach" />
+        </button>
         <button
           type="button"
           className={recording ? "voice recording" : "voice"}
@@ -474,8 +572,8 @@ export function ClinicalComposer({
             disabled={recording || transcribing || externallyBusy}
             placeholder={
               patient
-                ? `${patient.displayName.split(" ")[0]}: fragen, sprechen oder dokumentieren…`
-                : "Fragen, sprechen oder Arbeit organisieren…"
+                ? `${patient.displayName.split(" ")[0]}: Nachricht…`
+                : "Nachricht an Pflegehelfer…"
             }
             onChange={(event) => {
               setValue(event.target.value);
@@ -488,7 +586,11 @@ export function ClinicalComposer({
                 });
             }}
             onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
+              if (
+                event.key === "Enter" &&
+                !event.shiftKey &&
+                !event.nativeEvent.isComposing
+              ) {
                 event.preventDefault();
                 void submit();
               }
@@ -514,6 +616,22 @@ export function ClinicalComposer({
           </button>
         )}
       </form>
+      {attachment && (
+        <div className="composer-attachment" role="status">
+          <span>{attachment.name}</span>
+          <small>{Math.ceil(attachment.size / 1024)} KB · privat</small>
+          <button
+            type="button"
+            aria-label={`${attachment.name} entfernen`}
+            onClick={() => {
+              setAttachment(null);
+              if (fileInput.current) fileInput.current.value = "";
+            }}
+          >
+            ×
+          </button>
+        </div>
+      )}
       <small className="composer-meta">
         {transcribing
           ? "Sprachtranskript wird sicher verarbeitet…"

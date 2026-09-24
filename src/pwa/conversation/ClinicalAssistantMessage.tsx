@@ -1,4 +1,11 @@
-import { createContext, useContext, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   createParser,
   Renderer,
@@ -83,6 +90,9 @@ export function ClinicalAssistantMessage({
   const actions = useContext(ActionsContext);
   const { updateMessage, isRunning } = useThread();
   const [busy, setBusy] = useState(false);
+  const [speaking, setSpeaking] = useState(false);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   if (!actions) throw new Error("ConversationActionsProvider fehlt.");
   const source = message.content ?? "";
   const proposalStatus = message.name?.match(
@@ -102,6 +112,106 @@ export function ClinicalAssistantMessage({
     parsed.meta.errors.length === 0 &&
     (!isStreaming || parsed.meta.unresolved.length === 0),
   );
+
+  useEffect(
+    () => () => {
+      audioRef.current?.pause();
+      window.speechSynthesis?.cancel();
+    },
+    [],
+  );
+
+  const stopSpeaking = () => {
+    audioRef.current?.pause();
+    audioRef.current = null;
+    window.speechSynthesis?.cancel();
+    setSpeaking(false);
+  };
+
+  const readAloud = async () => {
+    if (speaking) {
+      stopSpeaking();
+      return;
+    }
+    const clone = bodyRef.current?.cloneNode(true) as HTMLElement | undefined;
+    clone
+      ?.querySelectorAll("button, [role='status'], [role='alert']")
+      .forEach((node) => node.remove());
+    const text = clone?.innerText.replace(/\s+/g, " ").trim().slice(0, 2400);
+    if (!text) return;
+    actions.onError(null);
+    setSpeaking(true);
+    try {
+      const statusResponse = await fetch("/api/v1/ai/status", {
+        headers: {
+          "x-demo-user": actions.userId,
+          ...assistantClientContextHeaders(),
+        },
+      });
+      const status = (await statusResponse.json()) as {
+        tts?: { mode?: string; ready?: boolean; acceptance?: string };
+        message?: string;
+      };
+      if (!statusResponse.ok)
+        throw new Error(status.message ?? "Sprachausgabe nicht verfügbar.");
+      if (
+        status.tts?.ready &&
+        status.tts.acceptance === "accepted" &&
+        status.tts.mode !== "browser-demo"
+      ) {
+        const response = await fetch("/api/v1/assistant/speech", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-demo-user": actions.userId,
+            ...assistantClientContextHeaders(),
+            "x-command-id": crypto.randomUUID(),
+          },
+          body: JSON.stringify({ text }),
+        });
+        if (!response.ok) {
+          const failure = (await response.json()) as { message?: string };
+          throw new Error(failure.message ?? "Sprachausgabe fehlgeschlagen.");
+        }
+        const url = URL.createObjectURL(await response.blob());
+        const audio = new Audio(url);
+        audioRef.current = audio;
+        audio.onended = () => {
+          URL.revokeObjectURL(url);
+          audioRef.current = null;
+          setSpeaking(false);
+        };
+        audio.onerror = () => {
+          URL.revokeObjectURL(url);
+          audioRef.current = null;
+          setSpeaking(false);
+          actions.onError("Die Audiodatei konnte nicht abgespielt werden.");
+        };
+        await audio.play();
+        return;
+      }
+      if (status.tts?.mode === "browser-demo" && "speechSynthesis" in window) {
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = "de-CH";
+        utterance.onend = () => setSpeaking(false);
+        utterance.onerror = () => {
+          setSpeaking(false);
+          actions.onError("Browser-Vorlesen wurde abgebrochen.");
+        };
+        window.speechSynthesis.cancel();
+        window.speechSynthesis.speak(utterance);
+        return;
+      }
+      throw new Error("Sprachausgabe ist in diesem Modus nicht freigegeben.");
+    } catch (error) {
+      setSpeaking(false);
+      actions.onError(
+        error instanceof Error
+          ? error.message
+          : "Sprachausgabe fehlgeschlagen.",
+      );
+    }
+  };
 
   const handleAction = async (event: ActionEvent) => {
     if (busy || isRunning) return;
@@ -200,33 +310,51 @@ export function ClinicalAssistantMessage({
       <div className="assistant-avatar" aria-hidden="true">
         P
       </div>
-      <div className="assistant-message-body" aria-live="polite">
-        {renderable ? (
-          <Renderer
-            response={renderedSource}
-            library={clinicalAssistantLibrary}
-            isStreaming={isStreaming}
-            onAction={(event) => void handleAction(event)}
-            onError={(errors) => {
-              if (!isStreaming && errors.length > 0)
-                actions.onError(
-                  "Die Antwort enthielt eine nicht freigegebene Darstellung und wurde verworfen.",
-                );
-            }}
-          />
-        ) : isStreaming ? (
-          <div className="assistant-thinking" role="status">
-            Antwort wird sicher aufgebaut…
-          </div>
-        ) : (
-          <div className="assistant-error" role="alert">
-            Diese Antwort wurde wegen einer ungültigen Komponente verworfen.
-          </div>
-        )}
-        {busy && (
-          <div className="assistant-thinking" role="status">
-            Änderung wird geprüft…
-          </div>
+      <div className="assistant-message-content">
+        <div
+          ref={bodyRef}
+          className="assistant-message-body"
+          aria-live="polite"
+        >
+          {renderable ? (
+            <Renderer
+              response={renderedSource}
+              library={clinicalAssistantLibrary}
+              isStreaming={isStreaming}
+              onAction={(event) => void handleAction(event)}
+              onError={(errors) => {
+                if (!isStreaming && errors.length > 0)
+                  actions.onError(
+                    "Die Antwort enthielt eine nicht freigegebene Darstellung und wurde verworfen.",
+                  );
+              }}
+            />
+          ) : isStreaming ? (
+            <div className="assistant-thinking" role="status">
+              Antwort wird sicher aufgebaut…
+            </div>
+          ) : (
+            <div className="assistant-error" role="alert">
+              Diese Antwort wurde wegen einer ungültigen Komponente verworfen.
+            </div>
+          )}
+          {busy && (
+            <div className="assistant-thinking" role="status">
+              Änderung wird geprüft…
+            </div>
+          )}
+        </div>
+        {!isStreaming && renderable && (
+          <button
+            type="button"
+            className="read-aloud-button"
+            aria-label={speaking ? "Vorlesen stoppen" : "Antwort vorlesen"}
+            aria-pressed={speaking}
+            onClick={() => void readAloud()}
+          >
+            <span aria-hidden="true">{speaking ? "■" : "◖))"}</span>
+            {speaking ? "Stoppen" : "Vorlesen"}
+          </button>
         )}
       </div>
     </div>

@@ -14,6 +14,10 @@ import {
   assistantClientContextHeaders,
   rotateAssistantClientContext,
 } from "./assistant-context";
+import {
+  WorkspaceView,
+  type WorkspaceDestination,
+} from "./workspace/WorkspaceView";
 
 interface ConversationDescriptor {
   id: string;
@@ -108,20 +112,33 @@ function formatBirthDate(value: string): string {
   return value.split("-").reverse().join(".");
 }
 
-function PatientSafetyBar({ patient }: { patient: Patient }) {
+function PatientSafetyBar({
+  patient,
+  onProfile,
+}: {
+  patient: Patient;
+  onProfile: () => void;
+}) {
   return (
     <div className="patient-safety-bar" aria-label="Aktiver Patientenkontext">
-      <span className="patient-room">{patient.room}</span>
-      <span>
-        <strong>{patient.displayName}</strong>
-        <small>
-          Geb. {formatBirthDate(patient.birthDate)} · Fall {patient.mrn}
-        </small>
-        <small className="patient-channel-label">
-          Pflegehelfer zu {patient.displayName.split(" ")[0]} · Privater
-          Assistenzchat
-        </small>
-      </span>
+      <button
+        type="button"
+        className="patient-identity-trigger"
+        aria-label={`Vollständiges Profil von ${patient.displayName} öffnen`}
+        onClick={onProfile}
+      >
+        <span className="patient-room">{patient.room}</span>
+        <span>
+          <strong>{patient.displayName}</strong>
+          <small>
+            Geb. {formatBirthDate(patient.birthDate)} · Fall {patient.mrn}
+          </small>
+          <small className="patient-channel-label">
+            Pflegehelfer zu {patient.displayName.split(" ")[0]} · Privater
+            Assistenzchat
+          </small>
+        </span>
+      </button>
       <span className="patient-safety-signals">
         {patient.allergyStatus === "confirmed" &&
           patient.allergies.length > 0 && (
@@ -591,7 +608,7 @@ function ContextPanel({
   snapshot,
   patient,
   onPatient,
-  onPrompt,
+  onNavigate,
   onUser,
   modal,
   theme,
@@ -603,7 +620,7 @@ function ContextPanel({
   snapshot: AppSnapshot;
   patient: Patient | null;
   onPatient: (id: string | null) => Promise<boolean>;
-  onPrompt: (text: string) => void;
+  onNavigate: (destination: WorkspaceDestination) => void;
   onUser: (id: string) => void;
   modal: boolean;
   theme: "system" | "light" | "dark";
@@ -612,12 +629,16 @@ function ContextPanel({
   close: () => void;
   conversations: ConversationDescriptor[];
 }) {
-  const actions = [
-    ["Mein Assistent", "Übergabe"],
-    ["Geplant · Arbeitsplan", "Was ist noch offen?"],
-    ["Team & @Fragen", "Welche Teamfragen sind offen?"],
-    ["Bibliothek", "Welche freigegebenen Richtlinien helfen mir heute?"],
-  ] as const;
+  const actions: Array<[string, WorkspaceDestination]> = [
+    ["Mein Assistent", "Chat"],
+    ["Bibliothek", "Library"],
+    ["Pläne", "Plans"],
+    ["Projekte", "Projects"],
+    ["Patient:innen", "Patients"],
+    ["Team & @Fragen", "Team"],
+    ["Anbieter", "Provider"],
+    ["Betriebsstatus", "Status"],
+  ];
   const [search, setSearch] = useState("");
   const normalizedSearch = search.trim().toLocaleLowerCase("de-CH");
   const visiblePatients = snapshot.patients.filter((item) =>
@@ -660,7 +681,7 @@ function ContextPanel({
         onClick={() =>
           void onPatient(null).then((changed) => {
             if (!changed) return;
-            onPrompt("Übergabe");
+            onNavigate("Chat");
             close();
           })
         }
@@ -668,7 +689,7 @@ function ContextPanel({
         <span aria-hidden="true">＋</span> Aktuellen Arbeitstag öffnen
       </button>
       <nav className="context-actions" aria-label="Arbeitskontext">
-        {actions.map(([label, prompt]) => (
+        {actions.map(([label, destination]) => (
           <button
             key={label}
             disabled={busy}
@@ -676,17 +697,17 @@ function ContextPanel({
               if (label === "Mein Assistent") {
                 void onPatient(null).then((changed) => {
                   if (!changed) return;
-                  onPrompt(prompt);
+                  onNavigate(destination);
                   close();
                 });
                 return;
               }
-              onPrompt(prompt);
+              onNavigate(destination);
               close();
             }}
           >
             <span>{label}</span>
-            <small>im Gespräch anzeigen</small>
+            <small>Arbeitsbereich öffnen</small>
           </button>
         ))}
       </nav>
@@ -698,9 +719,7 @@ function ContextPanel({
               key={topic.id}
               title={topic.description}
               onClick={() => {
-                onPrompt(
-                  `#${topic.label}: Zeige passende offene Teambeiträge.`,
-                );
+                onNavigate("Team");
                 close();
               }}
             >
@@ -722,7 +741,10 @@ function ContextPanel({
             className={patient?.id === item.id ? "active" : ""}
             onClick={() =>
               void onPatient(item.id).then((changed) => {
-                if (changed) close();
+                if (changed) {
+                  onNavigate("Chat");
+                  close();
+                }
               })
             }
           >
@@ -1018,11 +1040,11 @@ export function App() {
   const [selectedPatientId, setSelectedPatientId] = useState<string | null>(
     () => sessionStorage.getItem("pfh-patient-context"),
   );
-  const [activePatientLens, setActivePatientLens] = useState("Chat");
+  const [destination, setDestination] = useState<WorkspaceDestination>("Chat");
   const [online, setOnline] = useState(navigator.onLine);
   const [apiReady, setApiReady] = useState(true);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [launchPrompt, setLaunchPrompt] = useState<{
+  const [launchPrompt] = useState<{
     id: number;
     text: string;
     autoSubmit?: boolean;
@@ -1292,7 +1314,7 @@ export function App() {
       // conversation read increments generation and leaves this transition's
       // busy state permanently stale on fast clients.
       setSelectedPatientId(id);
-      setActivePatientLens("Chat");
+      setDestination("Chat");
       if (id) sessionStorage.setItem("pfh-patient-context", id);
       else sessionStorage.removeItem("pfh-patient-context");
       return true;
@@ -1310,8 +1332,6 @@ export function App() {
         setContextBusy(false);
     }
   };
-  const prompt = (text: string, autoSubmit = false) =>
-    setLaunchPrompt({ id: Date.now(), text, autoSubmit });
   const changeUser = (next: string) => {
     generation.current += 1;
     rotateAssistantClientContext();
@@ -1320,7 +1340,7 @@ export function App() {
     sessionStorage.setItem("pfh-demo-user", next);
     sessionStorage.removeItem("pfh-patient-context");
     setSelectedPatientId(null);
-    setActivePatientLens("Chat");
+    setDestination("Chat");
     setSnapshot(null);
     setWorkday(null);
     setConversations([]);
@@ -1397,6 +1417,14 @@ export function App() {
     .map((part) => part[0])
     .join("")
     .toLocaleUpperCase("de-CH");
+  const patientLensDestinations: Record<string, WorkspaceDestination> = {
+    Chat: "Chat",
+    Profil: "Profile",
+    Verlauf: "History",
+    Werte: "Values",
+    Team: "Team",
+    Mehr: "Provider",
+  };
 
   return (
     <div
@@ -1407,22 +1435,24 @@ export function App() {
         aria-label="Menü schliessen"
         onClick={() => setDrawerOpen(false)}
       />
-      <ContextPanel
-        snapshot={snapshot}
-        patient={patient}
-        onPatient={choosePatient}
-        onPrompt={prompt}
-        modal={drawerOpen}
-        onUser={(id) => {
-          setDrawerOpen(false);
-          changeUser(id);
-        }}
-        theme={theme}
-        onTheme={setTheme}
-        busy={contextBusy || assistantBusy}
-        close={() => setDrawerOpen(false)}
-        conversations={conversations}
-      />
+      {drawerOpen && (
+        <ContextPanel
+          snapshot={snapshot}
+          patient={patient}
+          onPatient={choosePatient}
+          onNavigate={setDestination}
+          modal
+          onUser={(id) => {
+            setDrawerOpen(false);
+            changeUser(id);
+          }}
+          theme={theme}
+          onTheme={setTheme}
+          busy={contextBusy || assistantBusy}
+          close={() => setDrawerOpen(false)}
+          conversations={conversations}
+        />
+      )}
       <main
         className="coworker-main"
         aria-hidden={drawerOpen ? true : undefined}
@@ -1483,33 +1513,24 @@ export function App() {
                 Klinische Detailansicht
               </a>
             )}
-            <label className="role-switcher">
-              <span className="sr-only">Demo-Rolle</span>
-              <select
-                value={userId}
-                onChange={(event) => changeUser(event.target.value)}
-                disabled={assistantBusy || contextBusy}
-              >
-                {snapshot.users.map((user) => (
-                  <option value={user.id} key={user.id}>
-                    {user.displayName} · {roleLabels[user.role]}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <span
+            <button
+              type="button"
               className={`actor-avatar ${connected ? "connected" : "offline"}${workday?.providerState === "pending" ? " pending" : ""}`}
-              aria-label={`${snapshot.currentUser.displayName}, ${roleLabels[snapshot.currentUser.role]}. ${syncTitle}`}
+              aria-label={`Eigenes Profil öffnen: ${snapshot.currentUser.displayName}, ${roleLabels[snapshot.currentUser.role]}. ${syncTitle}`}
               title={`${snapshot.currentUser.displayName} · ${roleLabels[snapshot.currentUser.role]} · ${syncTitle}`}
+              onClick={() => setDestination("MyProfile")}
             >
               {actorInitials}
               <i aria-hidden="true" />
-            </span>
+            </button>
           </div>
         </header>
         {patient ? (
           <>
-            <PatientSafetyBar patient={patient} />
+            <PatientSafetyBar
+              patient={patient}
+              onProfile={() => setDestination("Profile")}
+            />
             <nav
               className="patient-workspace-tabs"
               aria-label="Patientenarbeitsbereich"
@@ -1518,23 +1539,19 @@ export function App() {
                 (label) => (
                   <button
                     key={label}
-                    className={label === activePatientLens ? "active" : ""}
+                    className={
+                      patientLensDestinations[label] === destination
+                        ? "active"
+                        : ""
+                    }
                     aria-current={
-                      label === activePatientLens ? "page" : undefined
+                      patientLensDestinations[label] === destination
+                        ? "page"
+                        : undefined
                     }
                     disabled={assistantBusy || contextBusy}
                     onClick={() => {
-                      if (label === activePatientLens) return;
-                      setActivePatientLens(label);
-                      if (label === "Chat") return;
-                      const prompts: Record<string, string> = {
-                        Profil: "Zeige mir das Patientenprofil.",
-                        Verlauf: "Zeige mir den aktuellen Pflegeverlauf.",
-                        Werte: "Zeige mir die letzten Vitalwerte.",
-                        Team: "Zeige mir Teamfragen und Erwähnungen zu diesem Patienten.",
-                        Mehr: "Zeige mir den Medikationskontext nur lesbar.",
-                      };
-                      prompt(prompts[label]!, true);
+                      setDestination(patientLensDestinations[label] ?? "Chat");
                     }}
                   >
                     {label}
@@ -1562,71 +1579,89 @@ export function App() {
             </button>
           </div>
         )}
-        <CountersignaturePanel
-          snapshot={snapshot}
-          userId={userId}
-          activePatientId={selectedPatientId}
-          activeEncounterId={patient?.encounterId ?? null}
-          done={async (message) => {
-            await load();
-            setNotice(message);
-          }}
-        />
-        {["management", "it", "quality-safety"].includes(
-          snapshot.currentUser.role,
-        ) && (
-          <OrganizationEconomicsPanel
+        {destination === "Chat" && (
+          <CountersignaturePanel
+            snapshot={snapshot}
             userId={userId}
-            canEdit={["management", "it"].includes(snapshot.currentUser.role)}
+            activePatientId={selectedPatientId}
+            activeEncounterId={patient?.encounterId ?? null}
+            done={async (message) => {
+              await load();
+              setNotice(message);
+            }}
           />
         )}
-        <AssistantSurface
-          patient={patient}
-          userId={userId}
-          online={connected}
-          onExecuted={async (message, activePatientId) => {
-            if (activePatientId) {
-              boundAssistantPatientId.current = activePatientId;
-              setSelectedPatientId(activePatientId);
-              sessionStorage.setItem("pfh-patient-context", activePatientId);
+        {destination === "Provider" &&
+          ["management", "it", "quality-safety"].includes(
+            snapshot.currentUser.role,
+          ) && (
+            <OrganizationEconomicsPanel
+              userId={userId}
+              canEdit={["management", "it"].includes(snapshot.currentUser.role)}
+            />
+          )}
+        {destination === "Chat" ? (
+          <AssistantSurface
+            patient={patient}
+            userId={userId}
+            online={connected}
+            onExecuted={async (message, activePatientId) => {
+              if (activePatientId) {
+                boundAssistantPatientId.current = activePatientId;
+                setSelectedPatientId(activePatientId);
+                sessionStorage.setItem("pfh-patient-context", activePatientId);
+              }
+              await load(activePatientId);
+              setNotice(message);
+            }}
+            onHandoff={setHandoff}
+            snapshotRevision={revision}
+            opening={opening}
+            launchPrompt={launchPrompt}
+            onSelectPatient={(id) => void choosePatient(id)}
+            externallyBusy={contextBusy}
+            onBusyChange={setAssistantBusy}
+          />
+        ) : (
+          <WorkspaceView
+            destination={destination}
+            snapshot={snapshot}
+            patient={patient}
+            userId={userId}
+            workday={
+              ["care-assistant", "registered-nurse"].includes(
+                snapshot.currentUser.role,
+              )
+                ? workday
+                : null
             }
-            await load(activePatientId);
-            setNotice(message);
-          }}
-          onHandoff={setHandoff}
-          snapshotRevision={revision}
-          opening={opening}
-          launchPrompt={launchPrompt}
-          onSelectPatient={(id) => void choosePatient(id)}
-          externallyBusy={contextBusy}
-          onBusyChange={setAssistantBusy}
-          workday={
-            ["care-assistant", "registered-nurse"].includes(
-              snapshot.currentUser.role,
-            )
-              ? workday
-              : null
-          }
-          availablePatients={snapshot.patients}
-          onWorkdayAction={async (command) => {
-            const next = await api<WorkdayView>("/api/v1/workday", userId, {
-              method: "POST",
-              body: JSON.stringify(command),
-            });
-            setWorkday(next);
-            const activePatientId = next.activeEpisode?.patientId ?? null;
-            if (activePatientId) {
-              await api("/api/v1/assistant/context", userId, {
-                method: "POST",
-                body: JSON.stringify({ patientId: activePatientId }),
+            busy={contextBusy || assistantBusy}
+            onPatient={(id) => {
+              void choosePatient(id).then((changed) => {
+                if (changed) setDestination("Profile");
               });
-              boundAssistantPatientId.current = activePatientId;
-              setSelectedPatientId(activePatientId);
-              sessionStorage.setItem("pfh-patient-context", activePatientId);
-            }
-            await load();
-          }}
-        />
+            }}
+            onError={setNotice}
+            onWorkdayAction={async (command) => {
+              const next = await api<WorkdayView>("/api/v1/workday", userId, {
+                method: "POST",
+                body: JSON.stringify(command),
+              });
+              setWorkday(next);
+              const activePatientId = next.activeEpisode?.patientId ?? null;
+              if (activePatientId) {
+                await api("/api/v1/assistant/context", userId, {
+                  method: "POST",
+                  body: JSON.stringify({ patientId: activePatientId }),
+                });
+                boundAssistantPatientId.current = activePatientId;
+                setSelectedPatientId(activePatientId);
+                sessionStorage.setItem("pfh-patient-context", activePatientId);
+              }
+              await load();
+            }}
+          />
+        )}
       </main>
       {handoff && patient && (
         <DraftHandoffSheet

@@ -12,10 +12,13 @@ test.beforeEach(async ({ page, request }) => {
 });
 
 async function openDrawer(page: Page) {
+  const drawer = page.locator("aside.context-panel");
+  if (await drawer.isVisible()) return;
   const button = page.getByRole("button", {
     name: "Kontext und Verlauf öffnen",
   });
-  if (await button.isVisible()) await button.click();
+  await button.click();
+  await expect(drawer).toBeVisible();
 }
 
 async function choosePatient(page: Page, name = "Anna Beispiel") {
@@ -25,6 +28,13 @@ async function choosePatient(page: Page, name = "Anna Beispiel") {
     .filter({ hasText: name })
     .click();
   await expect(page.getByLabel("Aktiver Patientenkontext")).toContainText(name);
+}
+
+async function openDestination(page: Page, name: string) {
+  await openDrawer(page);
+  await page
+    .getByRole("button", { name: new RegExp(`^${name} Arbeitsbereich öffnen`) })
+    .click();
 }
 
 async function ask(page: Page, prompt: string) {
@@ -40,9 +50,12 @@ test("is one responsive conversation with drawer context and no module dashboard
     page.locator(".header-identity strong").getByText("Pflegehelfer"),
   ).toBeVisible();
   await expect(page).toHaveTitle(/Pflegehelfer · Kronenhof/);
+  await expect(page.locator(".workday-panel")).toHaveCount(0);
+  await openDestination(page, "Pläne");
   await expect(
     page.getByRole("heading", { name: "Übergabe patientenweise übernehmen" }),
   ).toBeVisible();
+  await openDrawer(page);
   await expect(
     page.getByText(/Keine offizielle Tertianum-Installation/),
   ).toBeAttached();
@@ -55,7 +68,10 @@ test("is one responsive conversation with drawer context and no module dashboard
   await expect(page.getByText("Meine Schicht", { exact: true })).toHaveCount(0);
   await expect(page.locator(".mobile-context-tabs")).toHaveCount(0);
 
+  await openDestination(page, "Mein Assistent");
   await choosePatient(page);
+  await expect(page.locator(".context-panel")).toHaveCount(0);
+  await expect(page.locator("main")).not.toContainText("Luca Demo");
   await expect(page.getByLabel("Aktiver Patientenkontext")).toContainText(
     "18.03.1941",
   );
@@ -170,24 +186,31 @@ test("patient lenses open directly and composer drafts restore per encounter", a
   await expect(page.locator(".conversation-feed")).not.toContainText(
     "Luca Entwurf bleibt privat",
   );
+  let navigationQueries = 0;
+  page.on("request", (request) => {
+    if (request.url().includes("/api/v1/assistant/query"))
+      navigationQueries += 1;
+  });
 
   await page
     .locator(".patient-workspace-tabs")
     .getByRole("button", { name: "Profil", exact: true })
     .click();
-  await expect(page.locator(".patient-context-card")).toBeVisible();
-  await expect(page.locator(".patient-context-card")).toContainText(
-    "Identität & Aufenthalt",
+  await expect(page.locator(".patient-profile-card")).toBeVisible();
+  await expect(page.locator(".patient-profile-card")).toContainText(
+    "Pflegepräferenz",
   );
-  await expect(page.locator(".patient-context-card")).toContainText(
-    /Bestätigt|Unbekannt|Nicht geliefert|Nicht freigegeben/,
+  await expect(page.locator(".patient-profile-card")).toContainText(
+    "Allergiestatus",
   );
 
   await page
     .locator(".patient-workspace-tabs")
     .getByRole("button", { name: "Werte", exact: true })
     .click();
-  await expect(page.locator(".vital-point-table").first()).toBeVisible();
+  await expect(page.locator(".record-list")).toBeVisible();
+  await expect(page.locator(".record-list")).toContainText(/Blutdruck|Puls/);
+  expect(navigationQueries).toBe(0);
 });
 
 test("direct patient changes lock conversation until the server confirms context", async ({
@@ -198,6 +221,7 @@ test("direct patient changes lock conversation until the server confirms context
     await new Promise((resolve) => setTimeout(resolve, 1500));
     await route.continue();
   });
+  await openDrawer(page);
   await page
     .locator(".patient-context-list button")
     .filter({ hasText: "Anna Beispiel" })
@@ -218,6 +242,7 @@ test("workday context changes lock the composer until the server confirms the ac
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop", "state transition runs once");
+  await openDestination(page, "Pläne");
 
   for (const patient of [
     "Anna Beispiel",
@@ -255,12 +280,10 @@ test("workday context changes lock the composer until the server confirms the ac
   await page
     .getByRole("button", { name: /Arbeit beginnen: Zimmer 214A/ })
     .click();
-  const composer = page.getByLabel("Nachricht an Pflegehelfer");
-  await expect(composer).toBeDisabled();
   await expect(page.getByLabel("Aktiver Patientenkontext")).toContainText(
     "Anna Beispiel",
   );
-  await expect(composer).toBeEnabled();
+  await expect(page.getByLabel("Nachricht an Pflegehelfer")).toHaveCount(0);
 
   const draftSaved = page.waitForResponse((response) => {
     if (!response.url().includes("/api/v1/workday")) return false;
@@ -272,6 +295,7 @@ test("workday context changes lock the composer until the server confirms the ac
     .fill("Morgenpflege begonnen; Mobilisation wartet noch.");
   await draftSaved;
   await page.reload();
+  await openDestination(page, "Pläne");
   await expect(
     page.getByLabel("Was wurde tatsächlich durchgeführt?"),
   ).toHaveValue("Morgenpflege begonnen; Mobilisation wartet noch.");
@@ -281,7 +305,10 @@ test("physician role starts its own coworker journey without a nursing dashboard
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop", "role journey runs once");
-  await page.locator(".role-switcher select").selectOption("u-physician");
+  await openDrawer(page);
+  await page
+    .locator(".drawer-role-switcher select")
+    .selectOption("u-physician");
   await expect(
     page.getByText("Guten Morgen — Fragen und Visitenpunkte sind gebündelt."),
   ).toBeVisible();
@@ -404,6 +431,7 @@ test("voice capture stays patient-bound and requires explicit transcript review"
     "Anna Beispiel",
   );
 
+  await page.locator(".drawer-close").click();
   await page.getByLabel("Aufnahme stoppen").click({ force: true });
   await expect(page.getByText("Sprachtranskript prüfen")).toBeVisible();
   await page.getByRole("button", { name: "Nachricht senden" }).click();
@@ -472,6 +500,7 @@ test("large text and a reduced keyboard viewport keep the composer usable", asyn
 test("handover readout uses explicit controllable browser speech", async ({
   page,
 }) => {
+  await openDestination(page, "Pläne");
   await page.evaluate(() => {
     const state = { spokenText: "", paused: false, cancelled: false };
     class TestSpeechSynthesisUtterance {
@@ -535,6 +564,67 @@ test("handover readout uses explicit controllable browser speech", async ({
   expect(speechState.cancelled).toBe(true);
 });
 
+test("each assistant message can play and stop supported browser speech", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "speech playback runs once");
+  await page.evaluate(() => {
+    const state = { spokenText: "", cancelled: false };
+    class TestSpeechSynthesisUtterance {
+      lang = "";
+      onend: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      constructor(readonly text: string) {}
+    }
+    Object.defineProperty(window, "SpeechSynthesisUtterance", {
+      configurable: true,
+      value: TestSpeechSynthesisUtterance,
+    });
+    Object.defineProperty(window, "speechSynthesis", {
+      configurable: true,
+      value: {
+        cancel: () => {
+          state.cancelled = true;
+        },
+        speak: (utterance: TestSpeechSynthesisUtterance) => {
+          state.spokenText = utterance.text;
+        },
+      },
+    });
+    Object.defineProperty(window, "__pfhMessageSpeechTest", {
+      configurable: true,
+      value: state,
+    });
+  });
+  await choosePatient(page);
+  await ask(page, "Zeige mir bitte die Patientenübersicht.");
+  const read = page.getByRole("button", { name: "Antwort vorlesen" }).last();
+  await expect(read).toBeVisible();
+  await read.click();
+  await expect(
+    page.getByRole("button", { name: "Vorlesen stoppen" }),
+  ).toBeVisible();
+  const spokenText = await page.evaluate(
+    () =>
+      (
+        window as unknown as {
+          __pfhMessageSpeechTest: { spokenText: string };
+        }
+      ).__pfhMessageSpeechTest.spokenText,
+  );
+  expect(spokenText).toContain("Anna Beispiel");
+  await page.getByRole("button", { name: "Vorlesen stoppen" }).click();
+  const cancelled = await page.evaluate(
+    () =>
+      (
+        window as unknown as {
+          __pfhMessageSpeechTest: { cancelled: boolean };
+        }
+      ).__pfhMessageSpeechTest.cancelled,
+  );
+  expect(cancelled).toBe(true);
+});
+
 test("general assistant navigation leaves the patient thread explicitly", async ({
   page,
 }) => {
@@ -544,9 +634,22 @@ test("general assistant navigation leaves the patient thread explicitly", async 
   });
   if (await menu.isVisible()) await menu.click();
   await page
-    .getByRole("button", { name: /Mein Assistent im Gespräch anzeigen/ })
+    .getByRole("button", { name: /Mein Assistent Arbeitsbereich öffnen/ })
     .click();
   await expect(page.getByText("Kein Patient aktiv")).toBeVisible();
   await expect(page.getByLabel("Aktiver Patientenkontext")).toHaveCount(0);
-  await expect(page.getByPlaceholder("Patienten suchen")).toHaveCount(1);
+  await expect(page.getByPlaceholder("Patienten suchen")).toHaveCount(0);
+});
+
+test("own-profile control opens the authenticated staff profile", async ({
+  page,
+}) => {
+  await page
+    .getByRole("button", { name: /Eigenes Profil öffnen: Lea Bernasconi/ })
+    .click();
+  const profile = page.locator(".own-profile-card");
+  await expect(profile).toContainText("Lea Bernasconi");
+  await expect(profile).toContainText("Pflegeassistenz");
+  await expect(profile).toContainText("Kronenhof · Rehabilitation 2");
+  await expect(profile).toContainText("Dienstliches Eigenprofil");
 });

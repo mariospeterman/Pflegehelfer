@@ -456,6 +456,11 @@ describe("assistant action gateway", () => {
     expect(response.components).toContainEqual(
       expect.objectContaining({ type: "PatientSummary" }),
     );
+    const summary = response.components.find(
+      (component) => component.type === "PatientSummary",
+    );
+    expect(summary?.narrative).toContain("Fall SH-260901-001");
+    expect(summary?.narrative).not.toContain("enc-anna-2026");
   });
 
   it("keeps the handover read command on the read-only route", async () => {
