@@ -35,6 +35,7 @@ async function openDestination(page: Page, name: string) {
   await page
     .getByRole("button", { name: new RegExp(`^${name} Arbeitsbereich öffnen`) })
     .click();
+  await expect(page.locator("aside.context-panel")).toBeHidden();
 }
 
 async function ask(page: Page, prompt: string) {

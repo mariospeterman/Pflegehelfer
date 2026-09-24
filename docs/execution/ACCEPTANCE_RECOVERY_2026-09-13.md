@@ -889,6 +889,14 @@ granular approval, patient isolation, superseded correction, semantic
 per-message speech and fixed-composer layouts. Actual-device testing and the
 complete integrated shared-work matrix remain unpassed.
 
+The first CI run for the published UI increment, `35994652724`, is retained as
+failed evidence. Sixty-eight journeys passed and 27 were deliberately skipped;
+one shell journey failed at all five widths because its helper started the next
+selection before the asynchronous **Mein Assistent** drawer close completed.
+No product authorization or state assertion failed. The helper now waits for
+the completed transition, and the exact journey passed 5/5 across 360, 390,
+768, 1024 and 1440 px before the replacement full CI run.
+
 The legitimate configured model key was used only for the bounded non-writing
 synthetic probe. The request reached the provider and failed HTTP 429 with
 sanitized `credit_balance_exhausted` / `insufficient_quota`; fallback was

@@ -211,6 +211,12 @@ independently. Provider rows say `SIMULATED`; a denied role sees no diagnostics.
   reload, general-assistant exit on both viewports, own profile on both
   viewports and the complete synthetic voice journey then passed. The entire
   five-viewport matrix was not rerun and is not claimed current.
+- GitHub Actions run `35994652724` is retained as a failed run: 68 journeys
+  passed, 27 were deliberately skipped and the same shell journey failed at
+  all five widths because its test helper did not await the asynchronous
+  drawer close after selecting **Mein Assistent**. The helper now waits for the
+  completed transition; that exact journey then passed 5/5 at 360, 390, 768,
+  1024 and 1440 px. The replacement full CI run is the remote acceptance gate.
 - The integrated API on port 3000 reports persistent `integrated-demo`, healthy
   PostgreSQL, Medplum 5.1.37 and available simulated providers. No destructive
   reset was run against it.
