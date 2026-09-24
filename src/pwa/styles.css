@@ -876,6 +876,7 @@ input:focus-visible {
   z-index: 17;
 }
 .patient-workspace-tabs button {
+  flex: 0 0 auto;
   min-width: 56px;
   min-height: 44px;
   padding: 0 10px;
@@ -2495,13 +2496,66 @@ button:disabled {
   background: var(--surface-soft);
   cursor: pointer;
 }
-.provider-workspace pre {
-  overflow: auto;
-  border-radius: 10px;
+.provider-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px;
+}
+.provider-list article {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
   padding: 12px;
   background: var(--surface-soft);
-  color: var(--ink);
-  white-space: pre-wrap;
+}
+.provider-list header,
+.provider-list header > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.provider-list header {
+  justify-content: space-between;
+}
+.provider-list header > div {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 1px;
+}
+.provider-list small,
+.provider-list dt {
+  color: var(--muted);
+  font-size: 11px;
+}
+.provider-list p,
+.provider-list dl,
+.provider-list dd {
+  margin: 0;
+}
+.provider-list dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.provider-list dd {
+  overflow-wrap: anywhere;
+  font-weight: 680;
+}
+.provider-state {
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 760;
+}
+.provider-state.available {
+  color: var(--success);
+  background: var(--success-soft);
+}
+.provider-state.degraded,
+.provider-state.down {
+  color: var(--danger);
+  background: var(--danger-soft);
 }
 
 @media (max-width: 700px) {

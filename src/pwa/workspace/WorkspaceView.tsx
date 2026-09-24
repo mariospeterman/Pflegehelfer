@@ -41,6 +41,26 @@ const roleLabels: Record<Role, string> = {
   "quality-safety": "Qualität & Sicherheit",
 };
 
+const providerLabels: Record<
+  AppSnapshot["providerHealth"][number]["provider"],
+  string
+> = {
+  wicare: "WiCare",
+  carecoach: "careCoach",
+  "sap-vitals": "SAP Vitals",
+  "device-gateway": "Geräte-Gateway",
+  "nurse-call": "Rufanlage",
+};
+
+const providerStatusLabels: Record<
+  AppSnapshot["providerHealth"][number]["status"],
+  string
+> = {
+  available: "Verfügbar",
+  degraded: "Eingeschränkt",
+  down: "Nicht verfügbar",
+};
+
 async function request<T>(
   path: string,
   userId: string,
@@ -1144,7 +1164,47 @@ export function WorkspaceView({
           </SectionState>
         ) : (
           <>
-            <pre>{JSON.stringify(snapshot.providerHealth, null, 2)}</pre>
+            <div className="provider-list" aria-label="Anbieterdiagnostik">
+              {snapshot.providerHealth.length === 0 && (
+                <SectionState>
+                  Keine freigegebene Anbieterdiagnostik vorhanden.
+                </SectionState>
+              )}
+              {snapshot.providerHealth.map((provider) => (
+                <article key={provider.provider}>
+                  <header>
+                    <div>
+                      <strong>{providerLabels[provider.provider]}</strong>
+                      <small>{provider.provider}</small>
+                    </div>
+                    <span className={`provider-state ${provider.status}`}>
+                      {providerStatusLabels[provider.status]}
+                    </span>
+                  </header>
+                  <p>{provider.message}</p>
+                  <dl>
+                    <div>
+                      <dt>Betriebsart</dt>
+                      <dd>
+                        {snapshot.capabilityProfile === "synthetic-simulator"
+                          ? "SIMULATED"
+                          : "Produktion"}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Latenz</dt>
+                      <dd>{provider.latencyMs} ms</dd>
+                    </div>
+                    <div>
+                      <dt>Geprüft</dt>
+                      <dd>
+                        {new Date(provider.checkedAt).toLocaleString("de-CH")}
+                      </dd>
+                    </div>
+                  </dl>
+                </article>
+              ))}
+            </div>
             {patient && snapshot.workspaceLinks?.patients[patient.id] && (
               <a
                 className="primary"
