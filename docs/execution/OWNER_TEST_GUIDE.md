@@ -17,8 +17,8 @@ benefit.
 | --------------------------- | -------------------------------------------------------------------------------------------------------------------- |
 | Reviewed remote head        | `e93c17c96307191d4005b6673901870c8270f9d6`                                                                           |
 | Implementation source       | UI foundation `2ad9c228a2f4479631c3a1f150db49ddbbd5a9ed`; audit fixes `e5eaddaec220af0de15f85cccadf452587e15a56`     |
-| Last clean API artifact     | `pfh-2ad9c228a2f4`, source `2ad9c228a2f4479631c3a1f150db49ddbbd5a9ed`, `dirty:false`                                 |
-| Last clean PWA artifact     | `pfh-2ad9c228a2f4`, same source, `dirty:false`, `matchingSource:true`                                                |
+| Last clean API artifact     | `pfh-b94ad0a82983`, source `b94ad0a82983d2dcb7663988d9e62ecc1829f155`, `dirty:false`                                 |
+| Last clean PWA artifact     | `pfh-b94ad0a82983`, same source, `dirty:false`, `matchingSource:true`                                                |
 | Local URLs                  | PWA `http://127.0.0.1:5173`; API `http://127.0.0.1:3000`; clean memory artifact `http://127.0.0.1:4173`              |
 | Runtime                     | `integrated-demo`, persistent PostgreSQL, Medplum FHIR R4 `5.1.37-82e609c`, independent provider simulator           |
 | Primary/second/denied roles | `u-nurse` Nora Frei; `u-assistant` Lea Bernasconi; `u-hr` Lina Wenger                                                |
@@ -208,19 +208,19 @@ time and no longer expose raw JSON; a denied role sees no diagnostics.
 
 ## Verification record
 
-- `pnpm verify` passed on the implementation commit: formatting,
-  zero-warning lint, both TypeScript targets, 457 enabled tests with 26
-  declared environment skips, and PWA/API production builds.
+- `pnpm verify` passed from clean head `b94ad0a82983`: formatting,
+  zero-warning lint, both TypeScript targets, 459 enabled tests with 26
+  declared environment skips, and matching PWA/API production builds.
 - The isolated PostgreSQL workspace test passed 1/1 after restart/read-back and
   scope-revocation denial; its temporary database was dropped.
-- The refreshed main PWA chunk is 2,398.00 kB minified / 695.78 kB gzip. This is
+- The refreshed main PWA chunk is 2,399.64 kB minified / 696.31 kB gzip. This is
   measured and remains a G7 performance failure/open item, not a success.
-- The desktop+mobile browser run initially produced 27 passes, 7 declared
-  skips and four failures. Review found one stale closed-drawer expectation and
-  two drawer-helper races; those scenarios were repaired and rerun. Workday
-  reload, general-assistant exit on both viewports, own profile on both
-  viewports and the complete synthetic voice journey then passed. The entire
-  five-viewport matrix was not rerun and is not claimed current.
+- The current full Playwright matrix passed 76 journeys with 39 deliberate
+  project/viewport skips across 360 px, 390 px, 768 px, 1024 px and 1440 px.
+  An initial audit rerun failed because a long-lived test server retained its
+  old static asset manifest across `clean-dist`; restarting that exact isolated
+  server from the clean artifact restored hashed assets, 12/12 affected mobile
+  journeys passed, and the complete matrix then passed.
 - GitHub Actions run `35994652724` is retained as a failed run: 68 journeys
   passed, 27 were deliberately skipped and the same shell journey failed at
   all five widths because its test helper did not await the asynchronous
@@ -230,6 +230,9 @@ time and no longer expose raw JSON; a denied role sees no diagnostics.
 - The integrated API on port 3000 reports persistent `integrated-demo`, healthy
   PostgreSQL, Medplum 5.1.37 and available simulated providers. No destructive
   reset was run against it.
+- `verify:security`, `verify:ops` and `verify:airgap` passed. The operations
+  probe verified health/readiness and a synthetic backup checksum; this is not
+  the still-open previous-release/integrated restore acceptance.
 - The release audit reproduced one hidden development-only 500 caused by
   duplicate concurrent startup context bindings. PostgreSQL recorded the
   active-session uniqueness collision. The coordinator regression passed 2/2,
