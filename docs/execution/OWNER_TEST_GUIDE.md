@@ -1,9 +1,10 @@
 # Pflegehelfer owner test guide — UI wiring increment
 
-Prepared and exercised 24 September 2026. This is the tested handoff for
-implementation commit `2ad9c228a2f4479631c3a1f150db49ddbbd5a9ed` on
-`codex/genui-production-showcase`, PR #1. The later documentation-only commit
-that contains this guide does not change the tested API or PWA artifact.
+Prepared and exercised 24 September 2026. This is the tested handoff for the
+UI foundation at `2ad9c228a2f4479631c3a1f150db49ddbbd5a9ed` plus the audited
+startup/provider/mobile fixes through
+`e5eaddaec220af0de15f85cccadf452587e15a56` on
+`codex/genui-production-showcase`, PR #1.
 
 Use only the fictional fixtures named here. Do not enter real patient,
 employee or credential data. The independent provider is a stateful simulator;
@@ -14,13 +15,13 @@ benefit.
 
 | Item                        | Tested value                                                                                                         |
 | --------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| Reviewed remote head        | `bb9b646f98efcd5410fd3ee9656bb78acd689d7c`                                                                           |
-| Implementation source       | `2ad9c228a2f4479631c3a1f150db49ddbbd5a9ed`                                                                           |
-| API artifact                | `pfh-2ad9c228a2f4`, source `2ad9c228a2f4479631c3a1f150db49ddbbd5a9ed`, `dirty:false`                                 |
-| PWA artifact                | `pfh-2ad9c228a2f4`, same source, `dirty:false`, `matchingSource:true`                                                |
+| Reviewed remote head        | `e93c17c96307191d4005b6673901870c8270f9d6`                                                                           |
+| Implementation source       | UI foundation `2ad9c228a2f4479631c3a1f150db49ddbbd5a9ed`; audit fixes `e5eaddaec220af0de15f85cccadf452587e15a56`     |
+| Last clean API artifact     | `pfh-2ad9c228a2f4`, source `2ad9c228a2f4479631c3a1f150db49ddbbd5a9ed`, `dirty:false`                                 |
+| Last clean PWA artifact     | `pfh-2ad9c228a2f4`, same source, `dirty:false`, `matchingSource:true`                                                |
 | Local URLs                  | PWA `http://127.0.0.1:5173`; API `http://127.0.0.1:3000`; clean memory artifact `http://127.0.0.1:4173`              |
 | Runtime                     | `integrated-demo`, persistent PostgreSQL, Medplum FHIR R4 `5.1.37-82e609c`, independent provider simulator           |
-| Primary/second/denied roles | `u-nurse` Lea Bernasconi; `u-assistant` Nora Keller; `u-hr` Mia Frei                                                 |
+| Primary/second/denied roles | `u-nurse` Nora Frei; `u-assistant` Lea Bernasconi; `u-hr` Lina Wenger                                                |
 | Subjects                    | Anna Beispiel `p-anna`, Fall `SH-260901-001`; Luca Demo `p-luca`                                                     |
 | Model                       | Hosted synthetic-only `gpt-5.6-terra`; configured but **not accepted**                                               |
 | ASR                         | Hosted `gpt-4o-transcribe`; configured/ready-for-test, positive acceptance **blocked**                               |
@@ -83,7 +84,7 @@ pass while provider credit is exhausted; the UI must show that component
 failure without relabelling the API or records offline. Do not accept a generic
 fallback response as T04 success.
 
-### 4. Reviewed patient profile update — API/PostgreSQL PASS; owner browser click pending
+### 4. Reviewed patient profile update — integrated browser/PostgreSQL PASS
 
 1. As `u-nurse`, open Anna → **Profil**.
 2. Enter a fictional care preference and click **Änderung prüfen**.
@@ -98,17 +99,18 @@ Current visibility is rechecked before an idempotent replay.
 
 Evidence: API denial/prepare/accept tests pass. Isolated PostgreSQL database
 `pflegehelfer_codex_workspace_20260924_1140` passed denied-scope, accept,
-restart and read-back, then was dropped. This click flow was not written into
-the preserved integrated demo store.
+restart and read-back, then was dropped. The actual integrated browser then
+prepared, reviewed, accepted and re-read the fictional preference `Morgens
+zuerst informieren.` for Anna in the preserved demo store.
 
-### 5. Shared comments, `@` and `#` — API PASS; two-user browser acceptance pending
+### 5. Shared comments, `@` and `#` — one-way two-user browser PASS
 
 1. Open Anna → **Team**.
-2. Choose the governed `#Mobilität` filter and select `@Nora Keller` from the
+2. Choose the governed `#Mobilität` filter and select `@Lea Bernasconi` from the
    authorized picker.
 3. Enter `Bitte in der nächsten Schicht eine Rückmeldung zur geplanten
 Mobilisation ergänzen.` and click **Teilen**.
-4. In the demo-only account menu, switch to Nora and reopen Anna → **Team**.
+4. In the demo-only account menu, switch to Lea and reopen Anna → **Team**.
 
 Expected durable result: one attributed patient-team comment retains the
 selected person/topic and is visible only to authorized team members. A role
@@ -117,10 +119,12 @@ patient access. General **Team & @Fragen** instead creates an explicit direct
 message after a staff profile and recipient are selected.
 
 Evidence: scoped create/list/replay, unauthorized HR denial, team-member
-filtering and PostgreSQL restart/read-back pass. The complete live two-user
-reply/read-receipt/revocation browser journey is still unpassed.
+filtering and PostgreSQL restart/read-back pass. Nora shared the fictional
+comment from the integrated browser; Lea then reopened Anna and saw the exact
+persisted `@Lea Bernasconi #Mobilität` entry. Reply/read-receipt/revocation and
+concurrent conflict acceptance remain unpassed.
 
-### 6. Attachment and Library — API/PostgreSQL PASS; browser file-picker pending
+### 6. Attachment and Library — private browser upload PASS; patient-message path pending
 
 1. In Anna's chat, click **Datei anhängen**; select a benign fictional PDF,
    PNG/JPEG or text file no larger than 8 MiB.
@@ -134,10 +138,12 @@ content is returned authenticated with `no-store`/`nosniff`, never as a public
 URL. Failed upload keeps recoverable text.
 
 Evidence: digest/signature/other-actor denial and byte-for-byte PostgreSQL
-restart/read-back pass. The OS file-picker was not driven in the integrated
-visual session, so that exact click remains owner acceptance.
+restart/read-back pass. The actual browser file picker uploaded
+`synthetic-library-note.txt` to Lea's private Library and the durable item was
+listed after navigation. Attaching and sending a patient-bound file, then
+opening its authenticated bytes in a second browser, remains unpassed.
 
-### 7. Projects reuse existing work — API PASS; browser creation pending
+### 7. Projects reuse existing work — integrated browser/member read-back PASS
 
 1. Return to **Mein Assistent**, open menu → **Projekte**.
 2. Create `Synthetische Mobilitätskoordination`, purpose `Vorhandene Arbeit
@@ -149,8 +155,11 @@ Expected durable result: one versioned project is visible to both members and
 links the existing task ID; no copied task or second completion lifecycle is
 created. Linked objects remain filtered by each viewer's underlying access.
 
-Evidence: create, optimistic link and member read-back tests pass. Full browser
-and concurrent-member conflict acceptance remains pending.
+Evidence: create, optimistic link and member read-back tests pass. Nora created
+`Synthetische Mobilitätskoordination`, added Lea, and linked the existing Anna
+task through the integrated browser. After switching accounts and recovering
+the browser session, Lea saw the same versioned project and link. Concurrent
+member conflict acceptance remains pending.
 
 ### 8. Plans, dictation and read-aloud — mixed result
 
@@ -181,7 +190,8 @@ Actual device audio, server TTS and a real microphone remain blocked/not run.
 Expected result on this run: API authenticated; PostgreSQL ready; Medplum ready
 with its own message; model configured/ready-for-test with the sanitized last
 429 probe; ASR ready-for-test; browser TTS ready-for-test; delivery queues shown
-independently. Provider rows say `SIMULATED`; a denied role sees no diagnostics.
+independently. Provider cards say `SIMULATED`, show separate state/latency/check
+time and no longer expose raw JSON; a denied role sees no diagnostics.
 
 ## Actual API and persistence trace
 
@@ -220,6 +230,16 @@ independently. Provider rows say `SIMULATED`; a denied role sees no diagnostics.
 - The integrated API on port 3000 reports persistent `integrated-demo`, healthy
   PostgreSQL, Medplum 5.1.37 and available simulated providers. No destructive
   reset was run against it.
+- The release audit reproduced one hidden development-only 500 caused by
+  duplicate concurrent startup context bindings. PostgreSQL recorded the
+  active-session uniqueness collision. The coordinator regression passed 2/2,
+  the development reload then issued exactly one context POST (HTTP 200), and
+  the focused production browser file passed 3 journeys with 3 deliberate
+  project skips across desktop/mobile.
+- The preserved integrated demo now contains one fictional private Library
+  file, one reviewed Anna profile preference, one addressed Anna team comment
+  and one two-member project linked to an existing task. These are additive
+  synthetic fixtures; no live-demo reset or provider fault injection was run.
 
 ## Screenshot index
 
@@ -237,6 +257,11 @@ acceptance of the remaining gates:
 - `.gstack/qa-reports/screenshots/ui-wiring-after-team-desktop-2026-09-24.png`
 - `.gstack/qa-reports/screenshots/ui-wiring-after-source-bound-summary-desktop-dark-2026-09-24.png`
 - `.gstack/qa-reports/screenshots/ui-wiring-after-status-desktop-dark-2026-09-24-v2.png`
+- `.gstack/qa-reports/screenshots/release-audit-conversation-2026-09-24.png`
+- `.gstack/qa-reports/screenshots/release-audit-profile-accepted-2026-09-24.png`
+- `.gstack/qa-reports/screenshots/release-audit-team-recipient-2026-09-24.png`
+- `.gstack/qa-reports/screenshots/release-audit-mobile-dark-patient-2026-09-24.png`
+- `.gstack/qa-reports/screenshots/release-audit-mobile-provider-cards-2026-09-24.png`
 
 ## Explicitly failed, blocked or not run
 
@@ -245,8 +270,9 @@ acceptance of the remaining gates:
 - **BLOCKED/NOT ACCEPTED:** real ASR microphone, server TTS and actual-device
   audio playback.
 - **NOT RUN:** actual phone/tablet hardware, complete five-viewport/system-theme
-  matrix, browser file picker, live two-user reply/read/revocation, concurrent
-  project/profile conflict UI, complete two-shift integrated ward loop.
+  matrix, patient-bound send/open file journey, live two-user reply/read/
+  revocation, concurrent project/profile conflict UI, complete two-shift
+  integrated ward loop.
 - **OPEN INTERNAL:** department/publication flows, test-IdP OIDC/BFF and
   non-bypass RLS, previous-release migration/restore, retention/egress,
   measured value projection/improvement and final performance/code splitting.

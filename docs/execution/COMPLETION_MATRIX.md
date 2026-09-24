@@ -36,16 +36,29 @@ cross-cutting closure probes, not replacement identifiers.
 
 ## Verification ledger — 2026-09-19
 
-| Evidence class                | Result                                                                                                                                   |
-| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| Source gate                   | `pnpm verify`: 428 passed, 25 explicit skips; format, zero-warning lint, both TypeScript configurations and PWA/API builds passed.       |
-| Memory browser                | 67 passed, 23 deliberate skips, zero failures across five viewport projects after the mobile-offline repair.                             |
-| Integrated PostgreSQL         | 7 files / 24 tests passed sequentially.                                                                                                  |
-| Integrated Medplum            | 5.1.37 seed/transaction check passed; optimistic stale-version transaction 1/1 passed.                                                   |
-| Integrated provider simulator | Authentication/read-back/restart 1/1 passed; PostgreSQL provider leasing/read-back/recovery is included in the 24-test real-store suite. |
-| Integrated browser            | Source-linked refresh 1/1; bedside review/write 1/1; three-turn correction/latest approval/same-page/reload 1/1.                         |
-| Model                         | Configured `gpt-5.6-terra` real non-writing call failed and fell back; connected-model acceptance is unpassed.                           |
-| Security/operations           | `verify:security`, `verify:ops` and `verify:airgap` passed.                                                                              |
+| Evidence class                | Result                                                                                                                                                                       |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Source gate                   | `pnpm verify`: 428 passed, 25 explicit skips; format, zero-warning lint, both TypeScript configurations and PWA/API builds passed.                                           |
+| Memory browser                | 67 passed, 23 deliberate skips, zero failures across five viewport projects after the mobile-offline repair.                                                                 |
+| Integrated PostgreSQL         | 7 files / 24 tests passed sequentially.                                                                                                                                      |
+| Integrated Medplum            | 5.1.37 seed/transaction check passed; optimistic stale-version transaction 1/1 passed.                                                                                       |
+| Integrated provider simulator | Authentication/read-back/restart 1/1 passed; PostgreSQL provider leasing/read-back/recovery is included in the 24-test real-store suite.                                     |
+| Integrated browser            | Source-linked refresh 1/1; bedside review/write 1/1; three-turn correction/latest approval/same-page/reload 1/1.                                                             |
+| Model                         | Configured `gpt-5.6-terra` real non-writing call reached the provider but failed at quota enforcement; fallback was `false`, so connected-model acceptance remains unpassed. |
+| Security/operations           | `verify:security`, `verify:ops` and `verify:airgap` passed.                                                                                                                  |
+
+## Release audit — 2026-09-24
+
+| Evidence class     | Result                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GitHub             | Reviewed remote head `e93c17c96307191d4005b6673901870c8270f9d6`. Replacement Actions run `35996034068` passed verify, security, the full memory browser matrix and operations after the earlier drawer-race failure was retained as evidence.                                                                                                                                                                           |
+| Startup context    | The integrated development browser reproduced one hidden duplicate `POST /api/v1/assistant/context`; PostgreSQL recorded `working_sessions_one_active_actor`. Fix `495844994daf01f3e480fb5c0797823c017401e5` shares the in-flight binding and prevents an older scope from replacing a newer one. Two coordinator regressions passed, and the live reload then made one HTTP 200 context request with no console error. |
+| Workspace browser  | The preserved integrated PostgreSQL demo accepted and re-read one fictional Anna profile preference, one addressed `#Mobilität` comment visible to the named second user, one private Library upload, and one two-member project linked to an existing task. These are bounded synthetic fixtures, not institutional or customer evidence.                                                                              |
+| Provider/mobile UI | Fix `e5eaddaec220af0de15f85cccadf452587e15a56` replaces raw provider JSON with authorized status cards and prevents compact patient tabs from compressing their labels. Focused production browser regressions passed 3/3 with 3 deliberate cross-project skips; the actual 390×844 dark integrated view had no console errors.                                                                                         |
+| Connected model    | The current authorized key reached `gpt-5.6-terra` through the same-runtime no-write probe and failed HTTP 429 `credit_balance_exhausted`/`insufficient_quota`, fallback `false`. Connectivity is configured; connected-model acceptance is not passed.                                                                                                                                                                 |
+
+This audit improves current G3/G7 evidence but does not close their remaining
+constituents. G1–G7 remain `PARTIAL`.
 
 ## Current increment evidence — 2026-09-20
 
@@ -62,14 +75,14 @@ cross-cutting closure probes, not replacement identifiers.
 
 ## Readiness outputs
 
-| Output                                 | Status      | Reason                                                                                                                                                                         |
-| -------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Source published/reviewable            | RELEASABLE  | Secret-free source, lockfile, tests and evidence are reviewable. The published PR head/build identity and clean-checkout CI run are recorded above.                            |
-| Conversation replacement implemented   | IMPLEMENTED | OpenUI, AI SDK UIMessage SSE, one guarded composer and server-owned authorized history replace the bespoke surface.                                                            |
-| Connected AI/audio scenario accepted   | NOT READY   | The last authorized attempt failed and used fallback; this run did not reuse the old exposed key. Replacement-key/local-runtime application and ASR/TTS acceptance are absent. |
-| Full synthetic product complete        | NOT READY   | G1–G7 retain the internal closure work listed above.                                                                                                                           |
-| Institutional read-only pilot approved | NOT READY   | OIDC, RLS/isolation, provider authorization and institutional approvals are missing.                                                                                           |
-| Controlled real write pilot approved   | NOT READY   | Synthetic atomic acceptance/read-back/recovery pass; real provider contracts/mappings, institutional security controls and sign-off are missing.                               |
+| Output                                 | Status      | Reason                                                                                                                                                                                          |
+| -------------------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Source published/reviewable            | RELEASABLE  | Secret-free source, lockfile, tests and evidence are reviewable. The published PR head/build identity and clean-checkout CI run are recorded above.                                             |
+| Conversation replacement implemented   | IMPLEMENTED | OpenUI, AI SDK UIMessage SSE, one guarded composer and server-owned authorized history replace the bespoke surface.                                                                             |
+| Connected AI/audio scenario accepted   | NOT READY   | The current authorized key reaches the provider, but the last bounded call failed as `credit_balance_exhausted` with fallback `false`. Connected application and ASR/TTS acceptance are absent. |
+| Full synthetic product complete        | NOT READY   | G1–G7 retain the internal closure work listed above.                                                                                                                                            |
+| Institutional read-only pilot approved | NOT READY   | OIDC, RLS/isolation, provider authorization and institutional approvals are missing.                                                                                                            |
+| Controlled real write pilot approved   | NOT READY   | Synthetic atomic acceptance/read-back/recovery pass; real provider contracts/mappings, institutional security controls and sign-off are missing.                                                |
 
 Production WiCare, careCoach, SAP, device and nurse-call operations remain
 `EXTERNAL_VENDOR_GATE` individually until their private contracts, credentials,

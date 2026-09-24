@@ -1,6 +1,6 @@
 # ADR-0013: Clinical handover snapshot and immutable migration ledger
 
-Status: Accepted  
+Status: Accepted
 Date: 2026-09-12
 
 ## Decision
