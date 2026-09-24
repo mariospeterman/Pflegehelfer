@@ -871,14 +871,14 @@ authorized team list. Projects reference existing task IDs and do not own a
 duplicate task lifecycle.
 
 An isolated PostgreSQL database
-`pflegehelfer_codex_workspace_20260924_1042` proved comment, attachment bytes
+`pflegehelfer_codex_workspace_20260924_1140` proved comment, attachment bytes
 and accepted profile-field restart/read-back, then was dropped. The preserved
 integrated demonstration store was not reset. Memory/API tests also proved
 unauthorized patient denial, private-file denial, replay, team-member filtering
 and project membership/task linking. The complete unit run passed 457 enabled
 tests with 26 declared environment skips. Both TypeScript targets and scoped
-zero-warning lint passed. A production build passed; its main PWA chunk was
-2,398.01 kB minified / 695.79 kB gzip, so performance acceptance remains open.
+zero-warning lint passed. The clean implementation build's main PWA chunk was
+2,398.00 kB minified / 695.78 kB gzip, so performance acceptance remains open.
 
 The integrated browser was inspected at 1440×900 and emulated 390×844 in light
 and dark modes. The inspected views included the compact patient conversation,

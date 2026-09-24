@@ -8,7 +8,7 @@
 
 **Reviewed branch/PR head:** `bb9b646f98efcd5410fd3ee9656bb78acd689d7c`
 
-**Current conversational implementation:** `43edbdbcf55e920c947cf133f8cead3e207cb9f5`
+**Current conversational implementation:** `2ad9c228a2f4479631c3a1f150db49ddbbd5a9ed`
 
 **Existing pull request:** #1, draft and unmerged at the recheck
 **Canonical destination:** this file, `docs/execution/PFLEGEHELFER_COMPLETION.md`
