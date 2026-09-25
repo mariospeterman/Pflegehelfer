@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "organizationId": "org-demo",
+  "version": 1,
+  "effectiveFrom": "2026-09-21",
+  "currency": "CHF",
+  "chargingEnabled": false,
+  "pilot": {
+    "status": "not-agreed",
+    "amountMinor": null,
+    "scope": [
+      "Workflow and integration assessment",
+      "Baseline definition and bounded synthetic pilot",
+      "Measured benefit evaluation"
+    ]
+  },
+  "deployment": {
+    "status": "not-agreed",
+    "hosting": "managed-cloud",
+    "amountMinor": null,
+    "separatelyQuoted": ["integration", "migration", "training", "hardware"]
+  },
+  "subscription": {
+    "status": "not-agreed",
+    "monthlyAmountMinor": null,
+    "siteIds": ["rehab-2"],
+    "workflowIds": ["nursing-day"],
+    "integrationIds": [],
+    "supportDescription": "Contract-defined maintenance and support; no employee, account, device or role charge."
+  },
+  "usage": {
+    "supplyMode": "hosted-provider",
+    "includedAllowanceMinor": 0,
+    "warningThresholdPercent": [50, 80, 100],
+    "spendingLimitMinor": null,
+    "rateCards": []
+  }
+}

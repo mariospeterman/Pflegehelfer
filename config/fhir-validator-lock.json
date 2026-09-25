@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "validator": {
+    "version": "6.9.12",
+    "url": "https://github.com/hapifhir/org.hl7.fhir.core/releases/download/6.9.12/validator_cli.jar",
+    "sha256": "0e53ab1d1a6f1e35f505255c0b8ce10a35fcf27e6e96b503640f784cd07e5ad6"
+  },
+  "packages": [
+    {
+      "id": "ch.fhir.ig.ch-core",
+      "version": "6.0.0",
+      "url": "https://packages2.fhir.org/packages/ch.fhir.ig.ch-core/6.0.0",
+      "sha256": "890b7d6d7eac286ba3ce28b5a8e88913a444bdccbfd163809a64337be6db21ca"
+    }
+  ]
+}

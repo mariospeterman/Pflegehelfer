@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "organizationId": "org-alpenblick-demo",
+  "version": 1,
+  "effectiveFrom": "2026-09-21",
+  "currency": "CHF",
+  "chargingEnabled": false,
+  "pilot": {
+    "status": "not-agreed",
+    "amountMinor": null,
+    "scope": [
+      "Long-term-care workflow and integration assessment",
+      "Baseline definition and bounded synthetic pilot",
+      "Measured benefit evaluation"
+    ]
+  },
+  "deployment": {
+    "status": "not-agreed",
+    "hosting": "on-premises",
+    "amountMinor": null,
+    "separatelyQuoted": ["integration", "migration", "training", "hardware"]
+  },
+  "subscription": {
+    "status": "not-agreed",
+    "monthlyAmountMinor": null,
+    "siteIds": ["alpenblick-wohnbereich-a"],
+    "workflowIds": ["nursing-day"],
+    "integrationIds": [],
+    "supportDescription": "Alpenblick-specific organization scope; no employee, account, device or role charge."
+  },
+  "usage": {
+    "supplyMode": "local-inference",
+    "includedAllowanceMinor": 0,
+    "warningThresholdPercent": [50, 80, 100],
+    "spendingLimitMinor": null,
+    "rateCards": []
+  }
+}
