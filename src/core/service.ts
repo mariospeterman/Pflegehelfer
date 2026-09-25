@@ -390,6 +390,9 @@ export class PflegehelferService {
   snapshot(userId: string, purpose?: Purpose): AppSnapshot {
     const user = this.user(userId);
     const activePurpose = purpose ?? user.defaultPurpose;
+    const patientOrder = new Map(
+      user.patientIds.map((patientId, index) => [patientId, index]),
+    );
     const visiblePatients = this.state.patients
       .filter(
         (patient) =>
@@ -402,7 +405,12 @@ export class PflegehelferService {
             patient,
           ).allow,
       )
-      .map((patient) => minimumPatientView(user, patient));
+      .map((patient) => minimumPatientView(user, patient))
+      .sort(
+        (left, right) =>
+          (patientOrder.get(left.id) ?? Number.MAX_SAFE_INTEGER) -
+          (patientOrder.get(right.id) ?? Number.MAX_SAFE_INTEGER),
+      );
     const visibleIds = new Set(visiblePatients.map((patient) => patient.id));
     const visibleTasks = this.state.tasks.filter((task) => {
       const patient = task.patientId

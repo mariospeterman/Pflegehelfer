@@ -68,8 +68,8 @@ describe("clinical communication visibility", () => {
     const service = new PflegehelferService();
     expect(() =>
       service.createCommunication("u-nurse", {
-        patientId: "p-mei",
-        encounterId: "enc-mei-2026",
+        patientId: "p-eva",
+        encounterId: "enc-eva-2026",
         request: "Bitte Mobilität beurteilen.",
         reason: "Unklarer Transferstatus",
         recipientRole: "physiotherapy",

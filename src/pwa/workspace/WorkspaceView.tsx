@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { AppSnapshot, Patient, Role } from "../../core/types";
+import type { AppSnapshot, Patient, Purpose, Role } from "../../core/types";
 import type {
   WorkspaceAttachment,
   WorkspaceComment,
@@ -39,6 +39,14 @@ const roleLabels: Record<Role, string> = {
   hr: "HR",
   it: "IT",
   "quality-safety": "Qualität & Sicherheit",
+};
+
+const purposeLabels: Record<Purpose, string> = {
+  "direct-care": "Direkte Versorgung",
+  operations: "Betrieblicher Auftrag",
+  administration: "Administration",
+  "quality-review": "Qualitätsprüfung",
+  emergency: "Notfallzugriff",
 };
 
 const providerLabels: Record<
@@ -211,8 +219,7 @@ function PatientProfile({
         <div>
           <dt>Aufenthalt</dt>
           <dd>
-            Zimmer {patient.room} · Fall {patient.mrn} · Encounter{" "}
-            {patient.encounterId}
+            Zimmer {patient.room} · Fall {patient.mrn}
           </dd>
         </div>
         <div>
@@ -1145,11 +1152,21 @@ export function WorkspaceView({
           </div>
           <div>
             <dt>Freigegebene Bereiche</dt>
-            <dd>{snapshot.currentUser.wardIds.join(" · ") || "Keine"}</dd>
+            <dd>
+              {snapshot.currentUser.wardIds
+                .map((ward) =>
+                  ward === snapshot.organization.siteId
+                    ? snapshot.organization.displayName
+                    : ward === "ltc-1"
+                      ? "Langzeitpflege 1"
+                      : "Weiterer freigegebener Bereich",
+                )
+                .join(" · ") || "Keine"}
+            </dd>
           </div>
           <div>
             <dt>Arbeitszweck</dt>
-            <dd>{snapshot.currentUser.defaultPurpose}</dd>
+            <dd>{purposeLabels[snapshot.currentUser.defaultPurpose]}</dd>
           </div>
           <div>
             <dt>Gerätestatus</dt>

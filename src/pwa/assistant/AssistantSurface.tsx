@@ -22,6 +22,7 @@ import {
   ClinicalComposer,
   type MutableSubmissionChannel,
 } from "../conversation/ClinicalComposer";
+import type { WorkspaceDestination } from "../workspace/WorkspaceView";
 
 export type { AssistantHandoff };
 
@@ -137,6 +138,7 @@ export function AssistantSurface({
   onSelectPatient,
   onBusyChange,
   externallyBusy,
+  onNavigate,
 }: {
   patient: Patient | null;
   userId: string;
@@ -149,6 +151,7 @@ export function AssistantSurface({
   onSelectPatient: (patientId: string) => void;
   onBusyChange: (busy: boolean) => void;
   externallyBusy: boolean;
+  onNavigate: (destination: WorkspaceDestination) => void;
 }) {
   const [error, setError] = useState<string | null>(null);
   const storage = useMemo(() => createConversationStorage(userId), [userId]);
@@ -195,37 +198,6 @@ export function AssistantSurface({
           logoUrl="/logo-mark.svg"
           defaultPath="clinical-conversation"
           scrollVariant="always"
-          starters={
-            patient
-              ? [
-                  {
-                    displayText: "Was ist wichtig?",
-                    prompt: "Was ist aktuell wichtig?",
-                  },
-                  {
-                    displayText: "Letzte Werte",
-                    prompt: "Zeige mir die letzten Vitalwerte.",
-                  },
-                  {
-                    displayText: "Offene Arbeit",
-                    prompt: "Was ist noch offen?",
-                  },
-                ]
-              : [
-                  {
-                    displayText: "Übergabe",
-                    prompt: "Zeige mir die aktuelle Übergabe.",
-                  },
-                  {
-                    displayText: "Meine Aufgaben",
-                    prompt: "Was ist für mich noch offen?",
-                  },
-                  {
-                    displayText: "Teamfragen",
-                    prompt: "Welche Teamfragen sind offen?",
-                  },
-                ]
-          }
         >
           <AgentInterface.Route path="clinical-conversation">
             <AuthorizedThreadBootstrap />
@@ -284,15 +256,15 @@ export function AssistantSurface({
                     : [
                         {
                           label: "Übergabe",
-                          prompt: "Zeige mir die aktuelle Übergabe.",
+                          action: () => onNavigate("Plans"),
                         },
                         {
                           label: "Meine Aufgaben",
-                          prompt: "Was ist für mich noch offen?",
+                          action: () => onNavigate("Plans"),
                         },
                         {
                           label: "Teamfragen",
-                          prompt: "Welche Teamfragen sind offen?",
+                          action: () => onNavigate("Team"),
                         },
                       ]
                 }

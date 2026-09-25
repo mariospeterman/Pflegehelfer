@@ -252,13 +252,15 @@ test("workday context changes lock the composer until the server confirms the ac
     "Peter Beispiel",
     "Sofia Muster",
     "Emil Demo",
+    "Mei Muster",
+    "Jonas Fiktiv",
   ]) {
     await page
       .getByRole("button", {
         name: new RegExp(`Gelesen und übernehmen:.*${patient}`),
       })
       .click();
-    if (patient !== "Emil Demo") {
+    if (patient !== "Jonas Fiktiv") {
       await expect(
         page.getByRole("button", {
           name: new RegExp(`Übergabe geprüft:.*${patient}`),

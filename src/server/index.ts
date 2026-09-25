@@ -15,6 +15,7 @@ import {
   InMemoryCommercialStore,
   PostgresCommercialStore,
 } from "../infrastructure/commercial-store.js";
+import { seedSyntheticDemoWorkspace } from "../infrastructure/demo-workspace.js";
 import { loadOrganizationCommercialConfig } from "../core/organization-economics.js";
 import { siteConfiguration } from "../core/site-config.js";
 import { runtimeProfileFromEnvironment } from "./runtime-profile.js";
@@ -45,6 +46,7 @@ const operationalStore = operationalUrl
   ? new PostgresOperationalStore(operationalUrl)
   : new InMemoryOperationalStore();
 await operationalStore.initialize();
+if (demoMode) await seedSyntheticDemoWorkspace(operationalStore);
 const commercialStore = operationalUrl
   ? new PostgresCommercialStore(operationalUrl)
   : new InMemoryCommercialStore();

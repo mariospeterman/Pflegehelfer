@@ -56,9 +56,9 @@ describe("least-privilege policy", () => {
       nursingPatientIds,
     );
     expect(
-      snapshot.patients.find((patient) => patient.id === "p-mei"),
+      snapshot.patients.find((patient) => patient.id === "p-eva"),
     ).toBeUndefined();
-    expect(JSON.stringify(snapshot)).not.toContain("Mei Muster");
+    expect(JSON.stringify(snapshot)).not.toContain("Eva Muster");
   });
 
   it("does not expose patient work or assignments to quality review", () => {

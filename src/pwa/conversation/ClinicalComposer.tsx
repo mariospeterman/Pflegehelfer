@@ -8,6 +8,9 @@ import {
 import { assistantClientContextHeaders } from "../assistant-context";
 import type { VoiceSubmission } from "./openui-client";
 
+export type ConversationStarter =
+  { label: string; prompt: string } | { label: string; action: () => void };
+
 export interface MutableSubmissionChannel {
   set(prompt: string, voice: VoiceSubmission): void;
   take(prompt: string): VoiceSubmission | null;
@@ -81,7 +84,7 @@ export function ClinicalComposer({
   externallyBusy: boolean;
   launchPrompt: { id: number; text: string; autoSubmit?: boolean } | null;
   submissionChannel: MutableSubmissionChannel;
-  starters: Array<{ label: string; prompt: string }>;
+  starters: ConversationStarter[];
   onError: (message: string | null) => void;
   onBusy: (busy: boolean) => void;
 }) {
@@ -442,11 +445,15 @@ export function ClinicalComposer({
           {starters.map((starter) => (
             <button
               type="button"
-              key={starter.prompt}
-              disabled={busy || !online}
+              key={starter.label}
+              disabled={busy || (!("action" in starter) && !online)}
               onClick={() => {
                 setValue("");
                 onError(null);
+                if ("action" in starter) {
+                  starter.action();
+                  return;
+                }
                 void processMessage({
                   role: "user",
                   content: [{ type: "text", text: starter.prompt }],

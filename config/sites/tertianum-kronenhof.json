@@ -69,7 +69,7 @@
     {
       "actorId": "u-assistant",
       "role": "care-assistant",
-      "roleProfileId": "pflegeassistenz-srk",
+      "roleProfileId": "ags-eba",
       "stationId": "rehabilitation-2",
       "shiftId": "early",
       "patientIds": [
@@ -78,13 +78,15 @@
         "p-ruth",
         "p-peter",
         "p-sofia",
-        "p-emil"
+        "p-emil",
+        "p-mei",
+        "p-jonas"
       ]
     },
     {
       "actorId": "u-nurse",
       "role": "registered-nurse",
-      "roleProfileId": "fage-efz",
+      "roleProfileId": "pflege-hf",
       "stationId": "rehabilitation-2",
       "shiftId": "early",
       "patientIds": [
@@ -93,7 +95,9 @@
         "p-ruth",
         "p-peter",
         "p-sofia",
-        "p-emil"
+        "p-emil",
+        "p-mei",
+        "p-jonas"
       ]
     },
     {
@@ -108,7 +112,9 @@
         "p-ruth",
         "p-peter",
         "p-sofia",
-        "p-emil"
+        "p-emil",
+        "p-mei",
+        "p-jonas"
       ]
     }
   ],
@@ -293,7 +299,7 @@
             "id": "prioritize",
             "kind": "work-queue",
             "title": "Mein Tagesplan",
-            "prompt": "Zeig mir meine sechs Patientinnen und Patienten"
+            "prompt": "Zeig mir meine zugeteilten Patientinnen und Patienten"
           },
           {
             "id": "patient",
@@ -429,8 +435,8 @@
   "nursingAssignments": [
     {
       "patientId": "p-anna",
-      "title": "Morgenpflege · Mobilisation · Blutdruck",
-      "reason": "Therapie um 09:15; erhöhter Morgenwert",
+      "title": "Morgenpflege · Mobilisation · delegierte Blutdruckmessung",
+      "reason": "Therapie um 09:15; Messauftrag der Pflegefachperson, Wert zur Gegenzeichnung vorlegen",
       "window": "07:30–09:00"
     },
     {
@@ -441,14 +447,14 @@
     },
     {
       "patientId": "p-ruth",
-      "title": "Ankleiden · Gehtraining · Schmerzbeobachtung",
+      "title": "Ankleiden · Gehbegleitung · Schmerz erfragen und melden",
       "reason": "Erster Tag nach Verbandswechsel",
       "window": "08:30–10:00"
     },
     {
       "patientId": "p-peter",
-      "title": "Morgenpflege · Gewicht · Ödemkontrolle",
-      "reason": "Tägliche Gewichtskontrolle vor Frühstück",
+      "title": "Morgenpflege · delegiertes Gewicht · Hautveränderungen melden",
+      "reason": "Gewicht gemäss Pflegeplan vor Frühstück; Veränderungen an Pflegefachperson",
       "window": "07:45–09:15"
     },
     {
@@ -462,6 +468,18 @@
       "title": "Dusche · Hörhilfe · Spaziergang",
       "reason": "Duschtag; Angehörigengespräch um 11:00",
       "window": "09:30–11:30"
+    },
+    {
+      "patientId": "p-mei",
+      "title": "Frühstück begleiten · Schluckplan · Mundpflege",
+      "reason": "Konsistenz und aufrechte Position gemäss freigegebenem Logopädieplan",
+      "window": "07:30–09:00"
+    },
+    {
+      "patientId": "p-jonas",
+      "title": "Ankleiden · Transferbegleitung · ADL vorbereiten",
+      "reason": "Treppentraining mit Physiotherapie um 10:15; bei Schwindel pausieren und melden",
+      "window": "08:45–10:15"
     }
   ]
 }

@@ -14,16 +14,16 @@ import type {
 import { nursingPatientIds, siteConfiguration } from "./site-config.js";
 
 const allClinicalPatientIds = [
-  ...nursingPatientIds,
-  "p-mei",
-  "p-jonas",
-  "p-eva",
-  "p-samir",
-  "p-paul",
-  "p-aline",
-  "p-theo",
-  "p-mila",
-  "p-noah",
+  ...new Set([
+    ...nursingPatientIds,
+    "p-eva",
+    "p-samir",
+    "p-paul",
+    "p-aline",
+    "p-theo",
+    "p-mila",
+    "p-noah",
+  ]),
 ];
 const activeWardId = siteConfiguration.department.id;
 const qualificationsFor = (actorId: string): string[] =>
@@ -81,7 +81,12 @@ export const users: DemoUser[] = [
     directoryProfile: directoryProfile(
       "Assistentin Gesundheit und Soziales EBA",
       "lea.bernasconi",
-      ["Grundpflege", "Mobilisation", "Mahlzeitenbegleitung"],
+      [
+        "Zugewiesene Körperpflege",
+        "Mobilisation und Transfers nach Plan",
+        "Alltags- und Mahlzeitenbegleitung",
+        "Beobachtungen weitergeben",
+      ],
       ["Deutsch", "Italienisch"],
     ),
   },
@@ -475,6 +480,18 @@ export const patients: Patient[] = [
     diagnoses: ["Polytrauma, rehabilitative Mobilisation"],
     careGoals: ["Treppentraining mit Physiotherapie", "Schmerzadaptierte ADL"],
     medicationSummary: ["Analgesieplan im KIS – nur lesbar"],
+    carePreferences: [
+      "Vor dem Aufstehen kurz im Sitzen orientieren lassen",
+      "Kleidung und Hilfsmittel in Griffnähe vorbereiten",
+    ],
+    communicationPreferences: [
+      "Nächsten Schritt vor dem Transfer ankündigen",
+      "Schwindel und Schmerz mit eigenen Worten erfragen",
+    ],
+    dailyRoutine: [
+      "ADL am Lavabo mit Sitzmöglichkeit",
+      "Therapietermine mit ausreichender Vorbereitungszeit",
+    ],
     source: source("wicare", "WCD-L-10058", 6, "2026-09-04T15:20:00.000Z"),
   },
   {

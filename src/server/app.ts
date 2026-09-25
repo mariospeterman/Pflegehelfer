@@ -56,6 +56,7 @@ import {
   type DurableVoiceAuthority,
   type OperationalStore,
 } from "../infrastructure/operational-store.js";
+import { seedSyntheticDemoWorkspace } from "../infrastructure/demo-workspace.js";
 import type { WorkdayCommand } from "../core/workday.js";
 import type { RuntimeProfileConfiguration } from "./runtime-profile.js";
 import { runtimeBuildInfo } from "./build-info.js";
@@ -4194,6 +4195,7 @@ export function buildApp(
         return { status: "reset" };
       }, request);
       await operationalStore.resetDemoState();
+      await seedSyntheticDemoWorkspace(operationalStore);
       for (const user of service.checkpoint().state.users) {
         assistant.revokeActorIntents(user.id);
         await operationalStore.revokeActorAuthorities(user.id);

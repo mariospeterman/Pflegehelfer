@@ -185,7 +185,6 @@ export function WorkdayPanel({
                     disabled={busy}
                     onClick={() => {
                       setExpanded(expanded === patientId ? null : patientId);
-                      onPatient(patientId);
                     }}
                   >
                     <strong>
@@ -241,10 +240,9 @@ export function WorkdayPanel({
                         </div>
                       </dl>
                       <details className="handover-technical">
-                        <summary>Technische Bindung</summary>
+                        <summary>Stand der Übergabe</summary>
                         <small>
-                          Fall {item?.encounterId ?? "nicht gebunden"} ·
-                          eingefroren{" "}
+                          Fall {patient.mrn} · eingefroren{" "}
                           {new Date(workday.handover.cutoffAt).toLocaleString(
                             "de-CH",
                           )}{" "}
@@ -261,79 +259,86 @@ export function WorkdayPanel({
       )}
 
       {workday.stage !== "handover" && workday.stage !== "closed" && (
-        <div className="workday-roster" aria-label="Patientenplan">
-          {workday.plan.map((plan) => {
-            const patient = patientFor(plan.patientId);
-            if (!patient) return null;
-            return (
-              <section className="workday-row" key={plan.patientId}>
-                <button
-                  className="workday-patient"
-                  disabled={busy}
-                  onClick={() => onPatient(patient.id)}
-                >
-                  <strong>
-                    {patient.room} · {patient.displayName}
-                  </strong>
-                  <span>{plan.title}</span>
-                  <small>{plan.reason}</small>
-                </button>
-                {plan.status === "planned" && !workday.activeEpisode ? (
-                  <div className="button-row compact-actions">
-                    <button
-                      className="status-button"
-                      disabled={busy}
-                      aria-label={`Arbeit beginnen: Zimmer ${patient.room}, ${patient.displayName}`}
-                      onClick={() =>
-                        act(
-                          {
-                            type: "start-episode",
-                            patientId: patient.id,
-                            encounterId: patient.encounterId,
-                            kind: "planned",
-                            title: plan.title,
-                          },
-                          "Arbeit konnte nicht begonnen werden.",
-                        )
-                      }
-                    >
-                      Beginnen
-                    </button>
-                    <button
-                      className="status-button secondary"
-                      disabled={busy}
-                      aria-label={`Offene Verantwortung übergeben: Zimmer ${patient.room}, ${patient.displayName}`}
-                      onClick={() =>
-                        act(
-                          {
-                            type: "defer-responsibility",
-                            patientId: patient.id,
-                            encounterId: patient.encounterId,
-                            reason:
-                              "Im aktuellen Dienst nicht abgeschlossen; sichtbar an die nächste Verantwortung übergeben.",
-                            receivingActorId:
-                              workday.handover.nextResponsibleActorId,
-                          },
-                          "Verantwortung konnte nicht übergeben werden.",
-                        )
-                      }
-                    >
-                      Übergeben
-                    </button>
-                  </div>
-                ) : (
-                  <span className={`episode-state ${plan.status}`}>
-                    {plan.status === "active"
-                      ? "Aktiv"
-                      : plan.status === "paused"
-                        ? "Unterbrochen"
-                        : "Dokumentiert"}
-                  </span>
-                )}
-              </section>
-            );
-          })}
-        </div>
+        <>
+          <div className="workday-started" role="status">
+            Übergabe vollständig geprüft. Dein Arbeitstag ist gestartet; jede
+            Verantwortung bleibt bis Abschluss oder bestätigter Übergabe bei dir
+            sichtbar.
+          </div>
+          <div className="workday-roster" aria-label="Patientenplan">
+            {workday.plan.map((plan) => {
+              const patient = patientFor(plan.patientId);
+              if (!patient) return null;
+              return (
+                <section className="workday-row" key={plan.patientId}>
+                  <button
+                    className="workday-patient"
+                    disabled={busy}
+                    onClick={() => onPatient(patient.id)}
+                  >
+                    <strong>
+                      {patient.room} · {patient.displayName}
+                    </strong>
+                    <span>{plan.title}</span>
+                    <small>{plan.reason}</small>
+                  </button>
+                  {plan.status === "planned" && !workday.activeEpisode ? (
+                    <div className="button-row compact-actions">
+                      <button
+                        className="status-button"
+                        disabled={busy}
+                        aria-label={`Arbeit beginnen: Zimmer ${patient.room}, ${patient.displayName}`}
+                        onClick={() =>
+                          act(
+                            {
+                              type: "start-episode",
+                              patientId: patient.id,
+                              encounterId: patient.encounterId,
+                              kind: "planned",
+                              title: plan.title,
+                            },
+                            "Arbeit konnte nicht begonnen werden.",
+                          )
+                        }
+                      >
+                        Beginnen
+                      </button>
+                      <button
+                        className="status-button secondary"
+                        disabled={busy}
+                        aria-label={`Offene Verantwortung übergeben: Zimmer ${patient.room}, ${patient.displayName}`}
+                        onClick={() =>
+                          act(
+                            {
+                              type: "defer-responsibility",
+                              patientId: patient.id,
+                              encounterId: patient.encounterId,
+                              reason:
+                                "Im aktuellen Dienst nicht abgeschlossen; sichtbar an die nächste Verantwortung übergeben.",
+                              receivingActorId:
+                                workday.handover.nextResponsibleActorId,
+                            },
+                            "Verantwortung konnte nicht übergeben werden.",
+                          )
+                        }
+                      >
+                        Übergeben
+                      </button>
+                    </div>
+                  ) : (
+                    <span className={`episode-state ${plan.status}`}>
+                      {plan.status === "active"
+                        ? "Aktiv"
+                        : plan.status === "paused"
+                          ? "Unterbrochen"
+                          : "Dokumentiert"}
+                    </span>
+                  )}
+                </section>
+              );
+            })}
+          </div>
+        </>
       )}
 
       {workday.activeEpisode && (

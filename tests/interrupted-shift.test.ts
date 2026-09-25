@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { InMemoryOperationalStore } from "../src/infrastructure/operational-store.js";
 import { buildApp } from "../src/server/app.js";
+import { nursingPatientIds } from "../src/core/site-config.js";
 
 const apps: ReturnType<typeof buildApp>[] = [];
 afterEach(async () => Promise.all(apps.splice(0).map((app) => app.close())));
@@ -110,7 +111,7 @@ describe("interrupted nursing shift", () => {
       "registered-nurse",
     );
     expect(workday.handover.shiftKey).toMatch(/-late$/);
-    expect(workday.handover.patientIds).toHaveLength(6);
+    expect(workday.handover.patientIds).toEqual(nursingPatientIds);
   });
 
   it("does not start planned care before every incoming handover item is checked", async () => {
@@ -257,7 +258,7 @@ describe("interrupted nursing shift", () => {
     );
     expect(
       workday.episodes.filter((episode) => episode.kind === "planned"),
-    ).toHaveLength(6);
+    ).toHaveLength(nursingPatientIds.length);
     expect((await store.getWorkday(actor, role)).stage).toBe("closed");
     await expect(
       store.applyWorkdayCommand(actor, role, {
@@ -372,13 +373,9 @@ describe("interrupted nursing shift", () => {
       reason: "Mobilisation ist nach Unterbruch noch offen.",
       receivingActorId: "u-nurse-evening",
     });
-    for (const patientId of [
-      "p-luca",
-      "p-ruth",
-      "p-peter",
-      "p-sofia",
-      "p-emil",
-    ])
+    for (const patientId of nursingPatientIds.filter(
+      (patientId) => patientId !== "p-anna",
+    ))
       await store.applyWorkdayCommand(actor, role, {
         type: "defer-responsibility",
         patientId,
@@ -390,7 +387,7 @@ describe("interrupted nursing shift", () => {
       type: "close-shift",
     });
     expect(workday.handover.status).toBe("transferred");
-    expect(workday.outgoingTransfers).toHaveLength(6);
+    expect(workday.outgoingTransfers).toHaveLength(nursingPatientIds.length);
     expect(
       workday.outgoingTransfers.every((item) => item.state === "pending"),
     ).toBe(true);

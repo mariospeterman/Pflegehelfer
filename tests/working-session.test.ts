@@ -151,8 +151,8 @@ describe("versioned working session", () => {
   });
 
   it("loads six assignments and rejects executable configuration fields", () => {
-    expect(nursingPatientIds).toHaveLength(6);
-    expect(new Set(nursingPatientIds).size).toBe(6);
+    expect(nursingPatientIds).toHaveLength(8);
+    expect(new Set(nursingPatientIds).size).toBe(8);
     expect(
       siteConfigurationSchema.safeParse({
         schemaVersion: 1,

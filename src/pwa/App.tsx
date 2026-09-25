@@ -1754,6 +1754,7 @@ export function App() {
             onSelectPatient={(id) => void choosePatient(id)}
             externallyBusy={contextBusy}
             onBusyChange={setAssistantBusy}
+            onNavigate={setDestination}
           />
         ) : (
           <WorkspaceView
