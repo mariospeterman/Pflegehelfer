@@ -94,6 +94,13 @@ export interface AssistantRequest {
       assignedCount: number;
       openCount: number;
       summary: string;
+      items?: Array<{
+        patientId: string;
+        encounterId: string | null;
+        currentImportant: string[];
+        recentChanges: string[];
+        nextSteps: string[];
+      }>;
     } | null;
   };
 }
@@ -114,6 +121,15 @@ export interface AssistantResponse {
       toolCalls: number;
       status: AgentRunResult["status"];
       trace: AgentRunResult["trace"];
+      failure?: Pick<
+        NonNullable<AgentRunResult["failure"]>,
+        | "stage"
+        | "code"
+        | "message"
+        | "httpStatus"
+        | "providerCode"
+        | "validationPaths"
+      >;
     };
   };
   patientContext: {
@@ -198,7 +214,7 @@ export function toOpenUi(components: AssistantComponent[]): string {
         return `${name} = VitalTrendCard(${q(component.label)}, ${q(component.value)}, ${JSON.stringify(points)}, ${q(component.sourceLabel)})`;
       }
       case "HandoverChecklist":
-        return `${name} = HandoverDeltaCard(${q(component.title)}, ${component.openCount}, ${q(component.summary)}, ${q(component.sourceLabel)})`;
+        return `${name} = HandoverDeltaCard(${q(component.title)}, ${component.openCount}, ${q(component.summary)}, ${q(component.sourceLabel)}, ${JSON.stringify(component.sections)})`;
       case "TeamInbox":
         return `${name} = TeamInboxCard(${q(component.title)}, ${component.count}, ${q(component.summary)}, ${q(component.sourceLabel)}, ${JSON.stringify(component.items)})`;
       case "SyncSummary":
@@ -1336,6 +1352,33 @@ export class AssistantService {
         !requiresDedicatedClinicalWorkflow(prompt) &&
         !explicitlyRefusesDocumentation(prompt),
       );
+      const availableReadTools = [
+        "get_patient_summary",
+        "get_open_tasks",
+        "get_latest_vitals",
+        ...(!patient ? ["get_handover"] : []),
+        "get_team_inbox",
+        ...(!patient ? ["get_sync_status"] : []),
+      ];
+      const preferredReadTool: Partial<
+        Record<IntentClassification["intent"], string>
+      > = {
+        "patient-summary": "get_patient_summary",
+        "open-tasks": "get_open_tasks",
+        "latest-vitals": "get_latest_vitals",
+        handover: patient ? "get_open_tasks" : "get_handover",
+        "team-inbox": "get_team_inbox",
+        "sync-status": "get_sync_status",
+      };
+      const preferredTool = preferredReadTool[safeIntent];
+      const allowedAgentTools =
+        preferredTool && availableReadTools.includes(preferredTool)
+          ? [preferredTool]
+          : [
+              ...availableReadTools,
+              "load_workflow_skill",
+              ...(canPrepareCareUpdate ? ["prepare_clinical_draft"] : []),
+            ];
       const draftInput = z
         .object({ proposalJson: z.string().min(2).max(20_000) })
         .strict();
@@ -1574,6 +1617,7 @@ export class AssistantService {
                     assignedCount: handover.assignedCount,
                     openCount: handover.openCount,
                     summary: handover.summary,
+                    items: handover.items ?? [],
                   }
                 : { handover: "not-available-for-role" },
             });
@@ -1762,6 +1806,13 @@ export class AssistantService {
                   request.workingContext.activeEpisodePatientId === patient.id,
                 hasResumableEpisode:
                   request.workingContext.resumableEpisodePatientId !== null,
+                selectedPatient: patient
+                  ? {
+                      displayName: patient.displayName,
+                      room: patient.room,
+                      encounterBound: true,
+                    }
+                  : null,
               })}`,
             ],
             skills: agentGuidance.availableSkills.map((skill) => ({
@@ -1770,16 +1821,7 @@ export class AssistantService {
             })),
           },
         },
-        allowedTools: [
-          "get_patient_summary",
-          "get_open_tasks",
-          "get_latest_vitals",
-          ...(!patient ? ["get_handover"] : []),
-          "get_team_inbox",
-          ...(!patient ? ["get_sync_status"] : []),
-          "load_workflow_skill",
-          ...(canPrepareCareUpdate ? ["prepare_clinical_draft"] : []),
-        ],
+        allowedTools: allowedAgentTools,
         ...(request.signal ? { signal: request.signal } : {}),
         ...(request.onProgress ? { onProgress: request.onProgress } : {}),
       });
@@ -1833,6 +1875,24 @@ export class AssistantService {
               toolCalls: agentRun.toolCalls,
               status: agentRun.status,
               trace: agentRun.trace,
+              ...(agentRun.failure
+                ? {
+                    failure: {
+                      stage: agentRun.failure.stage,
+                      code: agentRun.failure.code,
+                      message: agentRun.failure.message,
+                      ...(agentRun.failure.httpStatus !== undefined
+                        ? { httpStatus: agentRun.failure.httpStatus }
+                        : {}),
+                      ...(agentRun.failure.providerCode
+                        ? { providerCode: agentRun.failure.providerCode }
+                        : {}),
+                      ...(agentRun.failure.validationPaths
+                        ? { validationPaths: agentRun.failure.validationPaths }
+                        : {}),
+                    },
+                  }
+                : {}),
             },
           }
         : {}),
@@ -2223,6 +2283,18 @@ export class AssistantService {
                 ? patientOpenTasks.length
                 : operationalHandover.openCount,
               sourceLabel: `Operationaler Verantwortungsstand · ${operationalHandover.shiftKey} · ${operationalHandover.status}`,
+              sections: (operationalHandover.items ?? [])
+                .filter((item) => !patient || item.patientId === patient.id)
+                .map((item) => ({
+                  patientId: item.patientId,
+                  patientLabel:
+                    snapshot.patients.find(
+                      (candidate) => candidate.id === item.patientId,
+                    )?.displayName ?? item.patientId,
+                  important: item.currentImportant,
+                  previousShift: item.recentChanges,
+                  nextSteps: item.nextSteps,
+                })),
             });
             break;
           }

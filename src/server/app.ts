@@ -489,6 +489,21 @@ export function buildApp(
                 .filter((item) => item.state === "pending")
                 .map((item) => `Eingehende Verantwortung: ${item.reason}`),
             ].join(" · "),
+            items: workday.handover.items.map((item) => {
+              const plan = workday.plan.find(
+                (candidate) => candidate.patientId === item.patientId,
+              );
+              return {
+                patientId: item.patientId,
+                encounterId: item.encounterId,
+                currentImportant: item.currentImportant,
+                recentChanges: item.recentChanges,
+                nextSteps: [
+                  ...(plan ? [`${plan.title} · ${plan.reason}`] : []),
+                  ...item.openQuestions,
+                ],
+              };
+            }),
           }
         : null,
     };

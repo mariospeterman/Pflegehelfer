@@ -107,7 +107,8 @@ export const assistantComponentSchema = z.discriminatedUnion("type", [
             })
             .strict(),
         )
-        .max(12),
+        .max(12)
+        .default([]),
       sourceLabel: z.string().trim().min(1).max(180),
     })
     .strict(),
@@ -118,6 +119,19 @@ export const assistantComponentSchema = z.discriminatedUnion("type", [
       summary: boundedText,
       openCount: z.number().int().min(0).max(100),
       sourceLabel: z.string().trim().min(1).max(180),
+      sections: z
+        .array(
+          z
+            .object({
+              patientId: recordId,
+              patientLabel: z.string().trim().min(1).max(120),
+              important: z.array(boundedText).max(12),
+              previousShift: z.array(boundedText).max(12),
+              nextSteps: z.array(boundedText).max(12),
+            })
+            .strict(),
+        )
+        .max(12),
     })
     .strict(),
   z

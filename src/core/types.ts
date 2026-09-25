@@ -53,6 +53,15 @@ export interface DemoUser {
   managedDevice: boolean;
   defaultPurpose: Purpose;
   qualificationIds?: string[];
+  directoryProfile?: {
+    professionalTitle: string;
+    team: string;
+    station: string;
+    workEmail: string;
+    workPhone: string;
+    languages: string[];
+    responsibilities: string[];
+  };
 }
 
 export interface SourceMeta {
@@ -80,6 +89,9 @@ export interface Patient {
   diagnoses: string[];
   careGoals: string[];
   medicationSummary: string[];
+  carePreferences?: string[];
+  communicationPreferences?: string[];
+  dailyRoutine?: string[];
   source: SourceMeta;
 }
 

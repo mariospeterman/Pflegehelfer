@@ -361,6 +361,39 @@ function evidenceValueAt(data: unknown, path: string): unknown {
   }, data);
 }
 
+function claimableEvidence(
+  data: unknown,
+  path = "",
+  claims: AgentEvidenceClaim[] = [],
+): AgentEvidenceClaim[] {
+  if (claims.length >= 64) return claims;
+  if (
+    data === null ||
+    typeof data === "string" ||
+    typeof data === "number" ||
+    typeof data === "boolean"
+  ) {
+    if (path && (typeof data !== "string" || data.length <= 500))
+      claims.push({ referenceId: "", path, value: data });
+    return claims;
+  }
+  if (Array.isArray(data)) {
+    data.forEach((value, index) =>
+      claimableEvidence(
+        value,
+        path ? `${path}.${index}` : String(index),
+        claims,
+      ),
+    );
+    return claims;
+  }
+  if (typeof data === "object")
+    Object.entries(data as Record<string, unknown>).forEach(([key, value]) =>
+      claimableEvidence(value, path ? `${path}.${key}` : key, claims),
+    );
+  return claims;
+}
+
 function terminalStatus(
   decision: Exclude<AgentModelDecision, { kind: "tool-call" }>,
 ): AgentTerminalStatus {
@@ -468,6 +501,21 @@ export class BoundedAgentRuntime {
           });
         } catch (error) {
           const aborted = controller.signal.aborted;
+          const retryableInvalidOutput =
+            !aborted &&
+            error instanceof AgentModelError &&
+            error.diagnostic.code === "invalid-output" &&
+            modelTurn + 1 < this.maxModelTurns;
+          if (retryableInvalidOutput) {
+            trace.push({
+              sequence: trace.length + 1,
+              kind: "model",
+              modelId: this.model.id,
+              status: "failed",
+              latencyMs: Math.round(performance.now() - started),
+            });
+            continue;
+          }
           const status = input.signal?.aborted
             ? "cancelled"
             : aborted
@@ -662,6 +710,13 @@ export class BoundedAgentRuntime {
               complete: result.complete,
               freshness: result.freshness ?? null,
               data: result.data,
+              claimableEvidence: claimableEvidence(result.data).map(
+                ({ path, value }) => ({
+                  referenceId: result.referenceId,
+                  path,
+                  value,
+                }),
+              ),
             }),
           });
         } catch (error) {

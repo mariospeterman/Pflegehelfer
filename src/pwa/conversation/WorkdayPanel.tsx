@@ -52,10 +52,12 @@ export function WorkdayPanel({
       );
       return [
         `${patient?.displayName ?? "Patient"}, Zimmer ${patient?.room ?? "unbekannt"}.`,
-        `Seit letzter Übergabe: ${item?.recentChanges.join("; ") || "keine neuen Einträge"}.`,
-        `Aktuell wichtig: ${item?.currentImportant.join("; ") || "keine besonderen Hinweise"}.`,
-        `Heute geplant: ${plan.title}. ${plan.reason}.`,
-        `Offene Fragen: ${item?.openQuestions.join("; ") || "keine"}.`,
+        `Wichtig zu wissen: ${item?.currentImportant.join("; ") || "keine besonderen Hinweise"}.`,
+        `Was in der letzten Schicht passiert ist: ${item?.recentChanges.join("; ") || "keine neuen freigegebenen Einträge"}.`,
+        `Wichtige nächste Schritte: ${[
+          `${plan.title}. ${plan.reason}`,
+          ...(item?.openQuestions ?? []),
+        ].join("; ")}.`,
       ].join(" ");
     })
     .join(" ");
@@ -213,30 +215,29 @@ export function WorkdayPanel({
                     <div className="handover-expanded">
                       <dl className="handover-sections">
                         <div>
-                          <dt>Seit letzter Übergabe</dt>
-                          <dd>
-                            {item?.recentChanges.join(" · ") ||
-                              "Keine neuen Einträge"}
-                          </dd>
-                        </div>
-                        <div>
-                          <dt>Aktuell wichtig</dt>
+                          <dt>Wichtig zu wissen</dt>
                           <dd>
                             {item?.currentImportant.join(" · ") ||
                               "Keine besonderen Hinweise"}
                           </dd>
                         </div>
                         <div>
-                          <dt>Heute geplant</dt>
+                          <dt>Was in der letzten Schicht passiert ist</dt>
+                          <dd>
+                            {item?.recentChanges.join(" · ") ||
+                              "Keine neuen freigegebenen Einträge"}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>Wichtige nächste Schritte</dt>
                           <dd>
                             {plan
                               ? `${plan.title} · ${plan.reason}`
                               : "Keine Planung"}
+                            {item?.openQuestions.length
+                              ? ` · ${item.openQuestions.join(" · ")}`
+                              : ""}
                           </dd>
-                        </div>
-                        <div>
-                          <dt>Offene Fragen</dt>
-                          <dd>{item?.openQuestions.join(" · ") || "Keine"}</dd>
                         </div>
                       </dl>
                       <details className="handover-technical">

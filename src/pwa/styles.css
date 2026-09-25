@@ -740,6 +740,89 @@ input:focus-visible {
   align-items: center;
   gap: 10px;
 }
+.scope-picker-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 28;
+  border: 0;
+  background: transparent;
+}
+.scope-picker {
+  position: absolute;
+  top: 66px;
+  left: 50%;
+  z-index: 29;
+  width: min(440px, calc(100vw - 24px));
+  max-height: min(620px, calc(100dvh - 84px));
+  overflow: hidden;
+  transform: translateX(-50%);
+  border: 1px solid var(--line-strong);
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+.scope-picker > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+  padding: 12px 14px;
+}
+.scope-picker > header > div,
+.scope-picker-list > button > span:last-child {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.scope-picker small {
+  color: var(--muted);
+}
+.scope-picker > header > button {
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 24px;
+}
+.scope-picker-list {
+  display: grid;
+  gap: 4px;
+  max-height: min(540px, calc(100dvh - 154px));
+  overflow: auto;
+  padding: 8px;
+}
+.scope-picker-list > button {
+  min-height: 58px;
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  padding: 7px 10px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+}
+.scope-picker-list > button:hover,
+.scope-picker-list > button:focus-visible,
+.scope-picker-list > button.active {
+  border-color: color-mix(in srgb, var(--blue) 35%, var(--line));
+  background: var(--blue-soft);
+}
+.scope-picker-avatar {
+  min-height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--blue-soft) 72%, var(--surface));
+  color: var(--blue);
+  font-size: 12px;
+  font-weight: 800;
+}
 .actor-avatar {
   position: relative;
   width: 44px;
@@ -1499,6 +1582,36 @@ input:focus-visible {
 }
 .handover-delta-card {
   border-left: 4px solid var(--warning);
+}
+.handover-card-sections {
+  display: grid;
+  gap: 10px;
+}
+.handover-card-sections > section {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  padding: 10px;
+  background: var(--surface-soft);
+}
+.handover-card-sections dl {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+}
+.handover-card-sections dl > div {
+  display: grid;
+  gap: 2px;
+}
+.handover-card-sections dt {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+.handover-card-sections dd {
+  margin: 0;
+  line-height: 1.45;
 }
 .team-inbox-card {
   border-left: 4px solid var(--blue);

@@ -170,6 +170,82 @@ function PatientSafetyBar({
   );
 }
 
+function SubjectPicker({
+  snapshot,
+  patient,
+  busy,
+  onPatient,
+  close,
+}: {
+  snapshot: AppSnapshot;
+  patient: Patient | null;
+  busy: boolean;
+  onPatient: (patientId: string | null) => Promise<boolean>;
+  close: () => void;
+}) {
+  return (
+    <section
+      className="scope-picker"
+      role="dialog"
+      aria-modal="false"
+      aria-label="Arbeitskontext wählen"
+    >
+      <header>
+        <div>
+          <strong>Arbeitskontext wählen</strong>
+          <small>Der Wechsel wird serverseitig gebunden.</small>
+        </div>
+        <button
+          type="button"
+          aria-label="Kontextauswahl schliessen"
+          onClick={close}
+        >
+          ×
+        </button>
+      </header>
+      <div className="scope-picker-list" role="list">
+        <button
+          type="button"
+          className={patient === null ? "active" : ""}
+          disabled={busy}
+          onClick={() =>
+            void onPatient(null).then((changed) => {
+              if (changed) close();
+            })
+          }
+        >
+          <span className="scope-picker-avatar">PH</span>
+          <span>
+            <strong>Mein Assistent</strong>
+            <small>Privat · Allgemeiner Arbeitskontext</small>
+          </span>
+        </button>
+        {snapshot.patients.map((item) => (
+          <button
+            type="button"
+            key={item.id}
+            className={patient?.id === item.id ? "active" : ""}
+            disabled={busy}
+            onClick={() =>
+              void onPatient(item.id).then((changed) => {
+                if (changed) close();
+              })
+            }
+          >
+            <span className="scope-picker-avatar">{item.room}</span>
+            <span>
+              <strong>{item.displayName}</strong>
+              <small>
+                Geb. {formatBirthDate(item.birthDate)} · Fall {item.mrn}
+              </small>
+            </span>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function CountersignaturePanel({
   snapshot,
   userId,
@@ -682,7 +758,7 @@ function ContextPanel({
         onClick={() =>
           void onPatient(null).then((changed) => {
             if (!changed) return;
-            onNavigate("Chat");
+            onNavigate("Plans");
             close();
           })
         }
@@ -1045,6 +1121,7 @@ export function App() {
   const [online, setOnline] = useState(navigator.onLine);
   const [apiReady, setApiReady] = useState(true);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [scopePickerOpen, setScopePickerOpen] = useState(false);
   const [launchPrompt] = useState<{
     id: number;
     text: string;
@@ -1193,6 +1270,22 @@ export function App() {
       previous?.focus();
     };
   }, [drawerOpen]);
+  useEffect(() => {
+    if (!scopePickerOpen) return;
+    const previous = document.activeElement as HTMLElement | null;
+    const picker = document.querySelector<HTMLElement>(".scope-picker");
+    picker?.querySelector<HTMLElement>("button")?.focus();
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setScopePickerOpen(false);
+    };
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("keydown", handleKey);
+      previous?.focus();
+    };
+  }, [scopePickerOpen]);
   useEffect(() => {
     const update = () => setOnline(navigator.onLine);
     window.addEventListener("online", update);
@@ -1346,6 +1439,7 @@ export function App() {
     sessionStorage.removeItem("pfh-patient-context");
     setSelectedPatientId(null);
     setDestination("Chat");
+    setScopePickerOpen(false);
     setSnapshot(null);
     setWorkday(null);
     setConversations([]);
@@ -1466,7 +1560,10 @@ export function App() {
           <button
             className="menu-button"
             aria-label="Kontext und Verlauf öffnen"
-            onClick={() => setDrawerOpen(true)}
+            onClick={() => {
+              setScopePickerOpen(false);
+              setDrawerOpen(true);
+            }}
           >
             <InterfaceIcon name="menu" />
           </button>
@@ -1484,7 +1581,9 @@ export function App() {
                 ? `Aktiver Kontext: ${patient.displayName}, Zimmer ${patient.room}. Kontext wechseln`
                 : "Aktiver Kontext: Mein Assistent. Kontext wechseln"
             }
-            onClick={() => setDrawerOpen(true)}
+            aria-expanded={scopePickerOpen}
+            aria-haspopup="dialog"
+            onClick={() => setScopePickerOpen((current) => !current)}
           >
             <InterfaceIcon name="scope" />
             <span>
@@ -1523,18 +1622,44 @@ export function App() {
               className={`actor-avatar ${connected ? "connected" : "offline"}${workday?.providerState === "pending" ? " pending" : ""}`}
               aria-label={`Eigenes Profil öffnen: ${snapshot.currentUser.displayName}, ${roleLabels[snapshot.currentUser.role]}. ${syncTitle}`}
               title={`${snapshot.currentUser.displayName} · ${roleLabels[snapshot.currentUser.role]} · ${syncTitle}`}
-              onClick={() => setDestination("MyProfile")}
+              onClick={() => {
+                setScopePickerOpen(false);
+                setDestination((current) =>
+                  current === "MyProfile" ? "Chat" : "MyProfile",
+                );
+              }}
             >
               {actorInitials}
               <i aria-hidden="true" />
             </button>
           </div>
         </header>
+        {scopePickerOpen && (
+          <>
+            <button
+              type="button"
+              className="scope-picker-scrim"
+              aria-label="Kontextauswahl schliessen"
+              onClick={() => setScopePickerOpen(false)}
+            />
+            <SubjectPicker
+              snapshot={snapshot}
+              patient={patient}
+              busy={contextBusy || assistantBusy}
+              onPatient={choosePatient}
+              close={() => setScopePickerOpen(false)}
+            />
+          </>
+        )}
         {patient ? (
           <>
             <PatientSafetyBar
               patient={patient}
-              onProfile={() => setDestination("Profile")}
+              onProfile={() =>
+                setDestination((current) =>
+                  current === "Profile" ? "Chat" : "Profile",
+                )
+              }
             />
             <nav
               className="patient-workspace-tabs"
@@ -1568,7 +1693,7 @@ export function App() {
         ) : (
           <div className="no-patient-context">
             <span>Kein Patient aktiv</span>
-            <button onClick={() => setDrawerOpen(true)}>
+            <button onClick={() => setScopePickerOpen(true)}>
               Patient bewusst wählen
             </button>
           </div>
@@ -1645,11 +1770,14 @@ export function App() {
             }
             busy={contextBusy || assistantBusy}
             onPatient={(id) => {
+              const returnDestination =
+                destination === "Plans" ? "Plans" : "Profile";
               void choosePatient(id).then((changed) => {
-                if (changed) setDestination("Profile");
+                if (changed) setDestination(returnDestination);
               });
             }}
             onError={setNotice}
+            onNavigate={setDestination}
             onWorkdayAction={async (command) => {
               const next = await api<WorkdayView>("/api/v1/workday", userId, {
                 method: "POST",

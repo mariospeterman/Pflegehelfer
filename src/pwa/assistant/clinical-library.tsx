@@ -401,15 +401,58 @@ const HandoverDeltaCard = defineComponent({
       openCount: z.number().int().min(0).max(100),
       summary: z.string().max(1600),
       source: z.string().max(240),
+      sections: z
+        .array(
+          z
+            .object({
+              patientId: z.string().max(120),
+              patientLabel: z.string().max(120),
+              important: z.array(z.string().max(1600)).max(12),
+              previousShift: z.array(z.string().max(1600)).max(12),
+              nextSteps: z.array(z.string().max(1600)).max(12),
+            })
+            .strict(),
+        )
+        .max(12),
     })
     .strict(),
-  component: ({ props: { title, openCount, summary, source } }) => (
+  component: ({ props: { title, openCount, summary, source, sections } }) => (
     <article className="assistant-card handover-delta-card">
       <header>
         <span>Übergabe · {openCount} offen</span>
         <h3>{title}</h3>
       </header>
-      <p>{summary}</p>
+      {sections.length ? (
+        <div className="handover-card-sections">
+          {sections.map((section) => (
+            <section key={`${section.patientId}-${section.patientLabel}`}>
+              <strong>{section.patientLabel}</strong>
+              <dl>
+                <div>
+                  <dt>Wichtig zu wissen</dt>
+                  <dd>
+                    {section.important.join(" · ") ||
+                      "Keine besonderen Hinweise"}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Was in der letzten Schicht passiert ist</dt>
+                  <dd>
+                    {section.previousShift.join(" · ") ||
+                      "Keine neuen freigegebenen Einträge"}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Wichtige nächste Schritte</dt>
+                  <dd>{section.nextSteps.join(" · ") || "Keine Planung"}</dd>
+                </div>
+              </dl>
+            </section>
+          ))}
+        </div>
+      ) : (
+        <p>{summary}</p>
+      )}
       <footer>{source}</footer>
     </article>
   ),

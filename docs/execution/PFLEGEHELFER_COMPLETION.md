@@ -697,7 +697,55 @@ For a merge recommendation identify exactly which internal release scope passed 
 
 If not, finish the specific missing behavior. Do not create another architecture direction.
 
-## 29. Source register and evidence discipline
+## 29. UI, realistic fixtures and connected-read increment — 25 September 2026
+
+This increment preserves the G0–G7 gates and inherited acceptance identifiers;
+it does not promote any remaining constituent gate to complete.
+
+- The centered subject control is a compact, explicit chooser over the existing
+  context API. It no longer opens the full navigation drawer. Patient identity
+  and authenticated own-profile controls have reversible, tested profile views;
+  private patient conversations do not mount the ward roster.
+- The current-workday handover presents exactly three staff-facing parts:
+  **Wichtig zu wissen**, **Was in der letzten Schicht passiert ist** and
+  **Wichtige nächste Schritte**. The parts are projections of the existing
+  versioned workday, handover and task authorities, not a new handover store.
+- Fictional patient fixtures now include fuller care, communication and daily
+  routine context. Fictional staff directory entries include service-role,
+  responsibility, ward/contact, availability, language and data-boundary
+  detail. Reserved `.invalid` addresses and explicit synthetic labels remain;
+  no real employee or patient data was introduced.
+- The earlier bounded model test genuinely failed provider HTTP 429
+  `credit_balance_exhausted`/`insufficient_quota`; fallback was false. On 25
+  September the currently configured provider accepted the same-runtime
+  transport and authorized-read probes. A natural patient-context request then
+  completed through the actual assistant caller with one authorized
+  `get_patient_summary` call and exact resource/version/path/value claims. The
+  claim validator remains fail-closed, malformed structured output is retried
+  only within the existing turn budget, premature tool-call prose is discarded,
+  and no write tool or fallback is counted as acceptance. This is progressive
+  connected-read evidence, not the full held-out model or audio gate.
+- OpenClaw 2.0 and Hermes were reviewed as optional agent runtimes, not adopted
+  as clinical authorities. Their broad tool, memory and plugin boundaries do
+  not replace Pflegehelfer's scoped conversations, deterministic review,
+  PostgreSQL work authority, Medplum source/version binding or durable delivery
+  receipts. A future adapter may sit behind `ModelGateway` with no direct
+  database/provider credentials and the same bounded tools and acceptance.
+- The product may be described as self-hosted/air-gapped capable and
+  model-provider neutral. It must not be described as certified “Swiss medical
+  compliant”. Applicable data-protection, medical-device, provider-contract,
+  institutional and clinical approvals remain explicit external gates.
+
+The canonical Markdown pack and workflow mechanism remains appropriate:
+immutable SHA-pinned guidance is presentation/context input only, while typed
+server policy and authorization remain authoritative. G5 is still partial
+until governed database publication/signature/activation, OIDC/BFF, non-bypass
+RLS, multi-site operation and institutional approval are accepted. WiCare,
+careCoach, Microsoft Teams and SAP remain individually contract- and
+sandbox-gated; simulator or generic-adapter evidence is never vendor
+acceptance.
+
+## 30. Source register and evidence discipline
 
 Repository observations above concern the stated SHA; code and matrix were read, not independently executed by this contract's author. User reports of live health/test totals are not automatic passing evidence. The supplied generated mockups are visual inspiration, not actual product screenshots. Proposed designs and acceptance tests are engineering requirements.
 

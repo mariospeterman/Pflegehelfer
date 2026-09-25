@@ -560,8 +560,11 @@ test("handover readout uses explicit controllable browser speech", async ({
         }
       ).__pfhSpeechTestState,
   );
-  expect(speechState.spokenText).toContain("Seit letzter Übergabe:");
-  expect(speechState.spokenText).toContain("Heute geplant:");
+  expect(speechState.spokenText).toContain("Wichtig zu wissen:");
+  expect(speechState.spokenText).toContain(
+    "Was in der letzten Schicht passiert ist:",
+  );
+  expect(speechState.spokenText).toContain("Wichtige nächste Schritte:");
   expect(speechState.cancelled).toBe(true);
 });
 

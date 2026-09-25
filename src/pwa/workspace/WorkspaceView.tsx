@@ -115,11 +115,13 @@ function PatientProfile({
   patient,
   userId,
   onError,
+  onClose,
 }: {
   snapshot: AppSnapshot;
   patient: Patient;
   userId: string;
   onError: (message: string | null) => void;
+  onClose: () => void;
 }) {
   const [fields, setFields] = useState<WorkspaceProfileField[]>([]);
   const [draft, setDraft] = useState("");
@@ -150,13 +152,28 @@ function PatientProfile({
   const preference = fields.find(
     (field) => field.fieldKey === "care-preference",
   );
+  const carePreference =
+    preference?.value ??
+    patient.carePreferences?.join(" · ") ??
+    "Nicht dokumentiert";
   return (
     <section className="workspace-card patient-profile-card">
-      <PatientIdentity patient={patient} />
+      <div className="workspace-card-heading">
+        <PatientIdentity patient={patient} />
+        <button className="secondary" type="button" onClick={onClose}>
+          Zurück zum Gespräch
+        </button>
+      </div>
       <dl className="profile-facts">
         <div>
           <dt>Allergiestatus</dt>
-          <dd>{patient.allergyStatus}</dd>
+          <dd>
+            {patient.allergyStatus === "confirmed"
+              ? patient.allergies.join(" · ")
+              : patient.allergyStatus === "explicit-negative"
+                ? "Keine bekannten Allergien dokumentiert"
+                : "Ungeklärt – aktiv prüfen"}
+          </dd>
         </div>
         <div>
           <dt>Risiken</dt>
@@ -164,7 +181,49 @@ function PatientProfile({
         </div>
         <div>
           <dt>Pflegepräferenz</dt>
-          <dd>{preference?.value ?? "Nicht dokumentiert"}</dd>
+          <dd>{carePreference}</dd>
+        </div>
+        <div>
+          <dt>Diagnosen / Behandlungsanlass</dt>
+          <dd>{patient.diagnoses.join(" · ") || "Nicht dokumentiert"}</dd>
+        </div>
+        <div>
+          <dt>Aktuelle Pflegeziele</dt>
+          <dd>{patient.careGoals.join(" · ") || "Nicht dokumentiert"}</dd>
+        </div>
+        <div>
+          <dt>Kommunikation</dt>
+          <dd>
+            {patient.communicationPreferences?.join(" · ") ||
+              "Keine besondere Präferenz dokumentiert"}
+          </dd>
+        </div>
+        <div>
+          <dt>Tagesroutine</dt>
+          <dd>{patient.dailyRoutine?.join(" · ") || "Nicht dokumentiert"}</dd>
+        </div>
+        <div>
+          <dt>Medikationskontext</dt>
+          <dd>
+            {patient.medicationSummary.join(" · ") || "Nicht dokumentiert"}
+          </dd>
+        </div>
+        <div>
+          <dt>Aufenthalt</dt>
+          <dd>
+            Zimmer {patient.room} · Fall {patient.mrn} · Encounter{" "}
+            {patient.encounterId}
+          </dd>
+        </div>
+        <div>
+          <dt>Quellstand</dt>
+          <dd>
+            {patient.source.provider === "pflegehelfer"
+              ? "Pflegehelfer"
+              : providerLabels[patient.source.provider]}{" "}
+            · Version {patient.source.version} ·{" "}
+            {new Date(patient.source.effectiveAt).toLocaleString("de-CH")}
+          </dd>
         </div>
       </dl>
       {proposal ? (
@@ -369,18 +428,53 @@ function TeamView({
       )}
       {!patient && selectedStaffId && (
         <div className="staff-profile" aria-label="Mitarbeitendenprofil">
-          <strong>
-            {snapshot.users.find((user) => user.id === selectedStaffId)
-              ?.displayName ?? "Teammitglied"}
-          </strong>
-          <span>
-            {
-              roleLabels[
-                snapshot.users.find((user) => user.id === selectedStaffId)
-                  ?.role ?? "service"
-              ]
-            }
-          </span>
+          {(() => {
+            const member = snapshot.users.find(
+              (user) => user.id === selectedStaffId,
+            );
+            if (!member) return <strong>Teammitglied nicht verfügbar</strong>;
+            return (
+              <>
+                <strong>{member.displayName}</strong>
+                <span>
+                  {member.directoryProfile?.professionalTitle ??
+                    roleLabels[member.role]}
+                </span>
+                <dl className="profile-facts">
+                  <div>
+                    <dt>Team / Station</dt>
+                    <dd>
+                      {member.directoryProfile
+                        ? `${member.directoryProfile.team} · ${member.directoryProfile.station}`
+                        : "Nicht dokumentiert"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Dienstlicher Kontakt</dt>
+                    <dd>
+                      {member.directoryProfile
+                        ? `${member.directoryProfile.workPhone} · ${member.directoryProfile.workEmail}`
+                        : "Nicht dokumentiert"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Sprachen</dt>
+                    <dd>
+                      {member.directoryProfile?.languages.join(" · ") ??
+                        "Nicht dokumentiert"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Zuständigkeiten</dt>
+                    <dd>
+                      {member.directoryProfile?.responsibilities.join(" · ") ??
+                        "Nicht dokumentiert"}
+                    </dd>
+                  </div>
+                </dl>
+              </>
+            );
+          })()}
           <small>
             Dienstliches Profil im freigegebenen Verzeichnis. Keine privaten
             Chats, Präsenz- oder HR-Daten.
@@ -958,6 +1052,7 @@ export function WorkspaceView({
   onPatient,
   onWorkdayAction,
   onError,
+  onNavigate,
 }: {
   destination: WorkspaceDestination;
   snapshot: AppSnapshot;
@@ -968,6 +1063,7 @@ export function WorkspaceView({
   onPatient: (patientId: string) => void;
   onWorkdayAction: (command: WorkdayCommand) => Promise<void>;
   onError: (message: string | null) => void;
+  onNavigate: (destination: WorkspaceDestination) => void;
 }) {
   const patientNotes = useMemo(
     () => snapshot.notes.filter((item) => item.patientId === patient?.id),
@@ -996,6 +1092,13 @@ export function WorkspaceView({
               <small>{roleLabels[snapshot.currentUser.role]}</small>
             </div>
           </div>
+          <button
+            className="secondary"
+            type="button"
+            onClick={() => onNavigate("Chat")}
+          >
+            Zurück zum Gespräch
+          </button>
         </div>
         <dl className="profile-facts">
           <div>
@@ -1003,8 +1106,42 @@ export function WorkspaceView({
             <dd>{snapshot.organization.displayName}</dd>
           </div>
           <div>
-            <dt>Standort</dt>
-            <dd>{snapshot.organization.siteId}</dd>
+            <dt>Funktion</dt>
+            <dd>
+              {snapshot.currentUser.directoryProfile?.professionalTitle ??
+                roleLabels[snapshot.currentUser.role]}
+            </dd>
+          </div>
+          <div>
+            <dt>Team / Station</dt>
+            <dd>
+              {snapshot.currentUser.directoryProfile
+                ? `${snapshot.currentUser.directoryProfile.team} · ${snapshot.currentUser.directoryProfile.station}`
+                : snapshot.organization.siteId}
+            </dd>
+          </div>
+          <div>
+            <dt>Dienstlicher Kontakt</dt>
+            <dd>
+              {snapshot.currentUser.directoryProfile
+                ? `${snapshot.currentUser.directoryProfile.workPhone} · ${snapshot.currentUser.directoryProfile.workEmail}`
+                : "Nicht dokumentiert"}
+            </dd>
+          </div>
+          <div>
+            <dt>Sprachen</dt>
+            <dd>
+              {snapshot.currentUser.directoryProfile?.languages.join(" · ") ??
+                "Nicht dokumentiert"}
+            </dd>
+          </div>
+          <div>
+            <dt>Zuständigkeiten</dt>
+            <dd>
+              {snapshot.currentUser.directoryProfile?.responsibilities.join(
+                " · ",
+              ) ?? "Nicht dokumentiert"}
+            </dd>
           </div>
           <div>
             <dt>Freigegebene Bereiche</dt>
@@ -1037,6 +1174,7 @@ export function WorkspaceView({
         patient={patient}
         userId={userId}
         onError={onError}
+        onClose={() => onNavigate("Chat")}
       />
     );
   if (destination === "Team")

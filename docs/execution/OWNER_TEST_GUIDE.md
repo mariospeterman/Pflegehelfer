@@ -1,6 +1,6 @@
 # Pflegehelfer owner test guide — UI wiring increment
 
-Prepared and exercised 24 September 2026. This is the tested handoff for the
+Prepared 24 September and updated/exercised 25 September 2026. This is the tested handoff for the
 UI foundation at `2ad9c228a2f4479631c3a1f150db49ddbbd5a9ed` plus the audited
 startup/provider/mobile fixes through
 `e5eaddaec220af0de15f85cccadf452587e15a56` on
@@ -23,24 +23,27 @@ benefit.
 | Runtime                     | `integrated-demo`, persistent PostgreSQL, Medplum FHIR R4 `5.1.37-82e609c`, independent provider simulator           |
 | Primary/second/denied roles | `u-nurse` Nora Frei; `u-assistant` Lea Bernasconi; `u-hr` Lina Wenger                                                |
 | Subjects                    | Anna Beispiel `p-anna`, Fall `SH-260901-001`; Luca Demo `p-luca`                                                     |
-| Model                       | Hosted synthetic-only `gpt-5.6-terra`; configured but **not accepted**                                               |
+| Model                       | Hosted synthetic-only `gpt-5.6-terra`; transport and one authorized read path accepted, full suite **not accepted**  |
 | ASR                         | Hosted `gpt-4o-transcribe`; configured/ready-for-test, positive acceptance **blocked**                               |
 | TTS                         | Browser SpeechSynthesis demo ready-for-test; supported API journey passed, actual-device/server TTS **not accepted** |
 | Provider operations         | All five adapters explicitly `SIMULATED`; no real provider write is enabled                                          |
 | Visual modes                | GStack Chromium, 1440×900 desktop and emulated 390×844 mobile, light and dark                                        |
 
-The bounded no-write model probe on this exact API artifact reached the
-provider and failed HTTP 429 with sanitized
-`credit_balance_exhausted`/`insufficient_quota`, model `gpt-5.6-terra`,
-fallback `false`. `/models` connectivity and deterministic fallback do not
-count as model acceptance.
+The bounded no-write model probe previously reached the provider and genuinely
+failed HTTP 429 with sanitized `credit_balance_exhausted`/
+`insufficient_quota`, model `gpt-5.6-terra`, fallback `false`. On 25 September,
+the current configured provider passed transport and authorized-read probes;
+one natural patient-context request also completed through the real caller with
+one authorized tool call and exact evidence claims. `/models` connectivity and
+deterministic fallback still do not count as acceptance, and the full held-out
+application suite remains open.
 
 ## Owner walkthrough
 
 ### 1. Shell, subject and own profile — PASS
 
 1. Open the PWA. The initial subject is **Mein Assistent**.
-2. Click **Kontext und Verlauf öffnen**. Search `Anna`, then click
+2. Click the centered **Mein Assistent** subject control. Search `Anna`, then click
    **Anna Beispiel**.
 3. Confirm the centered header says `Anna Beispiel`, `214A · Privat` and the
    compact patient bar shows birth date, Fall `SH-260901-001`, allergy and
@@ -51,7 +54,8 @@ Expected durable result: subject selection calls the existing assistant-context
 API and restores the authorized patient thread; it does not start work or
 change the actor. The own-profile control opens Lea's authenticated staff
 profile with role, organization, site, scoped wards, purpose and managed-device
-state. It does not open a patient profile or merely expose the menu.
+state. Click it again or use **Zurück zum Gespräch** to return. It does not open
+a patient profile or merely expose the menu.
 
 Automated evidence: the mobile and desktop subject-isolation journeys and the
 new own-profile journey pass. The full ward roster is absent from the private
@@ -71,18 +75,21 @@ detail information.
 
 Automated evidence: direct-lens/no-model and MRN association regressions pass.
 
-### 3. Source-bound conversation — PARTIAL / connected model BLOCKED
+### 3. Source-bound conversation — progressive connected-read PASS; full model suite PARTIAL
 
 1. In Anna's **Chat**, ask `Zeige mir bitte Annas Patientenübersicht.`
 2. Inspect the patient summary and source labels.
 3. For connected-model acceptance, ask `Was ist für Anna noch offen?`, then
    `Zeig mir dieselben Aufgaben als Tabelle. Danach erkläre es kurz.`
 
-Observed: the deterministic authorized read route renders the correct Anna
-summary and exact source-bound data. Natural connected-model acceptance cannot
-pass while provider credit is exhausted; the UI must show that component
-failure without relabelling the API or records offline. Do not accept a generic
-fallback response as T04 success.
+Observed on 25 September: the configured model completed a natural Anna-context
+request through the actual caller, selected the authorized
+`get_patient_summary` tool and returned exact Patient resource/version/path
+claims with fallback `false`. The earlier 429 remains retained failure evidence,
+not the current provider state. The UI must still show component failures
+without relabelling API or records offline. Do not accept a generic fallback as
+T04 success. Clarification, faithful draft/correction, model swap and all agreed
+held-out cases remain open.
 
 ### 4. Reviewed patient profile update — integrated browser/PostgreSQL PASS
 
@@ -165,8 +172,9 @@ member conflict acceptance remains pending.
 
 1. Open menu → **Pläne**. Confirm the ward handover appears here, not beneath
    Anna's private conversation.
-2. Run the fictional handover controls and start/resume work only according to
-   the synthetic fixture.
+2. Expand Anna and confirm **Wichtig zu wissen**, **Was in der letzten Schicht
+   passiert ist** and **Wichtige nächste Schritte**. Run the fictional handover
+   controls and start/resume work only according to the synthetic fixture.
 3. In chat, use **Sprachnachricht aufnehmen**, stop, inspect
    **Sprachtranskript prüfen**, submit, check the explicit transcript/context
    box, then edit the transcript.
@@ -188,10 +196,11 @@ Actual device audio, server TTS and a real microphone remain blocked/not run.
 3. As nurse/IT/quality-safety, open **Anbieter**; then repeat as a denied role.
 
 Expected result on this run: API authenticated; PostgreSQL ready; Medplum ready
-with its own message; model configured/ready-for-test with the sanitized last
-429 probe; ASR ready-for-test; browser TTS ready-for-test; delivery queues shown
-independently. Provider cards say `SIMULATED`, show separate state/latency/check
-time and no longer expose raw JSON; a denied role sees no diagnostics.
+with its own message; model configured and `smoke-tested` after the successful
+current probe; ASR ready-for-test; browser TTS ready-for-test; delivery queues
+shown independently. Provider cards say `SIMULATED`, show separate
+state/latency/check time and no longer expose raw JSON; a denied role sees no
+diagnostics.
 
 ## Actual API and persistence trace
 
@@ -208,9 +217,10 @@ time and no longer expose raw JSON; a denied role sees no diagnostics.
 
 ## Verification record
 
-- `pnpm verify` passed from clean head `b94ad0a82983`: formatting,
-  zero-warning lint, both TypeScript targets, 459 enabled tests with 26
-  declared environment skips, and matching PWA/API production builds.
+- The 25 September `pnpm verify` rerun passed formatting, zero-warning lint,
+  both TypeScript targets, 462 enabled tests with 26 declared environment skips,
+  and matching PWA/API production builds. The exact clean implementation SHA
+  and artifact IDs are recorded in the dated evidence update below.
 - The isolated PostgreSQL workspace test passed 1/1 after restart/read-back and
   scope-revocation denial; its temporary database was dropped.
 - The refreshed main PWA chunk is 2,399.64 kB minified / 696.31 kB gzip. This is
@@ -221,6 +231,12 @@ time and no longer expose raw JSON; a denied role sees no diagnostics.
   old static asset manifest across `clean-dist`; restarting that exact isolated
   server from the clean artifact restored hashed assets, 12/12 affected mobile
   journeys passed, and the complete matrix then passed.
+- The 25 September five-project run exercised all 130 configured cases: 90
+  passed and 39 were deliberate capability/viewport skips. Its only failure
+  correctly reported unavailable TTS because the manually launched isolated
+  server omitted the documented `PFH_TTS_MODE=browser-demo`; after restarting
+  with that setting, the affected message playback passed 1/1. Clean remote CI
+  remains the combined acceptance gate.
 - GitHub Actions run `35994652724` is retained as a failed run: 68 journeys
   passed, 27 were deliberately skipped and the same shell journey failed at
   all five widths because its test helper did not await the asynchronous
@@ -228,8 +244,9 @@ time and no longer expose raw JSON; a denied role sees no diagnostics.
   completed transition; that exact journey then passed 5/5 at 360, 390, 768,
   1024 and 1440 px. The replacement full CI run is the remote acceptance gate.
 - The integrated API on port 3000 reports persistent `integrated-demo`, healthy
-  PostgreSQL, Medplum 5.1.37 and available simulated providers. No destructive
-  reset was run against it.
+  PostgreSQL, Medplum 5.1.37 and available simulated providers. On 25 September
+  it was intentionally reset to the current synthetic fixture revision and to
+  remove failed model-attempt leftovers before the owner handoff.
 - `verify:security`, `verify:ops` and `verify:airgap` passed. The operations
   probe verified health/readiness and a synthetic backup checksum; this is not
   the still-open previous-release/integrated restore acceptance.
@@ -268,8 +285,9 @@ acceptance of the remaining gates:
 
 ## Explicitly failed, blocked or not run
 
-- **BLOCKED:** connected natural-model application acceptance and held-out
-  suite; provider credit is exhausted and no fallback counts.
+- **PARTIAL:** connected natural-model read acceptance now passes, but the full
+  held-out dialogue/draft/correction/model-swap suite is not accepted and no
+  fallback counts.
 - **BLOCKED/NOT ACCEPTED:** real ASR microphone, server TTS and actual-device
   audio playback.
 - **NOT RUN:** actual phone/tablet hardware, complete five-viewport/system-theme
@@ -297,5 +315,7 @@ pnpm exec playwright test --project=desktop --project=mobile-390
 ```
 
 For destructive/restart tests create a dedicated temporary database and
-provider namespace. Never run `/api/v1/demo/reset`, restore fixtures or
-provider fault injection against the preserved integrated demonstration.
+provider namespace. The integrated demonstration was intentionally reset on 25
+September to remove prior failed synthetic model attempts and load the current
+fictional fixture revision; do not run further reset, restore or provider fault
+injection unless explicitly refreshing that demo again.

@@ -33,6 +33,21 @@ const assignedPatientsFor = (actorId: string): string[] =>
     (assignment) => assignment.actorId === actorId,
   )?.patientIds ?? nursingPatientIds;
 
+const directoryProfile = (
+  professionalTitle: string,
+  emailName: string,
+  responsibilities: string[],
+  languages = ["Deutsch"],
+): NonNullable<DemoUser["directoryProfile"]> => ({
+  professionalTitle,
+  team: "Interprofessionelles Team Rehabilitation",
+  station: "Station Rehabilitation Nord",
+  workEmail: `${emailName}@pflegezentrum.example.invalid`,
+  workPhone: "+41 44 555 01 40",
+  languages,
+  responsibilities,
+});
+
 export const DEMO_NOW = "2026-09-05T08:00:00.000Z";
 
 function source(
@@ -63,6 +78,12 @@ export const users: DemoUser[] = [
     managedDevice: true,
     defaultPurpose: "direct-care",
     qualificationIds: qualificationsFor("u-assistant"),
+    directoryProfile: directoryProfile(
+      "Assistentin Gesundheit und Soziales EBA",
+      "lea.bernasconi",
+      ["Grundpflege", "Mobilisation", "Mahlzeitenbegleitung"],
+      ["Deutsch", "Italienisch"],
+    ),
   },
   {
     id: "u-nurse",
@@ -73,6 +94,12 @@ export const users: DemoUser[] = [
     managedDevice: true,
     defaultPurpose: "direct-care",
     qualificationIds: qualificationsFor("u-nurse"),
+    directoryProfile: directoryProfile(
+      "Dipl. Pflegefachfrau HF · Tagesverantwortung",
+      "nora.frei",
+      ["Schichtkoordination", "Pflegefachliche Beurteilung", "Eintritt"],
+      ["Deutsch", "Französisch", "Englisch"],
+    ),
   },
   {
     id: "u-nurse-evening",
@@ -83,6 +110,12 @@ export const users: DemoUser[] = [
     managedDevice: true,
     defaultPurpose: "direct-care",
     qualificationIds: qualificationsFor("u-nurse-evening"),
+    directoryProfile: directoryProfile(
+      "Dipl. Pflegefachfrau HF · Spätdienst",
+      "samira.vogel",
+      ["Schichtkoordination", "Pflegefachliche Beurteilung", "Übergabe"],
+      ["Deutsch", "Türkisch", "Englisch"],
+    ),
   },
   {
     id: "u-physician",
@@ -93,6 +126,11 @@ export const users: DemoUser[] = [
     managedDevice: true,
     defaultPurpose: "direct-care",
     qualificationIds: qualificationsFor("u-physician"),
+    directoryProfile: directoryProfile(
+      "Facharzt Allgemeine Innere Medizin",
+      "david.keller",
+      ["Ärztliche Visite", "Therapieentscheid", "Medikationsfreigabe"],
+    ),
   },
   {
     id: "u-physician-evening",
@@ -103,6 +141,12 @@ export const users: DemoUser[] = [
     managedDevice: true,
     defaultPurpose: "direct-care",
     qualificationIds: qualificationsFor("u-physician-evening"),
+    directoryProfile: directoryProfile(
+      "Fachärztin Allgemeine Innere Medizin · Hintergrunddienst",
+      "elif.aydin",
+      ["Ärztlicher Hintergrunddienst", "Dringliche Beurteilung"],
+      ["Deutsch", "Türkisch", "Englisch"],
+    ),
   },
   {
     id: "u-pharmacy",
@@ -112,6 +156,12 @@ export const users: DemoUser[] = [
     patientIds: allClinicalPatientIds,
     managedDevice: true,
     defaultPurpose: "direct-care",
+    directoryProfile: directoryProfile(
+      "Eidg. dipl. Apothekerin",
+      "giulia.rossi",
+      ["Medikationsabgleich", "Interaktionsprüfung"],
+      ["Deutsch", "Italienisch", "Englisch"],
+    ),
   },
   {
     id: "u-physio",
@@ -121,6 +171,12 @@ export const users: DemoUser[] = [
     patientIds: nursingPatientIds,
     managedDevice: true,
     defaultPurpose: "direct-care",
+    directoryProfile: directoryProfile(
+      "Dipl. Physiotherapeut FH",
+      "marc.dubois",
+      ["Mobilitätsassessment", "Gang- und Treppentraining"],
+      ["Deutsch", "Französisch"],
+    ),
   },
   {
     id: "u-ergo",
@@ -130,6 +186,11 @@ export const users: DemoUser[] = [
     patientIds: ["p-mei"],
     managedDevice: true,
     defaultPurpose: "direct-care",
+    directoryProfile: directoryProfile(
+      "Dipl. Ergotherapeutin FH",
+      "sofia.meier",
+      ["ADL-Training", "Hilfsmittelabklärung"],
+    ),
   },
   {
     id: "u-transport",
@@ -139,6 +200,11 @@ export const users: DemoUser[] = [
     patientIds: ["p-luca"],
     managedDevice: true,
     defaultPurpose: "operations",
+    directoryProfile: directoryProfile(
+      "Mitarbeiter Patiententransport",
+      "jonas.roth",
+      ["Patiententransport", "Terminübergabe"],
+    ),
   },
   {
     id: "u-service",
@@ -148,6 +214,11 @@ export const users: DemoUser[] = [
     patientIds: [],
     managedDevice: true,
     defaultPurpose: "operations",
+    directoryProfile: directoryProfile(
+      "Mitarbeiterin Hotellerie",
+      "elena.huber",
+      ["Mahlzeitenservice", "Zimmerlogistik"],
+    ),
   },
   {
     id: "u-admin",
@@ -157,6 +228,11 @@ export const users: DemoUser[] = [
     patientIds: allClinicalPatientIds,
     managedDevice: true,
     defaultPurpose: "administration",
+    directoryProfile: directoryProfile(
+      "Mitarbeiterin Patientenadministration",
+      "mia.schmid",
+      ["Eintrittsadministration", "Versicherungsangaben", "Terminkoordination"],
+    ),
   },
   {
     id: "u-manager",
@@ -166,6 +242,11 @@ export const users: DemoUser[] = [
     patientIds: [],
     managedDevice: true,
     defaultPurpose: "operations",
+    directoryProfile: directoryProfile(
+      "Bereichsleiter Rehabilitation",
+      "noah.graf",
+      ["Betriebsführung", "Ressourcenplanung", "Eskalationen"],
+    ),
   },
   {
     id: "u-hr",
@@ -175,6 +256,10 @@ export const users: DemoUser[] = [
     patientIds: [],
     managedDevice: true,
     defaultPurpose: "operations",
+    directoryProfile: directoryProfile("HR Business Partner", "lina.wenger", [
+      "Personaladministration",
+      "Einsatzplanung",
+    ]),
   },
   {
     id: "u-it",
@@ -184,6 +269,11 @@ export const users: DemoUser[] = [
     patientIds: [],
     managedDevice: true,
     defaultPurpose: "operations",
+    directoryProfile: directoryProfile(
+      "ICT Application Manager",
+      "tim.gerber",
+      ["Applikationsbetrieb", "Zugriffsverwaltung", "Supportkoordination"],
+    ),
   },
   {
     id: "u-quality",
@@ -193,6 +283,11 @@ export const users: DemoUser[] = [
     patientIds: [],
     managedDevice: true,
     defaultPurpose: "quality-review",
+    directoryProfile: directoryProfile(
+      "Fachspezialistin Qualität und Patientensicherheit",
+      "sara.baumann",
+      ["Qualitätsprüfung", "Ereignisanalyse", "Verbesserungsmassnahmen"],
+    ),
   },
 ];
 
@@ -220,6 +315,12 @@ export const patients: Patient[] = [
       "Torasemid: Diskrepanz 5 mg / 10 mg – keine Änderung in Pflegehelfer",
       "Apixaban 5 mg – nur lesbar",
     ],
+    carePreferences: ["Vor der Morgenpflege frühzeitig informieren"],
+    communicationPreferences: [
+      "Vor Transfers kurz erklären, was als Nächstes geschieht",
+      "Brille für Gespräche bereitlegen",
+    ],
+    dailyRoutine: ["Morgenpflege nach dem Frühstück", "Mittagsruhe ab 13:00"],
     source: source("wicare", "WCD-L-10021", 7, "2026-09-05T06:45:00.000Z"),
   },
   {
@@ -236,6 +337,12 @@ export const patients: Patient[] = [
     diagnoses: ["Dekonditionierung nach Pneumonie"],
     careGoals: ["Selbstständige Körperpflege am Lavabo"],
     medicationSummary: ["Medikationsabgleich durch Apotheke ausstehend"],
+    carePreferences: ["Körperpflege möglichst am Lavabo durchführen"],
+    communicationPreferences: [
+      "Rechts ansprechen und Blickkontakt abwarten",
+      "Hörgerät vor längeren Gesprächen prüfen",
+    ],
+    dailyRoutine: ["Körperpflege am Lavabo", "Kurze Gehstrecken mit Pausen"],
     source: source("carecoach", "CC-88004", 4, "2026-09-05T06:30:00.000Z"),
   },
   {
@@ -252,6 +359,15 @@ export const patients: Patient[] = [
     diagnoses: ["Zustand nach ischämischem Insult"],
     careGoals: ["Sicheres Schlucken gemäss Logopädieplan"],
     medicationSummary: ["Medikation im KIS – schreibgeschützt"],
+    carePreferences: ["Mahlzeiten ohne Zeitdruck begleiten"],
+    communicationPreferences: [
+      "Kurze Sätze",
+      "Schluckplan sichtbar bereithalten",
+    ],
+    dailyRoutine: [
+      "Aufrechte Position zu Mahlzeiten",
+      "Nach Mahlzeiten 20 Minuten sitzen",
+    ],
     source: source("sap-vitals", "SAP-PAT-7731", 3, "2026-09-05T07:00:00.000Z"),
   },
   {
@@ -268,6 +384,12 @@ export const patients: Patient[] = [
     diagnoses: ["Knie-Totalprothese rechts, postoperativ"],
     careGoals: ["Selbstständig ankleiden", "Sicher 20 m am Rollator"],
     medicationSummary: ["Medikation im führenden KIS – nur lesbar"],
+    carePreferences: ["Kleidung selbst auswählen und bereitlegen lassen"],
+    communicationPreferences: ["Schmerzen vor Belastung aktiv erfragen"],
+    dailyRoutine: [
+      "Ankleiden mit bereitgelegter Kleidung",
+      "Mobilisation nach Schmerzbeurteilung",
+    ],
     source: source("carecoach", "CC-88017", 2, "2026-09-05T06:35:00.000Z"),
   },
   {
@@ -284,6 +406,12 @@ export const patients: Patient[] = [
     diagnoses: ["Herzinsuffizienz, rehabilitative Stabilisierung"],
     careGoals: ["Gewicht täglich vergleichbar erfassen", "Ödeme beobachten"],
     medicationSummary: ["Diuretika-Verordnung im KIS – keine Änderung hier"],
+    carePreferences: ["Gewicht immer vor dem Frühstück erfassen"],
+    communicationPreferences: ["Tagesplan schriftlich am Tisch belassen"],
+    dailyRoutine: [
+      "Gewicht vor dem Frühstück",
+      "Beine am Nachmittag hochlagern",
+    ],
     source: source("wicare", "WCD-L-10044", 5, "2026-09-05T06:42:00.000Z"),
   },
   {
@@ -300,6 +428,15 @@ export const patients: Patient[] = [
     diagnoses: ["Hemiparese links nach Insult"],
     careGoals: ["Sicherer Transfer in den Rollstuhl", "Haut bleibt intakt"],
     medicationSummary: ["Medikation im KIS – schreibgeschützt"],
+    carePreferences: ["Beim Transfer die einzelnen Schritte ankündigen"],
+    communicationPreferences: [
+      "Von rechts ansprechen",
+      "Ausreichend Antwortzeit lassen",
+    ],
+    dailyRoutine: [
+      "Transfer mit zwei Mitarbeitenden",
+      "Druckentlastung gemäss Plan",
+    ],
     source: source("sap-vitals", "SAP-PAT-7810", 2, "2026-09-05T06:50:00.000Z"),
   },
   {
@@ -316,6 +453,12 @@ export const patients: Patient[] = [
     diagnoses: ["Dekonditionierung nach abdominalem Eingriff"],
     careGoals: ["Hörhilfe selbst einsetzen", "Begleiteter Spaziergang"],
     medicationSummary: ["Medikationsabgleich abgeschlossen – nur lesbar"],
+    carePreferences: ["Hörhilfe vor Pflegegesprächen einsetzen"],
+    communicationPreferences: ["Hörhilfe einsetzen und Verständnis rückfragen"],
+    dailyRoutine: [
+      "Begleiteter Spaziergang am Vormittag",
+      "Orientierungskalender aktualisieren",
+    ],
     source: source("carecoach", "CC-88029", 3, "2026-09-05T06:55:00.000Z"),
   },
   {
@@ -725,6 +868,119 @@ export const observations: Observation[] = [
 ];
 
 export const notes: ClinicalNote[] = [
+  {
+    id: "n-anna-evening-transfer",
+    patientId: "p-anna",
+    encounterId: "enc-anna-2026",
+    transcript: null,
+    structuredText:
+      "Beim Transfer am Abend Schwindel angegeben. Im Sitzen abgewartet; zuständige Pflegefachperson informiert und ärztliche Rückfrage eröffnet.",
+    criticalEntities: ["Schwindel", "Transfer"],
+    authorId: "u-nurse-evening",
+    status: "synced",
+    version: 1,
+    basedOnVersion: 0,
+    approvalPolicy: "standard",
+    approvals: ["u-nurse-evening"],
+    approvedAt: "2026-09-05T07:20:00.000Z",
+    provider: "wicare",
+    source: source("wicare", "NOTE-ANNA-51", 1, "2026-09-05T07:20:00.000Z"),
+  },
+  {
+    id: "n-luca-morning-care",
+    patientId: "p-luca",
+    encounterId: "enc-luca-2026",
+    transcript: null,
+    structuredText:
+      "Körperpflege am Lavabo mit Vorbereitung durchgeführt. Luca übernahm Gesicht und Oberkörper selbst; für den sicheren Stand war Begleitung nötig.",
+    criticalEntities: [],
+    authorId: "u-assistant",
+    status: "synced",
+    version: 1,
+    basedOnVersion: 0,
+    approvalPolicy: "standard",
+    approvals: ["u-assistant"],
+    approvedAt: "2026-09-05T07:10:00.000Z",
+    provider: "carecoach",
+    source: source("carecoach", "NOTE-LUCA-33", 1, "2026-09-05T07:10:00.000Z"),
+  },
+  {
+    id: "n-ruth-evening-mobility",
+    patientId: "p-ruth",
+    encounterId: "enc-ruth-2026",
+    transcript: null,
+    structuredText:
+      "Abendlicher Weg ins Bad am Rollator begleitet. Belastungsschmerz am rechten Knie angegeben; keine weitere Strecke durchgeführt.",
+    criticalEntities: ["Belastungsschmerz", "rechtes Knie"],
+    authorId: "u-nurse-evening",
+    status: "synced",
+    version: 1,
+    basedOnVersion: 0,
+    approvalPolicy: "standard",
+    approvals: ["u-nurse-evening"],
+    approvedAt: "2026-09-05T06:50:00.000Z",
+    provider: "carecoach",
+    source: source("carecoach", "NOTE-RUTH-12", 1, "2026-09-05T06:50:00.000Z"),
+  },
+  {
+    id: "n-peter-evening-skin",
+    patientId: "p-peter",
+    encounterId: "enc-peter-2026",
+    transcript: null,
+    structuredText:
+      "Beim Auskleiden beidseits sichtbare Unterschenkelödeme dokumentiert. Haut ohne neue offene Stelle; Gewichtskontrolle am Morgen bleibt geplant.",
+    criticalEntities: ["Unterschenkelödeme"],
+    authorId: "u-nurse-evening",
+    status: "synced",
+    version: 1,
+    basedOnVersion: 0,
+    approvalPolicy: "standard",
+    approvals: ["u-nurse-evening"],
+    approvedAt: "2026-09-05T06:35:00.000Z",
+    provider: "wicare",
+    source: source("wicare", "NOTE-PETER-29", 1, "2026-09-05T06:35:00.000Z"),
+  },
+  {
+    id: "n-sofia-evening-transfer",
+    patientId: "p-sofia",
+    encounterId: "enc-sofia-2026",
+    transcript: null,
+    structuredText:
+      "Transfer Bett–Rollstuhl mit zwei Mitarbeitenden nach Plan durchgeführt. Linker Arm wurde während des Transfers geführt.",
+    criticalEntities: ["Transfer mit zwei Mitarbeitenden"],
+    authorId: "u-nurse-evening",
+    status: "synced",
+    version: 1,
+    basedOnVersion: 0,
+    approvalPolicy: "standard",
+    approvals: ["u-nurse-evening"],
+    approvedAt: "2026-09-05T06:25:00.000Z",
+    provider: "sap-vitals",
+    source: source(
+      "sap-vitals",
+      "NOTE-SOFIA-21",
+      1,
+      "2026-09-05T06:25:00.000Z",
+    ),
+  },
+  {
+    id: "n-emil-evening-orientation",
+    patientId: "p-emil",
+    encounterId: "enc-emil-2026",
+    transcript: null,
+    structuredText:
+      "Hörhilfe vor dem Abendgespräch eingesetzt. Mit Orientierungskalender fand Emil anschliessend selbstständig Datum und nächsten Termin.",
+    criticalEntities: [],
+    authorId: "u-assistant",
+    status: "synced",
+    version: 1,
+    basedOnVersion: 0,
+    approvalPolicy: "standard",
+    approvals: ["u-assistant"],
+    approvedAt: "2026-09-05T06:15:00.000Z",
+    provider: "carecoach",
+    source: source("carecoach", "NOTE-EMIL-18", 1, "2026-09-05T06:15:00.000Z"),
+  },
   {
     id: "n-jonas-mobility",
     patientId: "p-jonas",
