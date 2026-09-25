@@ -13,6 +13,9 @@ Current source-binding/value-report implementation:
 Current model-schema/organization-economics implementation:
 `f7ee5e7ebb71038733a943a35f376b05c972158a`
 
+Current UI/connected-read implementation:
+`314e88959c088b94c81a5906ac15cecb4109e6e0`
+
 This is the short evidence index for the binding contract in
 [`PFLEGEHELFER_COMPLETION.md`](PFLEGEHELFER_COMPLETION.md). `PASS` requires code,
 an acceptance test and current runtime evidence. `PARTIAL` means repository work
@@ -65,7 +68,7 @@ constituents. G1–G7 remain `PARTIAL`.
 
 | Evidence class    | Result                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Source gate       | `pnpm verify` passed formatting, zero-warning lint, both TypeScript targets, 462 enabled tests with 26 declared skips and both production builds. Security, operations/backup checksum and air-gap preflight passed.                                                                                                                                                                                                                                                                                |
+| Source gate       | `pnpm verify` passed formatting, zero-warning lint, both TypeScript targets, 462 enabled tests with 26 declared skips and both production builds. Security, operations/backup checksum and air-gap preflight passed. The clean API/PWA artifacts are both `pfh-314e88959c08`, source `314e88959c088b94c81a5906ac15cecb4109e6e0`, `dirty:false`.                                                                                                                                                     |
 | Browser           | The full five-project run exercised all 130 configured cases: 90 passed, 39 were deliberate capability/viewport skips and one message-speech case exposed that the manually launched isolated server omitted the documented `PFH_TTS_MODE=browser-demo`. With the required setting restored, that case passed 1/1. The new subject/profile/handover/staff file passed desktop and mobile focused runs and all five projects in the matrix. Remote clean CI remains the final combined browser gate. |
 | Integrated demo   | The synthetic PostgreSQL/Medplum demo was intentionally reset to the current fixture revision. Read-back confirmed Anna's richer care/communication/routine data and Nora's complete service profile. The public ngrok root and `/ready` both returned HTTP 200. This reset is not migration/restore acceptance.                                                                                                                                                                                    |
 | Connected model   | One transient application-read timeout was retained, followed by two consecutive same-runtime transport/read successes on `gpt-5.6-terra`, fallback `false`. An actual natural patient-context query completed with one `get_patient_summary` call and exact `Patient/p-anna/_history/7` field claims; the actual PWA then displayed a clean source-bound summary with one authorized source. Full held-out/model-swap/draft/correction acceptance remains open.                                    |
@@ -89,14 +92,14 @@ constituent.
 
 ## Readiness outputs
 
-| Output                                 | Status      | Reason                                                                                                                                                                                          |
-| -------------------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Source published/reviewable            | RELEASABLE  | Secret-free source, lockfile, tests and evidence are reviewable. The published PR head/build identity and clean-checkout CI run are recorded above.                                             |
-| Conversation replacement implemented   | IMPLEMENTED | OpenUI, AI SDK UIMessage SSE, one guarded composer and server-owned authorized history replace the bespoke surface.                                                                             |
-| Connected AI/audio scenario accepted   | NOT READY   | The current authorized key reaches the provider, but the last bounded call failed as `credit_balance_exhausted` with fallback `false`. Connected application and ASR/TTS acceptance are absent. |
-| Full synthetic product complete        | NOT READY   | G1–G7 retain the internal closure work listed above.                                                                                                                                            |
-| Institutional read-only pilot approved | NOT READY   | OIDC, RLS/isolation, provider authorization and institutional approvals are missing.                                                                                                            |
-| Controlled real write pilot approved   | NOT READY   | Synthetic atomic acceptance/read-back/recovery pass; real provider contracts/mappings, institutional security controls and sign-off are missing.                                                |
+| Output                                 | Status      | Reason                                                                                                                                                                                            |
+| -------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Source published/reviewable            | RELEASABLE  | Secret-free source, lockfile, tests and evidence are reviewable. The published PR head/build identity and clean-checkout CI run are recorded above.                                               |
+| Conversation replacement implemented   | IMPLEMENTED | OpenUI, AI SDK UIMessage SSE, one guarded composer and server-owned authorized history replace the bespoke surface.                                                                               |
+| Connected AI/audio scenario accepted   | PARTIAL     | Transport plus an authorized read and one real PWA patient-summary path now pass with fallback `false`; the full held-out application/model-swap suite and real ASR/TTS acceptance remain absent. |
+| Full synthetic product complete        | NOT READY   | G1–G7 retain the internal closure work listed above.                                                                                                                                              |
+| Institutional read-only pilot approved | NOT READY   | OIDC, RLS/isolation, provider authorization and institutional approvals are missing.                                                                                                              |
+| Controlled real write pilot approved   | NOT READY   | Synthetic atomic acceptance/read-back/recovery pass; real provider contracts/mappings, institutional security controls and sign-off are missing.                                                  |
 
 Production WiCare, careCoach, SAP, device and nurse-call operations remain
 `EXTERNAL_VENDOR_GATE` individually until their private contracts, credentials,

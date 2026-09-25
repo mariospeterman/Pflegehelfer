@@ -700,7 +700,10 @@ If not, finish the specific missing behavior. Do not create another architecture
 ## 29. UI, realistic fixtures and connected-read increment — 25 September 2026
 
 This increment preserves the G0–G7 gates and inherited acceptance identifiers;
-it does not promote any remaining constituent gate to complete.
+it does not promote any remaining constituent gate to complete. Its clean
+implementation artifact is `pfh-314e88959c08` from
+`314e88959c088b94c81a5906ac15cecb4109e6e0` (`dirty:false`) for both API and
+PWA.
 
 - The centered subject control is a compact, explicit chooser over the existing
   context API. It no longer opens the full navigation drawer. Patient identity

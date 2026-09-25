@@ -4,7 +4,8 @@ Prepared 24 September and updated/exercised 25 September 2026. This is the teste
 UI foundation at `2ad9c228a2f4479631c3a1f150db49ddbbd5a9ed` plus the audited
 startup/provider/mobile fixes through
 `e5eaddaec220af0de15f85cccadf452587e15a56` on
-`codex/genui-production-showcase`, PR #1.
+`codex/genui-production-showcase`, PR #1, and the 25 September UI/model
+implementation `314e88959c088b94c81a5906ac15cecb4109e6e0`.
 
 Use only the fictional fixtures named here. Do not enter real patient,
 employee or credential data. The independent provider is a stateful simulator;
@@ -15,10 +16,10 @@ benefit.
 
 | Item                        | Tested value                                                                                                         |
 | --------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| Reviewed remote head        | `e93c17c96307191d4005b6673901870c8270f9d6`                                                                           |
-| Implementation source       | UI foundation `2ad9c228a2f4479631c3a1f150db49ddbbd5a9ed`; audit fixes `e5eaddaec220af0de15f85cccadf452587e15a56`     |
-| Last clean API artifact     | `pfh-b94ad0a82983`, source `b94ad0a82983d2dcb7663988d9e62ecc1829f155`, `dirty:false`                                 |
-| Last clean PWA artifact     | `pfh-b94ad0a82983`, same source, `dirty:false`, `matchingSource:true`                                                |
+| Pre-increment remote head   | `5ca30eda6c78198ef5d2bb1a8b2ff440d5c51d23`                                                                           |
+| Implementation source       | UI/model/profile/handover increment `314e88959c088b94c81a5906ac15cecb4109e6e0`                                       |
+| Last clean API artifact     | `pfh-314e88959c08`, source `314e88959c088b94c81a5906ac15cecb4109e6e0`, `dirty:false`                                 |
+| Last clean PWA artifact     | `pfh-314e88959c08`, same source, `dirty:false`, `matchingSource:true`                                                |
 | Local URLs                  | PWA `http://127.0.0.1:5173`; API `http://127.0.0.1:3000`; clean memory artifact `http://127.0.0.1:4173`              |
 | Runtime                     | `integrated-demo`, persistent PostgreSQL, Medplum FHIR R4 `5.1.37-82e609c`, independent provider simulator           |
 | Primary/second/denied roles | `u-nurse` Nora Frei; `u-assistant` Lea Bernasconi; `u-hr` Lina Wenger                                                |
