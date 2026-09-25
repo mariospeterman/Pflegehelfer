@@ -1,5 +1,7 @@
 # Implementation plan
 
+> Historical execution log, not a competing contract. Current scope, status and acceptance are governed by [`execution/PFLEGEHELFER_COMPLETION.md`](execution/PFLEGEHELFER_COMPLETION.md) and its G0–G7 matrix.
+
 Last updated: 2026-09-14
 Patient-workspace baseline: `479b2f807bb08e755088801e581ab3c17aed3fb6`
 

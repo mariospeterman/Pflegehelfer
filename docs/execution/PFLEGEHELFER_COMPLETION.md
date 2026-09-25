@@ -1,19 +1,32 @@
 # Pflegehelfer — One Product, Natural Coworker, Verified Completion
 
-**Contract revision:** 24 September 2026
+**Contract revision:** 25 September 2026
 
 **Repository:** `mariospeterman/Pflegehelfer`
 
 **Working branch:** `codex/genui-production-showcase`
 
-**Reviewed branch/PR head:** `bb9b646f98efcd5410fd3ee9656bb78acd689d7c`
+**Reviewed implementation head:** `14d0374d1aa262b77cc97e3ed81d39543f68813d`
 
-**Current conversational implementation:** `2ad9c228a2f4479631c3a1f150db49ddbbd5a9ed`
+**Current conversational implementation:** `14d0374d1aa262b77cc97e3ed81d39543f68813d`
 
 **Existing pull request:** #1, draft and unmerged at the recheck
 **Canonical destination:** this file, `docs/execution/PFLEGEHELFER_COMPLETION.md`
 
 > One natural, role-aware coworker; useful model-composed interfaces; reviewed organizational instructions; faithful documentation; enforced permissions; recoverable delivery.
+
+## 25 September coherent synthetic ward-day increment
+
+Implementation `14d0374d1aa262b77cc97e3ed81d39543f68813d` closes a focused internal UI/fixture gap without changing the product authority model or declaring any G1–G7 gate complete:
+
+- the general `Übergabe`, `Meine Aufgaben` and `Teamfragen` controls now navigate to their real persisted destinations instead of manufacturing prompt-shaped navigation; patient starters remain natural model conversations;
+- the configured early-shift assignment contains eight fictional, clinically varied rehabilitation patients. The exact PostgreSQL workday handover still requires patient-by-patient, version-bound acknowledgement before the plan stage appears;
+- expanding a handover item no longer changes the private patient conversation. The three required handover sections remain exact, and routine staff UI shows the human case number rather than an internal encounter identifier;
+- the AGS EBA and HF demo employees now load their matching reviewed role profiles. Delegated measurement, mobility and observation tasks explicitly retain nursing review/escalation boundaries;
+- Library, Projects and Team receive idempotent, access-scoped synthetic fixtures on demo initialization and authorized reset. The fixtures are labelled synthetic and do not create placeholder success, private-chat mining or production data;
+- one configuration source controls patient membership and display order; broader clinical assignments deduplicate that list rather than appending legacy copies.
+
+Acceptance evidence: the repository-wide `pnpm verify` gate passed with 52 test files passed, 9 deliberately skipped, 463 tests passed and 26 deliberately skipped; production PWA/API builds passed. The focused workday/collaboration browser suite passed 19/20 desktop scenarios with one deliberate viewport-specific skip, and the new complete workday plus populated-workspace regression passed 4/4 on desktop and 390 px mobile. Light and dark desktop views were visually inspected. After the isolated fixture reset, the current configured hosted-test model passed the bounded same-runtime transport and one-tool authorized application-read probes in 10.7 seconds with `fallbackUsed:false` and no clinical write. This is connected read acceptance only, not full progressive write-path/model acceptance. ASR/TTS and all institutional/vendor gates remain governed by their existing matrix status.
 
 The 20 September outcome-closure input is merged here rather than retained as a second master contract. Its priority correction is binding: Pflegehelfer must reduce avoidable re-entry and coordination burden while preserving reviewed meaning, correct destination delivery and responsibility ownership across shifts. A generic Swiss-branded chat experience, Markdown, air-gap capability or model neutrality alone is not the product outcome.
 

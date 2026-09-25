@@ -1,5 +1,7 @@
 # Implementation status
 
+> Evidence summary only. The canonical completion contract and current G0–G7 status are in [`execution/PFLEGEHELFER_COMPLETION.md`](execution/PFLEGEHELFER_COMPLETION.md); this file does not override them.
+
 Last updated: 2026-09-14
 
 ## Acceptance recovery update — 2026-09-14

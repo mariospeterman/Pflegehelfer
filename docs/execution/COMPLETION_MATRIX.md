@@ -2,7 +2,7 @@
 
 Updated: 2026-09-25
 
-Reviewed PR #1 baseline: `bb9b646f98efcd5410fd3ee9656bb78acd689d7c`
+Reviewed PR #1 baseline: `b1c987dbcf3a48e4b095c467c2aa64ac85621334`
 
 Current conversational implementation:
 `43edbdbcf55e920c947cf133f8cead3e207cb9f5`
@@ -15,6 +15,9 @@ Current model-schema/organization-economics implementation:
 
 Current UI/connected-read implementation:
 `314e88959c088b94c81a5906ac15cecb4109e6e0`
+
+Current coherent ward-day/demo implementation:
+`14d0374d1aa262b77cc97e3ed81d39543f68813d`
 
 This is the short evidence index for the binding contract in
 [`PFLEGEHELFER_COMPLETION.md`](PFLEGEHELFER_COMPLETION.md). `PASS` requires code,

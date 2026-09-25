@@ -7,6 +7,26 @@ startup/provider/mobile fixes through
 `codex/genui-production-showcase`, PR #1, and the 25 September UI/model
 implementation `314e88959c088b94c81a5906ac15cecb4109e6e0`.
 
+The coherent ward-day and populated demo-fixture increment is
+`14d0374d1aa262b77cc97e3ed81d39543f68813d`. It preserves the same APIs and
+authority model while changing the default AGS early shift to eight fictional
+patients. From the empty general conversation, click **Übergabe**: this must
+open **Pläne** directly, show `0/8`, and create no user chat bubble. Open each
+patient, read the three handover sections, then click **Gelesen & übernehmen**.
+Only the eighth acknowledgement may show **Dein sicherer Arbeitsplan**, `8/8`
+and the explicit workday-started notice. **Bibliothek**, **Projekte** and
+**Team & @Fragen** must show the labelled synthetic checklist, the
+Morgenmobilisation project and Nora's direct early-shift message after a demo
+reset. These checks passed on desktop and 390 px mobile; light and dark desktop
+plans were visually inspected.
+
+The 25 September post-reset model probe used the configured hosted-test key and
+passed the actual same-runtime transport plus one authorized application read
+in 10.7 seconds. It reported `fallbackUsed:false`, one tool call and no clinical
+write. Treat this as connected read acceptance only. The complete progressive
+model/write suite, ASR acceptance and institutional/vendor approval remain
+open.
+
 Use only the fictional fixtures named here. Do not enter real patient,
 employee or credential data. The independent provider is a stateful simulator;
 none of its results are vendor acceptance, institutional approval or customer
