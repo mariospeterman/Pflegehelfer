@@ -174,6 +174,25 @@ services:
       retries: 10
     networks: [clinical]
 
+  # Optional isolated parser/OCR tier. PDF is an active, complex format, so
+  # untrusted documents are never parsed inside the Pflegehelfer API process.
+  docling:
+    profiles: [documents]
+    image: ghcr.io/docling-project/docling-serve-cpu:v1.21.0
+    restart: unless-stopped
+    environment:
+      DOCLING_SERVE_ENABLE_UI: "0"
+      DOCLING_SERVE_MAX_SYNC_WAIT: "50"
+    expose: ["5001"]
+    ports: ["127.0.0.1:5001:5001"]
+    read_only: true
+    tmpfs: [/tmp]
+    volumes:
+      - docling-model-cache:/opt/app-root/src/.cache
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    networks: [documents]
+
   pflegehelfer:
     profiles: [showcase]
     build: .
@@ -191,6 +210,7 @@ services:
       MEDPLUM_DEFAULT_SUPER_ADMIN_CLIENT_ID: ${MEDPLUM_DEFAULT_SUPER_ADMIN_CLIENT_ID:?Run pnpm demo:env first}
       MEDPLUM_DEFAULT_SUPER_ADMIN_CLIENT_SECRET: ${MEDPLUM_DEFAULT_SUPER_ADMIN_CLIENT_SECRET:?Run pnpm demo:env first}
       LOG_LEVEL: info
+      PFH_DOCUMENT_INSPECTION_BASE_URL: ${PFH_DOCUMENT_INSPECTION_BASE_URL:-}
     depends_on:
       pflegehelfer-postgres:
         condition: service_healthy
@@ -207,14 +227,17 @@ services:
       interval: 15s
       timeout: 3s
       retries: 5
-    networks: [clinical]
+    networks: [clinical, documents]
 
 networks:
   clinical:
     internal: false # demo host access; production charts split ingress/clinical/AI zones
+  documents:
+    internal: true
 
 volumes:
   pflegehelfer-postgres-data:
   medplum-postgres-data:
   medplum-binary-data:
   provider-simulator-data:
+  docling-model-cache:

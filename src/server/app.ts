@@ -25,6 +25,14 @@ import {
 } from "../ai/assistant-proposal.js";
 import { isDomainError, PflegehelferService } from "../core/service.js";
 import { emptyWorkflowState } from "../core/service.js";
+import { installDemoScenarioRuntime } from "../core/demo-scenario-runtime.js";
+import {
+  baselineDemoScenario,
+  parseDemoScenarioRun,
+  scenarioDigest,
+  scenarioInventory,
+  scenarioRunContentDigest,
+} from "../core/demo-scenario.js";
 import { siteConfiguration } from "../core/site-config.js";
 import { decide, type Action } from "../core/policy.js";
 import { runtimeSitePack } from "../core/runtime-instructions.js";
@@ -57,6 +65,14 @@ import {
   type OperationalStore,
 } from "../infrastructure/operational-store.js";
 import { seedSyntheticDemoWorkspace } from "../infrastructure/demo-workspace.js";
+import {
+  documentInspectionFromEnvironment,
+  type DocumentInspectionGateway,
+} from "../infrastructure/document-inspection.js";
+import {
+  InMemoryDemoScenarioStore,
+  type DemoScenarioStore,
+} from "../infrastructure/demo-scenario-store.js";
 import type { WorkdayCommand } from "../core/workday.js";
 import type { RuntimeProfileConfiguration } from "./runtime-profile.js";
 import { runtimeBuildInfo } from "./build-info.js";
@@ -296,6 +312,8 @@ export function buildApp(
     workspace?: ClinicalWorkspace;
     operationalStore?: OperationalStore;
     commercialStore?: CommercialStore;
+    scenarioStore?: DemoScenarioStore;
+    documentInspection?: DocumentInspectionGateway;
     modelGateway?: ModelGateway;
     runtime?: RuntimeProfileConfiguration;
     loggerStream?: Writable;
@@ -308,6 +326,13 @@ export function buildApp(
     options.operationalStore ?? new InMemoryOperationalStore();
   const commercialStore =
     options.commercialStore ?? new InMemoryCommercialStore();
+  const scenarioStore =
+    options.scenarioStore ?? new InMemoryDemoScenarioStore();
+  const documentInspection =
+    options.documentInspection ?? documentInspectionFromEnvironment();
+  const scenarioReady = demoMode
+    ? scenarioStore.initialize()
+    : Promise.resolve(null);
   const commercialSeed = loadOrganizationCommercialConfig();
   if (commercialSeed.organizationId !== siteConfiguration.institutionId)
     throw new Error("COMMERCIAL_CONFIGURATION_SCOPE_MISMATCH");
@@ -332,6 +357,7 @@ export function buildApp(
         : createProductionProviderRegistry(),
       demoMode ? "synthetic-simulator" : "production",
     );
+  if (demoMode) installDemoScenarioRuntime(service.checkpoint().state);
   const models =
     options.modelGateway ??
     new ModelGateway(process.env, {
@@ -1374,6 +1400,7 @@ export function buildApp(
         model: llm,
         asr: asr.status(),
         tts: tts.status(),
+        documents: documentInspection.status(),
       },
     };
   });
@@ -2028,6 +2055,12 @@ export function buildApp(
         state: "available",
         createdAt: new Date().toISOString(),
         withdrawnAt: null,
+        inspection: await documentInspection.inspect({
+          bytes,
+          fileName: safeName,
+          mediaType,
+          expectedSha256: sha256,
+        }),
       };
       const result = await operationalStore.storeWorkspaceAttachment({
         record,
@@ -4107,6 +4140,500 @@ export function buildApp(
       ),
   );
   if (demoMode) {
+    const requireDemoAdministrator = (request: FastifyRequest) => {
+      const operator = service.user(userId(request));
+      if (operator.role !== "it")
+        throw new DomainError(
+          "AUTH_DENIED",
+          "Nur die Demo-IT-Rolle darf Szenarien verwalten.",
+          403,
+        );
+      return operator;
+    };
+    const scenarioSource = (externalId: string, occurredAt: string) => ({
+      provider: "pflegehelfer" as const,
+      externalId,
+      version: 1,
+      mappingVersion: "demo-scenario-v1",
+      effectiveAt: occurredAt,
+      recordedAt: occurredAt,
+      receivedAt: occurredAt,
+      syncedAt: occurredAt,
+    });
+    const persistScenarioState = async () => {
+      const state = service.checkpoint().state;
+      installDemoScenarioRuntime(state);
+      return scenarioStore.updateActiveState(
+        state,
+        await operationalStore.exportDemoWorkspace(),
+      );
+    };
+    const patientFixtureSchema = z
+      .object({
+        id: z.string().regex(/^p-[a-z0-9-]{2,70}$/),
+        displayName: z.string().trim().min(3).max(120),
+        birthDate: z.iso.date(),
+        mrn: z.string().trim().min(3).max(80),
+        room: z.string().trim().min(1).max(40),
+        encounterId: z.string().regex(/^enc-[a-z0-9-]{2,90}$/),
+        allergyStatus: z.enum(["confirmed", "explicit-negative", "unknown"]),
+        allergies: z.array(z.string().trim().min(1).max(240)).max(20),
+        risks: z.array(z.string().trim().min(1).max(240)).max(20),
+        diagnoses: z.array(z.string().trim().min(1).max(240)).max(20),
+        careGoals: z.array(z.string().trim().min(1).max(240)).max(20),
+        medicationSummary: z.array(z.string().trim().min(1).max(320)).max(20),
+        carePreferences: z
+          .array(z.string().trim().min(1).max(240))
+          .max(20)
+          .default([]),
+        communicationPreferences: z
+          .array(z.string().trim().min(1).max(240))
+          .max(20)
+          .default([]),
+        dailyRoutine: z
+          .array(z.string().trim().min(1).max(240))
+          .max(20)
+          .default([]),
+      })
+      .strict();
+    const staffFixtureSchema = z
+      .object({
+        id: z.string().regex(/^u-[a-z0-9-]{2,70}$/),
+        displayName: z.string().trim().min(3).max(120),
+        role: roleSchema,
+        patientIds: z.array(z.string().regex(/^p-[a-z0-9-]{2,70}$/)).max(100),
+        managedDevice: z.boolean().default(true),
+        professionalTitle: z.string().trim().min(3).max(160),
+        languages: z.array(z.string().trim().min(2).max(80)).min(1).max(12),
+        responsibilities: z
+          .array(z.string().trim().min(2).max(240))
+          .min(1)
+          .max(24),
+      })
+      .strict();
+    const taskFixtureSchema = z
+      .object({
+        id: z.string().regex(/^t-[a-z0-9-]{2,90}$/),
+        patientId: z.string().regex(/^p-[a-z0-9-]{2,70}$/),
+        title: z.string().trim().min(3).max(200),
+        reason: z.string().trim().min(3).max(500),
+        ownerRole: roleSchema,
+        ownerId: z
+          .string()
+          .regex(/^u-[a-z0-9-]{2,70}$/)
+          .nullable(),
+        priority: z.enum(["routine", "elevated", "urgent"]),
+        dueAt: z.iso.datetime({ offset: true }),
+        escalation: z.string().trim().min(3).max(500),
+      })
+      .strict();
+
+    app.get("/api/v1/admin/demo", async (request) => {
+      requireDemoAdministrator(request);
+      await scenarioReady;
+      const run = await persistScenarioState();
+      return {
+        run: {
+          runId: run.runId,
+          scenarioId: run.scenarioId,
+          scenarioVersion: run.scenarioVersion,
+          label: run.label,
+          sourceRunId: run.sourceRunId,
+          clock: run.clock,
+          digest: scenarioRunContentDigest(run),
+          inventory: scenarioInventory(run.state),
+          createdAt: run.createdAt,
+          updatedAt: run.updatedAt,
+        },
+        runs: await scenarioStore.list(),
+      };
+    });
+
+    app.get("/api/v1/admin/demo/export", async (request, reply) => {
+      requireDemoAdministrator(request);
+      await scenarioReady;
+      const run = await persistScenarioState();
+      const bundle = {
+        schemaVersion: 1,
+        kind: "pflegehelfer-synthetic-scenario",
+        exportedAt: new Date().toISOString(),
+        build: runtimeBuildInfo(),
+        run,
+        digest: scenarioDigest(run),
+      };
+      return reply
+        .header(
+          "content-disposition",
+          `attachment; filename="pflegehelfer-${run.scenarioId}-${run.runId}.json"`,
+        )
+        .header("cache-control", "no-store")
+        .send(bundle);
+    });
+
+    app.post("/api/v1/admin/demo/import", async (request, reply) => {
+      requireDemoAdministrator(request);
+      await scenarioReady;
+      const body = z
+        .object({
+          schemaVersion: z.literal(1),
+          kind: z.literal("pflegehelfer-synthetic-scenario"),
+          exportedAt: z.iso.datetime({ offset: true }),
+          build: z.unknown(),
+          run: z.unknown(),
+          digest: z.string().regex(/^[a-f0-9]{64}$/),
+        })
+        .strict()
+        .parse(request.body);
+      const run = parseDemoScenarioRun(body.run);
+      if (scenarioDigest(run) !== body.digest)
+        throw new DomainError(
+          "INVALID_STATE",
+          "Szenarioexport hat eine ungültige Prüfsumme.",
+          409,
+        );
+      const imported = await scenarioStore.importRun(run);
+      return reply.code(201).send({
+        runId: imported.runId,
+        status: "imported-inactive",
+        digest: scenarioRunContentDigest(imported),
+        inventory: scenarioInventory(imported.state),
+      });
+    });
+
+    app.post("/api/v1/admin/demo/runs", async (request, reply) => {
+      requireDemoAdministrator(request);
+      await scenarioReady;
+      await persistScenarioState();
+      const body = z
+        .object({
+          source: z.enum(["baseline", "current"]),
+          label: z.string().trim().min(3).max(160),
+          clockMode: z.enum(["frozen", "start-today"]),
+        })
+        .strict()
+        .parse(request.body);
+      const run = await scenarioStore.clone({
+        source: body.source,
+        label: body.label,
+        mode: body.clockMode,
+      });
+      return reply.code(201).send({
+        runId: run.runId,
+        status: "created-inactive",
+        digest: scenarioRunContentDigest(run),
+        inventory: scenarioInventory(run.state),
+      });
+    });
+
+    app.post("/api/v1/admin/demo/patients", async (request, reply) => {
+      const operator = requireDemoAdministrator(request);
+      const body = patientFixtureSchema.parse(request.body);
+      const active = await scenarioStore.active();
+      const occurredAt =
+        active.clock.mode === "frozen"
+          ? active.clock.anchor
+          : new Date().toISOString();
+      const result = await persist(
+        () => {
+          const checkpoint = service.checkpoint();
+          if (
+            checkpoint.state.patients.some(
+              (item) => item.id === body.id || item.mrn === body.mrn,
+            )
+          )
+            throw new DomainError(
+              "INVALID_STATE",
+              "Patienten-ID oder Fallnummer existiert bereits.",
+              409,
+            );
+          const patient = {
+            ...body,
+            wardId: siteConfiguration.department.id,
+            source: scenarioSource(
+              `scenario/${active.runId}/patient/${body.id}`,
+              occurredAt,
+            ),
+          };
+          checkpoint.state.patients.push(patient);
+          service.restoreCheckpoint(checkpoint);
+          service.audit.append({
+            actor: operator,
+            action: "demo-scenario:patient-added",
+            patientId: patient.id,
+            purpose: "operations",
+            outcome: "success",
+            detail: { runId: active.runId },
+          });
+          return patient;
+        },
+        request,
+        201,
+        true,
+      );
+      await persistScenarioState();
+      return reply.code(201).send(result);
+    });
+
+    app.post("/api/v1/admin/demo/staff", async (request, reply) => {
+      const operator = requireDemoAdministrator(request);
+      const body = staffFixtureSchema.parse(request.body);
+      const result = await persist(
+        () => {
+          const checkpoint = service.checkpoint();
+          if (checkpoint.state.users.some((item) => item.id === body.id))
+            throw new DomainError(
+              "INVALID_STATE",
+              "Mitarbeitenden-ID existiert bereits.",
+              409,
+            );
+          const visiblePatients = new Set(
+            checkpoint.state.patients.map((item) => item.id),
+          );
+          if (
+            body.patientIds.some((patientId) => !visiblePatients.has(patientId))
+          )
+            throw new DomainError(
+              "INVALID_STATE",
+              "Eine Zuweisung verweist auf eine unbekannte Person.",
+              409,
+            );
+          const user = {
+            id: body.id,
+            displayName: body.displayName,
+            role: body.role,
+            wardIds: [siteConfiguration.department.id],
+            patientIds: body.patientIds,
+            managedDevice: body.managedDevice,
+            defaultPurpose:
+              body.role === "administration"
+                ? ("administration" as const)
+                : [
+                      "management",
+                      "hr",
+                      "it",
+                      "quality-safety",
+                      "service",
+                      "transport",
+                    ].includes(body.role)
+                  ? ("operations" as const)
+                  : ("direct-care" as const),
+            directoryProfile: {
+              professionalTitle: body.professionalTitle,
+              team: "Interprofessionelles Team Rehabilitation",
+              station: "Station Rehabilitation Nord",
+              workEmail: `${body.id.slice(2)}@pflegezentrum.example.invalid`,
+              workPhone: "+41 44 555 01 99",
+              languages: body.languages,
+              responsibilities: body.responsibilities,
+            },
+          };
+          checkpoint.state.users.push(user);
+          service.restoreCheckpoint(checkpoint);
+          service.audit.append({
+            actor: operator,
+            action: "demo-scenario:staff-added",
+            patientId: null,
+            purpose: "operations",
+            outcome: "success",
+            detail: { staffId: user.id },
+          });
+          return user;
+        },
+        request,
+        201,
+        true,
+      );
+      await persistScenarioState();
+      return reply.code(201).send(result);
+    });
+
+    app.post("/api/v1/admin/demo/tasks", async (request, reply) => {
+      const operator = requireDemoAdministrator(request);
+      const body = taskFixtureSchema.parse(request.body);
+      const active = await scenarioStore.active();
+      const occurredAt =
+        active.clock.mode === "frozen"
+          ? active.clock.anchor
+          : new Date().toISOString();
+      const result = await persist(
+        () => {
+          const checkpoint = service.checkpoint();
+          const patient = checkpoint.state.patients.find(
+            (item) => item.id === body.patientId,
+          );
+          if (!patient)
+            throw new DomainError(
+              "NOT_FOUND",
+              "Synthetische Person wurde nicht gefunden.",
+              404,
+            );
+          if (checkpoint.state.tasks.some((item) => item.id === body.id))
+            throw new DomainError(
+              "INVALID_STATE",
+              "Aufgaben-ID existiert bereits.",
+              409,
+            );
+          if (
+            body.ownerId &&
+            !checkpoint.state.users.some(
+              (item) =>
+                item.id === body.ownerId && item.role === body.ownerRole,
+            )
+          )
+            throw new DomainError(
+              "INVALID_STATE",
+              "Verantwortliche Person und Rolle stimmen nicht überein.",
+              409,
+            );
+          const task = {
+            ...body,
+            encounterId: patient.encounterId,
+            requesterId: operator.id,
+            state: "new" as const,
+            acknowledgementRequired: true,
+            acknowledgedAt: null,
+            dependencies: [],
+            comments: [],
+            completionEvidence: null,
+            source: scenarioSource(
+              `scenario/${active.runId}/task/${body.id}`,
+              occurredAt,
+            ),
+          };
+          checkpoint.state.tasks.push(task);
+          service.restoreCheckpoint(checkpoint);
+          service.audit.append({
+            actor: operator,
+            action: "demo-scenario:task-added",
+            patientId: patient.id,
+            purpose: "operations",
+            outcome: "success",
+            detail: { taskId: task.id },
+          });
+          return task;
+        },
+        request,
+        201,
+        true,
+      );
+      await persistScenarioState();
+      return reply.code(201).send(result);
+    });
+
+    app.post("/api/v1/admin/demo/assignments", async (request) => {
+      const operator = requireDemoAdministrator(request);
+      const body = z
+        .object({
+          actorId: z.string().regex(/^u-[a-z0-9-]{2,70}$/),
+          patientIds: z.array(z.string().regex(/^p-[a-z0-9-]{2,70}$/)).max(100),
+        })
+        .strict()
+        .parse(request.body);
+      const result = await persist(
+        () => {
+          const checkpoint = service.checkpoint();
+          const actor = checkpoint.state.users.find(
+            (item) => item.id === body.actorId,
+          );
+          if (!actor)
+            throw new DomainError(
+              "NOT_FOUND",
+              "Mitarbeitende Person wurde nicht gefunden.",
+              404,
+            );
+          const patientIds = new Set(
+            checkpoint.state.patients.map((item) => item.id),
+          );
+          if (body.patientIds.some((patientId) => !patientIds.has(patientId)))
+            throw new DomainError(
+              "INVALID_STATE",
+              "Eine Zuweisung verweist auf eine unbekannte Person.",
+              409,
+            );
+          actor.patientIds = [...new Set(body.patientIds)];
+          service.restoreCheckpoint(checkpoint);
+          service.audit.append({
+            actor: operator,
+            action: "demo-scenario:assignment-updated",
+            patientId: null,
+            purpose: "operations",
+            outcome: "success",
+            detail: {
+              actorId: actor.id,
+              patientCount: actor.patientIds.length,
+            },
+          });
+          return { actorId: actor.id, patientIds: actor.patientIds };
+        },
+        request,
+        200,
+        true,
+      );
+      await persistScenarioState();
+      return result;
+    });
+
+    app.post("/api/v1/admin/demo/events/:eventId", async (request, reply) => {
+      requireDemoAdministrator(request);
+      const { eventId } = z
+        .object({ eventId: z.string().regex(/^[a-z0-9:-]{2,120}$/) })
+        .strict()
+        .parse(request.params);
+      const event = baselineDemoScenario.predefinedEvents.find(
+        (candidate) => candidate.id === eventId,
+      );
+      if (!event)
+        throw new DomainError(
+          "NOT_FOUND",
+          "Kontrolliertes Szenarioereignis wurde nicht gefunden.",
+          404,
+        );
+      const result = await persist(
+        () => service.triggerNurseCall(userId(request), event.patientId),
+        request,
+        201,
+        true,
+      );
+      return reply.code(201).send({ event, result });
+    });
+
+    app.get("/api/v1/admin/demo/runs/:runId/reset-preview", async (request) => {
+      requireDemoAdministrator(request);
+      const { runId } = z.object({ runId: z.uuid() }).parse(request.params);
+      const [current, target] = await Promise.all([
+        persistScenarioState(),
+        scenarioStore.get(runId),
+      ]);
+      if (!target)
+        throw new DomainError(
+          "NOT_FOUND",
+          "Szenariolauf wurde nicht gefunden.",
+          404,
+        );
+      const confirmationDigest = scenarioDigest({
+        currentRunId: current.runId,
+        currentDigest: scenarioRunContentDigest(current),
+        targetRunId: target.runId,
+        targetDigest: scenarioRunContentDigest(target),
+      });
+      return {
+        current: {
+          runId: current.runId,
+          digest: scenarioRunContentDigest(current),
+          inventory: scenarioInventory(current.state),
+        },
+        target: {
+          runId: target.runId,
+          digest: scenarioRunContentDigest(target),
+          inventory: scenarioInventory(target.state),
+        },
+        confirmationDigest,
+        activation: "stopped-runtime-restore-required",
+        message:
+          "Die Vorschau verändert nichts. Aktivierung bleibt gesperrt, bis der vollständige PostgreSQL-, Medplum-, Datei- und Provider-Restore im gestoppten isolierten Lauf ausgeführt wird.",
+      };
+    });
+
     app.post("/api/v1/simulators/nurse-call", async (request, reply) => {
       const { patientId } = z
         .object({ patientId: z.string() })
@@ -4187,6 +4714,13 @@ export function buildApp(
           message: "Nur der Demo-IT-Operator darf zurücksetzen.",
           requestId: request.id,
         });
+      if (runtime.profile !== "memory-demo")
+        return reply.code(409).send({
+          error: "ISOLATED_RESET_REQUIRED",
+          message:
+            "Der breite Reset ist nur im isolierten Speichertest erlaubt. Verwende Demo verwalten für Export, Arbeitskopie und eine geprüfte Reset-Vorschau; der laufende integrierte Demonstrator bleibt unverändert.",
+          requestId: request.id,
+        });
       const result = await persist(async () => {
         await service.reset({
           resetAudit: workspace.mode === "in-memory",
@@ -4252,7 +4786,11 @@ export function buildApp(
   }
 
   app.addHook("onClose", async () => {
-    await Promise.all([operationalStore.close(), commercialStore.close()]);
+    await Promise.all([
+      operationalStore.close(),
+      commercialStore.close(),
+      scenarioStore.close(),
+    ]);
   });
 
   return app;

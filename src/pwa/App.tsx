@@ -716,6 +716,8 @@ function ContextPanel({
     ["Anbieter", "Provider"],
     ["Betriebsstatus", "Status"],
   ];
+  if (snapshot.currentUser.role === "it")
+    actions.push(["Demo verwalten", "Demo"]);
   const [search, setSearch] = useState("");
   const normalizedSearch = search.trim().toLocaleLowerCase("de-CH");
   const visiblePatients = snapshot.patients.filter((item) =>

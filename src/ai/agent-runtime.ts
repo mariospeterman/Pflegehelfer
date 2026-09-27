@@ -454,15 +454,14 @@ export class BoundedAgentRuntime {
       }
     };
     const trace: AgentTraceEvent[] = [];
-    const turns: AgentModelTurn[] = [
-      ...input.context.workingContext.recentConversation
-        .slice(-8)
-        .map((turn) => ({
-          role: turn.role,
-          content: turn.text.slice(0, 400),
-        })),
-      { role: "user", content: input.request.slice(0, 8_000) },
-    ];
+    // The current request is carried separately as `userRequest`. Keeping it
+    // out of `turns` prevents every model step from paying for the same input
+    // twice while retaining the bounded prior conversation and tool results.
+    const turns: AgentModelTurn[] =
+      input.context.workingContext.recentConversation.slice(-6).map((turn) => ({
+        role: turn.role,
+        content: turn.text.slice(0, 400),
+      }));
     const calls = new Map<string, number>();
     const draftReferences = new Set<string>();
     const toolReferences = new Set<string>();
@@ -489,6 +488,11 @@ export class BoundedAgentRuntime {
         reportProgress({ stage: "model" });
         let decision: AgentModelDecision;
         try {
+          // Reserve the final model turn for a grounded answer once the tool
+          // budget is consumed. Hosted native-tool adapters then receive no
+          // callable functions instead of being invited to request a fourth
+          // read that the runtime must reject after paying for it.
+          const turnTools = toolCalls >= this.maxToolCalls ? [] : tools;
           decision = await this.model.next({
             instructions: input.context.instructions.system,
             skills: input.context.instructions.skills,
@@ -496,7 +500,7 @@ export class BoundedAgentRuntime {
             // Give the adapter an immutable snapshot. Later tool results must
             // not retroactively alter a retained request/tracing object.
             turns: turns.map((turn) => ({ ...turn })),
-            tools,
+            tools: turnTools,
             signal: controller.signal,
           });
         } catch (error) {

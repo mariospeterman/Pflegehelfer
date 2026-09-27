@@ -29,6 +29,80 @@
   --radius: 18px;
 }
 
+.demo-admin-workspace {
+  display: grid;
+  gap: 1rem;
+}
+
+.demo-run-card,
+.demo-run-list,
+.demo-admin-workspace details {
+  border: 1px solid var(--line);
+  border-radius: 0.9rem;
+  padding: 0.9rem;
+  background: var(--surface-soft);
+}
+
+.demo-run-card {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.demo-run-card code {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+}
+
+.demo-admin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.demo-editor {
+  margin-top: 0.8rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: 0.65rem;
+}
+
+.demo-editor label,
+.demo-run-list div {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.demo-editor textarea {
+  min-height: 5rem;
+}
+
+.demo-run-list {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.file-label input {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+.document-excerpt {
+  max-height: 18rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  background: var(--surface-soft);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.8rem;
+}
+
 /* OpenUI AgentInterface integration. Pflegehelfer owns the outer authorized
    context navigation; the embedded agent therefore occupies only the active
    conversation pane and never exposes OpenUI's generic cross-thread sidebar. */

@@ -141,6 +141,11 @@ describe("bounded agent runtime", () => {
     expect(result.status).toBe("answer");
     expect(result.toolCalls).toBe(2);
     expect(result.sourceReferenceIds).toEqual(["handover:v2"]);
+    expect(model.inputs[0]?.userRequest).toBe("Bereite meine Übergabe vor.");
+    expect(model.inputs[0]?.turns).not.toContainEqual({
+      role: "user",
+      content: "Bereite meine Übergabe vor.",
+    });
     expect(result.trace.filter((event) => event.kind === "tool")).toMatchObject(
       [
         { tool: "get_open_questions", resultReferenceId: "questions:v4" },
@@ -152,6 +157,30 @@ describe("bounded agent runtime", () => {
     expect(secondInput.turns[0]?.content).toBe("Mobilisation später.");
     expect(secondInput.turns.at(-1)?.content).toContain('"pending":1');
     expect(secondInput.turns.at(-1)?.content).toContain("UNTRUSTED_TOOL_DATA");
+  });
+
+  it("reserves the final turn for an answer after the bounded tool budget", async () => {
+    const model = fixtureModel([
+      { kind: "tool-call", toolName: "get_open_questions", input: {} },
+      { kind: "tool-call", toolName: "get_handover", input: {} },
+      {
+        kind: "answer",
+        text: "Die Übergabe ist bereit.",
+        sourceReferenceIds: ["handover:v2"],
+      },
+    ]);
+    const runtime = new BoundedAgentRuntime(model, registry(), {
+      maxToolCalls: 2,
+      maxModelTurns: 3,
+    });
+    await expect(
+      runtime.run({
+        request: "Prüfe Fragen und Übergabe.",
+        context,
+        allowedTools: ["get_open_questions", "get_handover"],
+      }),
+    ).resolves.toMatchObject({ status: "answer", toolCalls: 2 });
+    expect(model.inputs[2]?.tools).toEqual([]);
   });
 
   it("never lets model arguments replace trusted actor or tenant context", async () => {

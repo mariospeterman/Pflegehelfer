@@ -29,6 +29,10 @@ import type {
   WorkEpisodeView,
 } from "../core/workday.js";
 import { siteConfiguration } from "../core/site-config.js";
+import {
+  activeNursingAssignment,
+  activeStaffAssignment,
+} from "../core/demo-scenario-runtime.js";
 import { runMigrations } from "./migrations.js";
 import type {
   VoiceTranscriptOriginal,
@@ -47,6 +51,7 @@ import {
   type WorkspaceProfileProposal,
   type WorkspaceProject,
   type WorkspaceProjectLink,
+  type DemoWorkspaceSnapshot,
 } from "../core/workspace.js";
 
 export type {
@@ -101,9 +106,7 @@ export interface HandoverClinicalSnapshotItem {
 
 function handoverContent(patientIds: readonly string[]): HandoverContentItem[] {
   return patientIds.map((patientId) => {
-    const assignment = siteConfiguration.nursingAssignments.find(
-      (item) => item.patientId === patientId,
-    );
+    const assignment = activeNursingAssignment(patientId);
     return {
       patientId,
       title: assignment?.title ?? "Individueller Pflegeauftrag",
@@ -152,9 +155,7 @@ function workdayConfiguration(
   role: Role,
   sessionStartedAt?: string,
 ) {
-  const assignment = siteConfiguration.staffAssignments.find(
-    (candidate) => candidate.actorId === actorId && candidate.role === role,
-  );
+  const assignment = activeStaffAssignment(actorId, role);
   if (!assignment)
     throw new DomainError(
       "AUTH_DENIED",
@@ -174,9 +175,7 @@ function workdayConfiguration(
 }
 
 function optionalWorkdayConfiguration(actorId: string, role: Role) {
-  const assignment = siteConfiguration.staffAssignments.find(
-    (candidate) => candidate.actorId === actorId && candidate.role === role,
-  );
+  const assignment = activeStaffAssignment(actorId, role);
   if (!assignment) return null;
   const shiftId = assignment.shiftId;
   const shift = siteConfiguration.shifts[shiftId]!;
@@ -600,6 +599,7 @@ export interface OperationalStore {
   loadVoiceAuthority(tokenHash: string): Promise<DurableVoiceAuthority | null>;
   consumeVoiceAuthority(tokenHash: string): Promise<boolean>;
   health(): Promise<boolean>;
+  exportDemoWorkspace(): Promise<DemoWorkspaceSnapshot>;
   resetDemoState(): Promise<void>;
   close(): Promise<void>;
 }
@@ -1153,9 +1153,7 @@ export class InMemoryOperationalStore implements OperationalStore {
       const assignment =
         command.kind === "planned" &&
         configuredWorkday.patientIds.includes(command.patientId)
-          ? siteConfiguration.nursingAssignments.find(
-              (item) => item.patientId === command.patientId,
-            )
+          ? activeNursingAssignment(command.patientId)
           : null;
       if (command.kind === "planned" && !assignment)
         throw new Error("PLANNED_ASSIGNMENT_NOT_FOUND");
@@ -1267,9 +1265,7 @@ export class InMemoryOperationalStore implements OperationalStore {
           existing.state = "deferred";
           existing.completedAt = new Date().toISOString();
         } else {
-          const assignment = siteConfiguration.nursingAssignments.find(
-            (item) => item.patientId === command.patientId,
-          );
+          const assignment = activeNursingAssignment(command.patientId);
           if (!assignment) throw new Error("PLANNED_ASSIGNMENT_NOT_FOUND");
           session.episodes.push({
             id: randomUUID(),
@@ -2206,6 +2202,34 @@ export class InMemoryOperationalStore implements OperationalStore {
   }
   health(): Promise<boolean> {
     return Promise.resolve(true);
+  }
+  exportDemoWorkspace(): Promise<DemoWorkspaceSnapshot> {
+    return Promise.resolve({
+      comments: [...this.workspaceComments.values()].map((record) =>
+        structuredClone(record),
+      ),
+      commentReads: [...this.workspaceCommentReads.entries()].map(
+        ([commentId, readers]) => ({
+          commentId,
+          actorIds: [...readers].sort(),
+        }),
+      ),
+      attachments: [...this.workspaceAttachments.values()].map(
+        ({ record, bytes }) => ({
+          record: structuredClone(record),
+          contentBase64: Buffer.from(bytes).toString("base64"),
+        }),
+      ),
+      projects: [...this.workspaceProjects.values()].map((record) =>
+        structuredClone(record),
+      ),
+      profileFields: [...this.workspaceProfileFields.values()].map((record) =>
+        structuredClone(record),
+      ),
+      profileProposals: [...this.workspaceProfileProposals.values()].map(
+        (record) => structuredClone(record),
+      ),
+    });
   }
   resetDemoState(): Promise<void> {
     this.sessions.clear();
@@ -3533,9 +3557,7 @@ export class PostgresOperationalStore
         const assignment =
           command.kind === "planned" &&
           configuredWorkday.patientIds.includes(command.patientId)
-            ? siteConfiguration.nursingAssignments.find(
-                (item) => item.patientId === command.patientId,
-              )
+            ? activeNursingAssignment(command.patientId)
             : null;
         if (command.kind === "planned" && !assignment)
           throw new Error("PLANNED_ASSIGNMENT_NOT_FOUND");
@@ -3666,9 +3688,7 @@ export class PostgresOperationalStore
         );
         if (!changed.rowCount) throw new Error("EPISODE_STATE_CONFLICT");
       } else if (command.type === "defer-responsibility") {
-        const assignment = siteConfiguration.nursingAssignments.find(
-          (item) => item.patientId === command.patientId,
-        );
+        const assignment = activeNursingAssignment(command.patientId);
         if (
           !assignment ||
           !configuredWorkday.patientIds.includes(command.patientId)
@@ -6094,6 +6114,69 @@ export class PostgresOperationalStore
     } catch {
       return false;
     }
+  }
+  async exportDemoWorkspace(): Promise<DemoWorkspaceSnapshot> {
+    const [records, reads] = await Promise.all([
+      this.pool.query<{
+        record_type:
+          | "comment"
+          | "attachment"
+          | "project"
+          | "profile-field"
+          | "profile-proposal";
+        payload: unknown;
+        blob_data: Buffer | null;
+      }>(
+        `SELECT record_type,payload,blob_data FROM workspace_records
+         WHERE organization_id=$1 ORDER BY created_at,id`,
+        [organizationId],
+      ),
+      this.pool.query<{ comment_id: string; actor_id: string }>(
+        `SELECT comment_id::text,actor_id FROM workspace_comment_reads
+         WHERE organization_id=$1 ORDER BY comment_id,actor_id`,
+        [organizationId],
+      ),
+    ]);
+    const snapshot: DemoWorkspaceSnapshot = {
+      comments: [],
+      commentReads: [],
+      attachments: [],
+      projects: [],
+      profileFields: [],
+      profileProposals: [],
+    };
+    for (const row of records.rows) {
+      if (row.record_type === "comment")
+        snapshot.comments.push(workspaceCommentSchema.parse(row.payload));
+      else if (row.record_type === "attachment") {
+        if (!row.blob_data)
+          throw new Error("WORKSPACE_ATTACHMENT_BYTES_MISSING");
+        snapshot.attachments.push({
+          record: workspaceAttachmentSchema.parse(row.payload),
+          contentBase64: row.blob_data.toString("base64"),
+        });
+      } else if (row.record_type === "project")
+        snapshot.projects.push(workspaceProjectSchema.parse(row.payload));
+      else if (row.record_type === "profile-field")
+        snapshot.profileFields.push(
+          workspaceProfileFieldSchema.parse(row.payload),
+        );
+      else
+        snapshot.profileProposals.push(
+          workspaceProfileProposalSchema.parse(row.payload),
+        );
+    }
+    const readers = new Map<string, string[]>();
+    for (const row of reads.rows) {
+      const values = readers.get(row.comment_id) ?? [];
+      values.push(row.actor_id);
+      readers.set(row.comment_id, values);
+    }
+    snapshot.commentReads = [...readers].map(([commentId, actorIds]) => ({
+      commentId,
+      actorIds,
+    }));
+    return snapshot;
   }
   async resetDemoState(): Promise<void> {
     const client = await this.pool.connect();

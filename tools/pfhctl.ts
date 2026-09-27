@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import pg from "pg";
 import { AsrGateway } from "../src/ai/asr-gateway.js";
@@ -94,15 +94,17 @@ else if (group === "migrations" && action === "status") {
     request("/api/v1/providers/registry?profile=synthetic-simulator"),
   ]);
   console.log(JSON.stringify({ production, simulators }, null, 2));
-} else if (group === "provider" && action === "test")
-  console.log(
-    JSON.stringify(
-      await request("/api/v1/outbox/process", { method: "POST", body: "{}" }),
-      null,
-      2,
-    ),
-  );
-else if (group === "clinical-projection" && action === "manual-head")
+} else if (group === "provider" && action === "test") {
+  const result = (await request(
+    "/api/v1/providers/registry?profile=synthetic-simulator",
+  )) as { providers?: Array<{ health?: { status?: string } }> };
+  console.log(JSON.stringify(result, null, 2));
+  if (
+    !result.providers?.length ||
+    result.providers.some(({ health }) => health?.status !== "available")
+  )
+    process.exitCode = 1;
+} else if (group === "clinical-projection" && action === "manual-head")
   console.log(
     JSON.stringify(
       await request("/api/v1/operations/clinical-projections/manual-head"),
@@ -126,15 +128,97 @@ else if (group === "clinical-projection" && action === "retry") {
       2,
     ),
   );
-} else if (group === "demo" && action === "reset")
+} else if (group === "demo" && ["status", "list"].includes(action))
+  console.log(JSON.stringify(await request("/api/v1/admin/demo"), null, 2));
+else if (group === "demo" && action === "export") {
+  const outputPath =
+    arguments_[0] ?? `pflegehelfer-scenario-${Date.now()}.json`;
+  const bundle = await request("/api/v1/admin/demo/export");
+  await writeFile(outputPath, `${JSON.stringify(bundle, null, 2)}\n`, {
+    mode: 0o600,
+    flag: "wx",
+  });
+  console.log(JSON.stringify({ status: "exported", outputPath }, null, 2));
+} else if (group === "demo" && action === "import") {
+  const inputPath = arguments_[0];
+  if (!inputPath) throw new Error("Usage: pfhctl demo import <export.json>");
+  const bundle = JSON.parse(await readFile(inputPath, "utf8")) as unknown;
   console.log(
     JSON.stringify(
-      await request("/api/v1/demo/reset", { method: "POST", body: "{}" }),
+      await request("/api/v1/admin/demo/import", {
+        method: "POST",
+        body: JSON.stringify(bundle),
+      }),
       null,
       2,
     ),
   );
-else if (
+} else if (group === "demo" && action === "clone") {
+  const [label, clockMode = "frozen", source = "current"] = arguments_;
+  if (!label)
+    throw new Error(
+      'Usage: pfhctl demo clone "Label" [frozen|start-today] [current|baseline]',
+    );
+  console.log(
+    JSON.stringify(
+      await request("/api/v1/admin/demo/runs", {
+        method: "POST",
+        body: JSON.stringify({ label, clockMode, source }),
+      }),
+      null,
+      2,
+    ),
+  );
+} else if (group === "demo" && action === "apply") {
+  const [resource, inputPath] = arguments_;
+  if (
+    !resource ||
+    !inputPath ||
+    !["patients", "staff", "tasks", "assignments"].includes(resource)
+  )
+    throw new Error(
+      "Usage: pfhctl demo apply patients|staff|tasks|assignments <input.json>",
+    );
+  const body = await readFile(inputPath, "utf8");
+  console.log(
+    JSON.stringify(
+      await request(`/api/v1/admin/demo/${resource}`, {
+        method: "POST",
+        body,
+      }),
+      null,
+      2,
+    ),
+  );
+} else if (group === "demo" && action === "event") {
+  const eventId = arguments_[0];
+  if (!eventId) throw new Error("Usage: pfhctl demo event <event-id>");
+  console.log(
+    JSON.stringify(
+      await request(
+        `/api/v1/admin/demo/events/${encodeURIComponent(eventId)}`,
+        {
+          method: "POST",
+          body: "{}",
+        },
+      ),
+      null,
+      2,
+    ),
+  );
+} else if (group === "demo" && action === "reset-preview") {
+  const runId = arguments_[0];
+  if (!runId) throw new Error("Usage: pfhctl demo reset-preview <run-id>");
+  console.log(
+    JSON.stringify(
+      await request(
+        `/api/v1/admin/demo/runs/${encodeURIComponent(runId)}/reset-preview`,
+      ),
+      null,
+      2,
+    ),
+  );
+} else if (
   group === "fhir" &&
   ["import", "verify", "validate"].includes(action)
 ) {
@@ -221,13 +305,18 @@ else if (group === "model" && action === "test") {
     };
   });
   console.log(JSON.stringify({ validated }, null, 2));
-} else if (group === "backup" && action === "restore-test")
+} else if (group === "backup" && action === "restore-test") {
+  const exitCode = await new Promise<number>((resolveExit, reject) => {
+    const child = spawn(process.execPath, ["scripts/ops-check.mjs"], {
+      stdio: "inherit",
+    });
+    child.once("error", reject);
+    child.once("exit", (code) => resolveExit(code ?? 1));
+  });
+  if (exitCode !== 0) process.exitCode = exitCode;
+} else {
   console.log(
-    "Run `pnpm build && pnpm verify:ops` for the isolated synthetic restore-integrity test.",
-  );
-else {
-  console.log(
-    "Usage: pfhctl preflight | status | migrations status | provider list|test | clinical-projection manual-head|retry <job-id> <expected-error-code> | demo reset | fhir import|verify|validate | model list|test | asr test | tts test | site validate [pack-path ...] | backup restore-test",
+    'Usage: pfhctl preflight | status | migrations status | provider list|test | clinical-projection manual-head|retry <job-id> <expected-error-code> | demo status|list|export [path]|import <path>|clone "label" [frozen|start-today] [current|baseline]|apply patients|staff|tasks|assignments <path>|event <id>|reset-preview <run-id> | fhir import|verify|validate | model list|test | asr test | tts test | site validate [pack-path ...] | backup restore-test',
   );
   if (group !== "help") process.exitCode = 2;
 }

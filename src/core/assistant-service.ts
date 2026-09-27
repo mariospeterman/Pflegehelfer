@@ -271,6 +271,7 @@ function formatEvidenceValue(value: string | number | boolean | null): string {
 
 function taskStateLabel(value: unknown): string {
   const states: Record<string, string> = {
+    new: "offen",
     accepted: "offen",
     ready: "bereit",
     "in-progress": "in Arbeit",
@@ -655,6 +656,13 @@ function verifiedCoworkerContent(
     if (consumed.has(claimKey(claim.referenceId, claim.path))) continue;
     const last = claim.path.split(".").at(-1)!;
     const parent = claim.path.split(".").slice(-2, -1)[0];
+    if (parent === "briefFacts" && typeof claim.value === "string") {
+      renderedAtoms.push({
+        text: claim.value,
+        entityLabels: [claim.value.slice(0, 120)],
+      });
+      continue;
+    }
     const label =
       parent === "risks"
         ? "Risiko"
@@ -723,7 +731,7 @@ function generatedCoworkerSources(
       const selectedRowPaths = new Set(
         claims.flatMap(({ path }) => {
           const match = path.match(
-            /^((?:tasks|observations|communications|deliveries)\.\d+)\./,
+            /^((?:tasks|observations|communications|deliveries|briefFacts)\.\d+)(?:\.|$)/,
           );
           return match ? [match[1]!] : [];
         }),
@@ -1440,12 +1448,76 @@ export class AssistantService {
       const registry = new AuthorizedToolRegistry([
         {
           name: "get_patient_summary",
-          version: 1,
+          version: 2,
           description:
-            "Read the current authorized patient and encounter summary.",
+            "Read the current authorized patient-and-encounter brief: identity, room, risks, care goals, open tasks and latest accepted observations. Prefer this single read for broad questions about what matters today; use narrower reads only when the employee asks for a focused or larger list.",
           effect: "read",
           input: emptyInput,
           execute: () => {
+            const selectedTasks = patient
+              ? snapshot.tasks
+                  .filter(
+                    (task) =>
+                      task.patientId === patient.id &&
+                      task.encounterId === patient.encounterId &&
+                      task.state !== "completed",
+                  )
+                  .slice(0, 10)
+              : [];
+            const selectedObservations = patient
+              ? snapshot.observations
+                  .filter(
+                    (item) =>
+                      item.patientId === patient.id &&
+                      item.encounterId === patient.encounterId &&
+                      item.approvedAt !== null,
+                  )
+                  .slice(-6)
+              : [];
+            const briefEntries = patient
+              ? [
+                  {
+                    text: `Patientenkontext: ${patient.room} · ${patient.displayName}.`,
+                    resourceId: `Patient/${patient.id}`,
+                    version: String(patient.source.version),
+                    provider: patient.source.provider,
+                  },
+                  ...(patient.risks.length > 0
+                    ? [
+                        {
+                          text: `Risiken: ${patient.risks.join("; ")}.`,
+                          resourceId: `Patient/${patient.id}`,
+                          version: String(patient.source.version),
+                          provider: patient.source.provider,
+                        },
+                      ]
+                    : []),
+                  ...(patient.careGoals.length > 0
+                    ? [
+                        {
+                          text: `Pflegeziele: ${patient.careGoals.join("; ")}.`,
+                          resourceId: `Patient/${patient.id}`,
+                          version: String(patient.source.version),
+                          provider: patient.source.provider,
+                        },
+                      ]
+                    : []),
+                  ...selectedTasks.map((task) => ({
+                    text: `Aufgabe: ${task.title} · ${taskStateLabel(task.state)}${task.dueAt ? ` · fällig ${formatOrganizationTimestamp(task.dueAt)}` : ""}.`,
+                    resourceId: `Task/${task.id}`,
+                    version: String(task.source.version),
+                    effectiveAt: task.dueAt,
+                    provider: task.source.provider,
+                  })),
+                  ...selectedObservations.map((observation) => ({
+                    text: `${observation.label}: ${formatEvidenceValue(observation.value)}${observation.secondaryValue === null ? "" : `/${formatEvidenceValue(observation.secondaryValue)}`} ${observation.unit} · gemessen am ${formatOrganizationTimestamp(observation.effectiveAt)} · ${observation.approvedAt && ["high-assurance", "four-eyes"].includes(observation.approvalPolicy) && new Set(observation.approvals).size >= 2 ? "unabhängig bestätigt" : "freigegeben"}.`,
+                    resourceId: `Observation/${observation.id}`,
+                    version: String(observation.version),
+                    effectiveAt: observation.effectiveAt,
+                    provider: observation.source.provider,
+                  })),
+                ]
+              : [];
             return Promise.resolve({
               referenceId: `EvidenceResult/get_patient_summary/${randomUUID()}`,
               sourceReferenceId: patient
@@ -1454,13 +1526,19 @@ export class AssistantService {
               sourceVersion: patient ? String(patient.source.version) : "0",
               freshness: snapshot.serverTime,
               complete: patient !== null,
+              rowProvenance: briefEntries.map((entry, index) => ({
+                path: `briefFacts.${index}`,
+                resourceId: entry.resourceId,
+                version: entry.version,
+                ...(patient ? { patientId: patient.id } : {}),
+                ...(patient ? { encounterId: patient.encounterId } : {}),
+                ...("effectiveAt" in entry
+                  ? { effectiveAt: entry.effectiveAt }
+                  : {}),
+                provider: entry.provider,
+              })),
               data: patient
-                ? {
-                    displayName: patient.displayName,
-                    room: patient.room,
-                    risks: patient.risks,
-                    careGoals: patient.careGoals,
-                  }
+                ? { briefFacts: briefEntries.map(({ text }) => text) }
                 : { patientContext: "not-selected" },
             });
           },
@@ -1769,7 +1847,15 @@ export class AssistantService {
       agentRun = await new BoundedAgentRuntime(
         this.models.agentAdapter(),
         registry,
-        { deadlineMs: 25_000 },
+        {
+          deadlineMs: 25_000,
+          // One tool selection plus one grounded terminal answer is the normal
+          // path. Three bounded reads remain available for the established
+          // multi-source workday answer; longer loops fail closed instead of
+          // silently multiplying hosted calls and tokens.
+          maxModelTurns: 4,
+          maxToolCalls: 3,
+        },
       ).run({
         request: prompt,
         context: {

@@ -859,8 +859,8 @@ describe("runtime-guided assistant agent", () => {
             ? [
                 {
                   referenceId: patientReference,
-                  path: "displayName",
-                  value: "Luca Demo",
+                  path: "briefFacts.0",
+                  value: "Patientenkontext: 207 · Luca Demo.",
                 },
                 {
                   referenceId: taskReference,

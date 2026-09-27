@@ -16,9 +16,14 @@ import {
   PostgresCommercialStore,
 } from "../infrastructure/commercial-store.js";
 import { seedSyntheticDemoWorkspace } from "../infrastructure/demo-workspace.js";
+import {
+  InMemoryDemoScenarioStore,
+  PostgresDemoScenarioStore,
+} from "../infrastructure/demo-scenario-store.js";
 import { loadOrganizationCommercialConfig } from "../core/organization-economics.js";
 import { siteConfiguration } from "../core/site-config.js";
 import { runtimeProfileFromEnvironment } from "./runtime-profile.js";
+import { installDemoScenarioRuntime } from "../core/demo-scenario-runtime.js";
 
 const port = Number.parseInt(process.env.PORT ?? "4173", 10);
 const host = process.env.HOST ?? "127.0.0.1";
@@ -33,11 +38,6 @@ const providerRegistry =
     : runtime.providerMode === "in-process-simulator"
       ? createSyntheticProviderRegistry()
       : createProductionProviderRegistry();
-const service = new PflegehelferService(
-  demoMode ? undefined : new InMemoryReferenceStatePort(emptyWorkflowState()),
-  providerRegistry,
-  demoMode ? "synthetic-simulator" : "production",
-);
 const workspace = clinicalWorkspaceFromEnvironment();
 const operationalUrl = process.env.PFH_OPERATIONAL_DATABASE_URL;
 if (!operationalUrl && !demoMode)
@@ -46,7 +46,19 @@ const operationalStore = operationalUrl
   ? new PostgresOperationalStore(operationalUrl)
   : new InMemoryOperationalStore();
 await operationalStore.initialize();
-if (demoMode) await seedSyntheticDemoWorkspace(operationalStore);
+const scenarioStore = operationalUrl
+  ? new PostgresDemoScenarioStore(operationalUrl)
+  : new InMemoryDemoScenarioStore();
+const activeScenario = demoMode ? await scenarioStore.initialize() : null;
+const service = new PflegehelferService(
+  new InMemoryReferenceStatePort(
+    activeScenario ? activeScenario.state : emptyWorkflowState(),
+  ),
+  providerRegistry,
+  demoMode ? "synthetic-simulator" : "production",
+);
+if (demoMode)
+  await seedSyntheticDemoWorkspace(operationalStore, activeScenario?.workspace);
 const commercialStore = operationalUrl
   ? new PostgresCommercialStore(operationalUrl)
   : new InMemoryCommercialStore();
@@ -60,6 +72,7 @@ const [projectedCheckpoint, locallyAcceptedCheckpoint] = await Promise.all([
 ]);
 const recoveryCheckpoint = locallyAcceptedCheckpoint ?? projectedCheckpoint;
 if (recoveryCheckpoint) service.restoreCheckpoint(recoveryCheckpoint);
+if (demoMode) installDemoScenarioRuntime(service.checkpoint().state);
 // Historical Provenance/AuditEvent resources are already append-only in
 // Medplum and must not be rewritten on every boot. Current clinical resources
 // and the authenticated checkpoint are sufficient for restart reconciliation.
@@ -79,6 +92,7 @@ const app = buildApp(service, {
   workspace,
   operationalStore,
   commercialStore,
+  scenarioStore,
   runtime,
 });
 

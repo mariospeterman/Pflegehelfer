@@ -43,7 +43,17 @@ describe("synthetic demo workspace", () => {
         (item) => item.patientId === null && item.audience.kind === "direct",
       ),
     ).toBe(true);
-    expect(attachments).toHaveLength(1);
+    expect(attachments).toHaveLength(2);
+    expect(
+      attachments.find((item) => item.inspection?.state === "available"),
+    ).toMatchObject({
+      fileName: "Mobilisation-Kurzstandard-SYNTHETISCHE-DEMO.txt",
+      inspection: {
+        engine: "plain-text",
+        extractedTextSha256:
+          "afe59f241e8cd00072388db62a6b11a27af02377828322f9cf38d87dc4e2c14f",
+      },
+    });
     const content = await store.loadWorkspaceAttachment(
       "u-assistant",
       attachments[0]!.id,

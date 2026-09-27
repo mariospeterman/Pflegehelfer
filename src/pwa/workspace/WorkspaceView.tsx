@@ -10,6 +10,7 @@ import type {
 import type { WorkdayCommand, WorkdayView } from "../../core/workday";
 import { assistantClientContextHeaders } from "../assistant-context";
 import { WorkdayPanel } from "../conversation/WorkdayPanel";
+import { DemoAdminView } from "./DemoAdminView";
 
 export type WorkspaceDestination =
   | "Chat"
@@ -20,6 +21,7 @@ export type WorkspaceDestination =
   | "Team"
   | "Provider"
   | "Status"
+  | "Demo"
   | "MyProfile"
   | "Profile"
   | "History"
@@ -745,6 +747,25 @@ function LibraryView({
             <span>
               {item.state === "available" ? "Verfügbar" : "Zurückgezogen"}
             </span>
+            {item.inspection && (
+              <small>
+                {item.inspection.state === "available"
+                  ? `Lesbar · ${item.inspection.engine}${item.inspection.pageCount ? ` · ${item.inspection.pageCount} Seiten` : ""}`
+                  : item.inspection.message}
+              </small>
+            )}
+            {item.inspection?.extractedText && (
+              <details>
+                <summary>Erkannten Inhalt prüfen</summary>
+                <pre className="document-excerpt">
+                  {item.inspection.extractedText.slice(0, 4_000)}
+                </pre>
+                <small>
+                  Ungeprüfter Dateiinhalt; keine automatische klinische
+                  Dokumentation oder Anweisung.
+                </small>
+              </details>
+            )}
             {item.state === "available" && (
               <button
                 className="secondary"
@@ -1211,6 +1232,14 @@ export function WorkspaceView({
     );
   if (destination === "Status")
     return <StatusView userId={userId} onError={onError} />;
+  if (destination === "Demo")
+    return snapshot.currentUser.role === "it" ? (
+      <DemoAdminView userId={userId} onError={onError} />
+    ) : (
+      <section className="workspace-card">
+        <SectionState>Demo-Verwaltung ist nur für IT freigegeben.</SectionState>
+      </section>
+    );
   if (destination === "Plans")
     return (
       <section className="workspace-card plans-workspace">

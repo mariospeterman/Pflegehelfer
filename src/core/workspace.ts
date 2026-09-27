@@ -50,6 +50,26 @@ export const workspaceCommentSchema = z
 
 export type WorkspaceComment = z.infer<typeof workspaceCommentSchema>;
 
+export const workspaceAttachmentInspectionSchema = z
+  .object({
+    state: z.enum(["available", "unavailable", "failed"]),
+    engine: z.enum(["none", "plain-text", "docling"]),
+    engineVersion: z.string().max(120).nullable(),
+    extractedText: z.string().max(100_000).nullable(),
+    extractedTextSha256: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .nullable(),
+    pageCount: z.number().int().positive().max(10_000).nullable(),
+    inspectedAt: z.string().datetime(),
+    message: z.string().min(1).max(500),
+  })
+  .strict();
+
+export type WorkspaceAttachmentInspection = z.infer<
+  typeof workspaceAttachmentInspectionSchema
+>;
+
 export const workspaceAttachmentSchema = z
   .object({
     id: idSchema,
@@ -71,6 +91,7 @@ export const workspaceAttachmentSchema = z
     audience: workspaceAudienceSchema,
     topicIds: z.array(z.string().min(1).max(120)).max(12),
     state: z.enum(["available", "withdrawn"]),
+    inspection: workspaceAttachmentInspectionSchema.optional(),
     createdAt: z.string().datetime(),
     withdrawnAt: z.string().datetime().nullable(),
   })
@@ -139,3 +160,37 @@ export const workspaceProfileProposalSchema = z
 export type WorkspaceProfileProposal = z.infer<
   typeof workspaceProfileProposalSchema
 >;
+
+export const demoWorkspaceSnapshotSchema = z
+  .object({
+    comments: z.array(workspaceCommentSchema).max(5_000),
+    commentReads: z
+      .array(
+        z
+          .object({
+            commentId: idSchema,
+            actorIds: z.array(z.string().min(1).max(120)).max(200),
+          })
+          .strict(),
+      )
+      .max(5_000),
+    attachments: z
+      .array(
+        z
+          .object({
+            record: workspaceAttachmentSchema,
+            contentBase64: z
+              .string()
+              .base64()
+              .max(12 * 1024 * 1024),
+          })
+          .strict(),
+      )
+      .max(500),
+    projects: z.array(workspaceProjectSchema).max(1_000),
+    profileFields: z.array(workspaceProfileFieldSchema).max(5_000),
+    profileProposals: z.array(workspaceProfileProposalSchema).max(5_000),
+  })
+  .strict();
+
+export type DemoWorkspaceSnapshot = z.infer<typeof demoWorkspaceSnapshotSchema>;
