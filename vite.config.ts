@@ -3,6 +3,17 @@ import react from "@vitejs/plugin-react";
 import { resolveBuildIdentity } from "./scripts/build-identity.mjs";
 
 const buildIdentity = resolveBuildIdentity();
+const configuredTunnelHost = process.env.PFH_NGROK_DOMAIN?.trim()
+  .replace(/^https?:\/\//, "")
+  .replace(/\/$/, "");
+const allowedTunnelHosts = [
+  ".ngrok-free.app",
+  ".ngrok.app",
+  ...(configuredTunnelHost &&
+  /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/i.test(configuredTunnelHost)
+    ? [configuredTunnelHost]
+    : []),
+];
 
 export default defineConfig({
   plugins: [
@@ -43,7 +54,7 @@ export default defineConfig({
     port: 5173,
     // Development showcase tunnel only. The production build is served by
     // the BFF/reverse proxy and does not trust forwarded hosts through Vite.
-    allowedHosts: [".ngrok-free.app"],
+    allowedHosts: allowedTunnelHosts,
     proxy: {
       "/api": "http://127.0.0.1:3000",
       "/health": "http://127.0.0.1:3000",

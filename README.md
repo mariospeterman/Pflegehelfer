@@ -77,7 +77,7 @@ An authorized value-report calculation boundary and a synthetic organization-lev
 
 Connected model and audio
 
-The same-runtime probe, no-fallback rule and sanitized diagnostics exist. A real provider schema defect was repaired, but the bounded retry reached an external credit failure; transport/application model, ASR and TTS acceptance journeys remain unpassed.
+The same-runtime probe, no-fallback rule and sanitized diagnostics exist. The earlier bounded retry's external credit failure is retained as dated recovery evidence; the current configured provider has since passed the real no-write transport plus one authorized application read on `gpt-5.6-terra`. The complete held-out model suite and ASR/TTS acceptance journeys remain unpassed.
 
 Institutional deployment
 

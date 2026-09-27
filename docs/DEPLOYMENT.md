@@ -2,6 +2,55 @@
 
 The Compose profile is the complete fictional showcase. It runs an application operational PostgreSQL database separately from Medplum's own database. The Helm chart is an application baseline, not a claim that a healthcare production platform is configured.
 
+## Public synthetic owner demo
+
+The supported remote development shape keeps the complete integrated runtime on
+the development machine and exposes only the Vite/BFF entry point through
+ngrok. It does not expose PostgreSQL, Medplum, Redis, model endpoints or the
+provider simulator directly. Use fictional data only.
+
+```sh
+# Starts/reuses the Compose dependencies, API and PWA, then starts/reuses ngrok.
+pnpm demo:public
+
+# From another terminal: print the current URL and inspect the public runtime.
+pnpm demo:public:url
+pnpm demo:public:check
+```
+
+`demo:public:check` verifies the PWA, `/ready`, authenticated status, matching
+API/PWA build identity, PostgreSQL, Medplum, model/audio acceptance state and
+the explicitly simulated provider adapters. It never prints credentials or
+runs a paid model call. The local manifest is written with mode `0600` to
+`.data/public-demo.json` and is ignored by Git.
+
+Without `PFH_NGROK_DOMAIN`, ngrok supplies a temporary hostname that changes
+when the tunnel is recreated. To use the development/reserved hostname assigned
+to the authenticated ngrok account, place the hostname only in the ignored
+`.env.demo` file and restart the tunnel:
+
+```dotenv
+PFH_NGROK_DOMAIN=assigned-name.ngrok-free.app
+```
+
+The attempted chosen hostname `pflegehelfer-mvp.ngrok.app` is not available on
+the current free account; ngrok returned `ERR_NGROK_313`. Sign in to the ngrok
+dashboard to obtain the account's assigned development domain or upgrade for a
+chosen hostname. After an internet interruption, the agent normally reconnects;
+if its process stopped, rerun `pnpm demo:public` and retrieve the URL again.
+
+Vercel is not the deployment target for this integrated demo. Its Functions
+have bounded execution, a read-only filesystem outside `/tmp`, and no WebSocket
+server support, while Pflegehelfer currently requires one persistent Fastify
+process, leased workers and same-runtime access to PostgreSQL, Medplum, Redis
+and the stateful simulator. Deploying only the PWA there would create a second
+split deployment and is therefore outside this release. See the official
+[Vercel Functions limits](https://vercel.com/docs/functions/limitations) and
+[runtime limits](https://vercel.com/docs/limits).
+
+This ngrok route is an owner-evaluable synthetic development tunnel, not a
+production hosting, privacy, availability or institutional-approval claim.
+
 An empty Medplum database builds the R4 structure definitions, value sets and
 search parameters before its first response. The Compose probe uses the FHIR
 server root as a liveness check because the pinned Medplum 5.1.37

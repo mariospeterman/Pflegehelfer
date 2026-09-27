@@ -8,12 +8,35 @@
 
 **Reviewed implementation baseline:** `45ad887a13d0245d137cda5fc61797daf7949738`
 
-**Current implementation:** `3c006f0ed3b4cc61b4878d0d70947c99456214ac`
+**Current implementation:** PR #1 head. Resolve the exact clean source with
+`git rev-parse HEAD` and verify the served API/PWA pair with
+`pnpm demo:public:check`; dated implementation SHAs below remain acceptance
+evidence for their named increments, not a competing current-version pointer.
 
 **Existing pull request:** #1, draft and unmerged at the recheck
 **Canonical destination:** this file, `docs/execution/PFLEGEHELFER_COMPLETION.md`
 
 > One natural, role-aware coworker; useful model-composed interfaces; reviewed organizational instructions; faithful documentation; enforced permissions; recoverable delivery.
+
+## 27 September public owner-runtime increment
+
+The one supported public development path retains the integrated PostgreSQL,
+Medplum, Redis, provider-simulator, Fastify and OpenUI/Vite runtime and exposes
+only the PWA/BFF entry point through ngrok. `pnpm demo:public` starts or reuses
+that stack; `pnpm demo:public:url` returns the live entry point; and
+`pnpm demo:public:check` verifies public PWA/readiness/status, exact API/PWA
+build identity, stores, model/audio acceptance state and explicitly simulated
+providers without invoking a paid model request or printing secrets.
+
+`PFH_NGROK_DOMAIN` may name the development/reserved domain assigned to the
+authenticated account. A blank value is truthful temporary-tunnel mode. The
+current free account rejected the requested chosen hostname with ngrok
+`ERR_NGROK_313`, so a stable branded hostname is not accepted until the owner
+authenticates in ngrok and assigns an available domain or changes the account
+plan. Vercel is not introduced as a competing frontend/runtime: its bounded
+Functions cannot host the current persistent server, leased workers or local
+stateful dependencies. This tunnel is synthetic owner-evaluation access, not
+production deployment, privacy, availability or institutional acceptance.
 
 ## 26 September owner-evaluable ward-day release increment
 

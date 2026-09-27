@@ -1,5 +1,46 @@
 # Pflegehelfer owner test guide — editable synthetic ward day
 
+## Public owner entry point — 27 September verified
+
+Run the full integrated demonstration from the repository root:
+
+```sh
+pnpm demo:public
+```
+
+The command reuses healthy local services, starts anything missing and prints
+the exact public URL. Keep that terminal open when it started services. In a
+second terminal, copy the URL or run the safe status acceptance:
+
+```sh
+pnpm demo:public:url
+pnpm demo:public:check
+```
+
+Expected result: the PWA and authenticated API are reachable; API and PWA show
+the same clean source SHA; PostgreSQL and Medplum are ready; the current model
+state is reported without making a new paid call; browser TTS is labelled as a
+synthetic ready-for-test capability; ASR stays not accepted until the real
+audio case passes; and all five provider adapters say `SIMULATED`. A generic
+fallback, `/models` connectivity or the ngrok page alone is not model
+acceptance.
+
+The hostname is temporary unless `PFH_NGROK_DOMAIN` contains a hostname
+assigned to this ngrok account. No key belongs in this guide or in Git. The
+current account rejected the chosen `pflegehelfer-mvp.ngrok.app` hostname on
+the free plan (`ERR_NGROK_313`); log in to the ngrok dashboard to assign the
+account's available development domain, then add only that hostname to the
+ignored `.env.demo` file. The complete runtime intentionally remains together
+behind ngrok; it is not split into a Vercel frontend and a separate clinical
+backend.
+
+On 27 September the temporary public route passed the PWA, `/ready`, build,
+status, PostgreSQL, Medplum and simulator checks against
+`8ffba9b75e2c37091d9164b35b7f13e72ecc546e`. The no-write same-runtime model
+probe remained `smoke-tested` on `gpt-5.6-terra`, with fallback disabled. This
+preserves the dated evidence; run the two commands above for the current URL
+and exact current build identity before every owner session.
+
 ## 27 September scenario and document increment — locally verified
 
 Reviewed baseline: `45ad887a13d0245d137cda5fc61797daf7949738` on

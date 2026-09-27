@@ -49,6 +49,12 @@ try {
       "# Authenticates the local independent synthetic provider process.",
       `PFH_PROVIDER_SIMULATOR_TOKEN=${secret()}`,
     );
+  if (!/^PFH_NGROK_DOMAIN=/m.test(existing))
+    additions.push(
+      "",
+      "# Optional assigned/reserved ngrok hostname. Leave blank for a temporary URL.",
+      "PFH_NGROK_DOMAIN=",
+    );
   if (additions.length)
     await appendFile(target, `${additions.join("\n")}\n`, {
       encoding: "utf8",
@@ -86,6 +92,8 @@ const content = [
   "PFH_DEEP_LLM_TIMEOUT_MS=15000",
   "PFH_ASR_MODE=browser-demo",
   "PFH_TTS_MODE=browser-demo",
+  "# Optional assigned/reserved ngrok hostname. Leave blank for a temporary URL.",
+  "PFH_NGROK_DOMAIN=",
   "",
 ].join("\n");
 
