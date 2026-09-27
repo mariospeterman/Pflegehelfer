@@ -1,19 +1,86 @@
 # Pflegehelfer — One Product, Natural Coworker, Verified Completion
 
-**Contract revision:** 25 September 2026
+**Contract revision:** 27 September 2026
 
 **Repository:** `mariospeterman/Pflegehelfer`
 
 **Working branch:** `codex/genui-production-showcase`
 
-**Reviewed implementation head:** `14d0374d1aa262b77cc97e3ed81d39543f68813d`
+**Reviewed implementation baseline:** `45ad887a13d0245d137cda5fc61797daf7949738`
 
-**Current conversational implementation:** `14d0374d1aa262b77cc97e3ed81d39543f68813d`
+**Current implementation:** `3c006f0ed3b4cc61b4878d0d70947c99456214ac`
 
 **Existing pull request:** #1, draft and unmerged at the recheck
 **Canonical destination:** this file, `docs/execution/PFLEGEHELFER_COMPLETION.md`
 
 > One natural, role-aware coworker; useful model-composed interfaces; reviewed organizational instructions; faithful documentation; enforced permissions; recoverable delivery.
+
+## 26 September owner-evaluable ward-day release increment
+
+`CODEX_SIMPLIFICATION_AND_DEMO.md`, `DEMO_ACCEPTANCE_PLAN.md` and
+`REPOSITORY_REVIEW.md` are reconciled into this contract rather than becoming
+new master documents. This increment targets one bounded synthetic release for
+owner evaluation; it does not restart the hospital-platform programme or
+promote any incomplete G1–G7 constituent to complete.
+
+The release preserves the existing editable demonstration before mutation and
+uses one validated, versioned scenario pack as the canonical authoring source
+for fictional patients, staff, assignments, clinical tasks, controlled events
+and initial collaboration fixtures. Durable scenario runs distinguish baseline
+from owner-edited working copies, carry an explicit frozen or start-today
+scenario clock, and survive ordinary restart. Export/import and current-state
+clone are integrity checked. A cloned/imported run is inactive: activation or
+reset must restore PostgreSQL, Medplum, files and provider receipts together in
+a stopped isolated environment. A UI label or JSON replacement is not atomic
+restore acceptance. Security, expiry and audit clocks always use real time.
+
+The ordinary admin surface and `pfhctl demo` may add explicitly fictional
+patients, staff, assignments, tasks and allowlisted events without editing
+TypeScript. Counts, selector membership and handover denominators derive from
+the run. The current eight-patient care-assistant assignment plus the requested
+ninth-patient exercise replaces stale six-patient prose; zero/two/twelve remain
+boundary tests, not alternate hard-coded defaults. Startup seeding is
+idempotent and must never overwrite owner changes.
+
+At the model boundary, stable reviewed instructions precede dynamic context,
+the current request is transmitted once, prior conversation is bounded, and
+the normal loop permits one read/draft tool plus a grounded terminal response.
+For hosted GPT-5.6-family acceptance, use the provider's explicit prompt-cache
+boundary and a configuration/instruction-scoped cache key; retain separate
+cached-input, uncached-input and output usage. Caching is a cost/latency
+optimization, never authorization, evidence or acceptance. Native maintained
+tool facilities should replace the remaining universal decision envelope only
+when exact source claims, local strict validation, sanitized diagnostics and
+no-fallback behavior remain at least as strong.
+
+PDF and image handling uses a digest-bound, access-scoped file record and an
+isolated parser/OCR service. The selected default is pinned Docling Serve for
+layout, tables and multilingual OCR; plain UTF-8 text may be read locally.
+OCRmyPDF/Tesseract is an optional normalization tier for trusted scanner
+workflows, not a PDF sanitizer. Untrusted PDF parsing never runs inside the API
+process; outbound fetching and remote picture-description models are disabled
+by default. Extracted text remains untrusted document content, carries engine,
+status, digest and page provenance, and requires human review before any
+clinical draft. Image interpretation, diagnostic imaging and autonomous
+clinical extraction remain out of intended use.
+
+The exact owner acceptance sequence is maintained in
+`OWNER_TEST_GUIDE.md`: preserve/export/restart; add and authorize a ninth
+fictional patient; natural read → draft → correction → selective approval →
+PostgreSQL/Medplum/provider read-back; interruption/resume and two shifts;
+two-user collaboration/privacy/files; then isolated restore/reconciliation.
+Failures stay visible and remaining G1–G7 work stays open.
+
+Implementation `3c006f0ed3b4cc61b4878d0d70947c99456214ac` supplies this
+increment. Its local release gate passed 474 tests with 26 declared skips,
+format/lint/typecheck, PWA/API builds, security, air-gap and operations checks;
+the browser matrix passed 101 executed journeys with 39 declared skips. An
+isolated PostgreSQL acceptance database passed 24/24 selected tests and was
+dropped; Medplum stale-version rejection passed 1/1 and cleaned its resource.
+The actual configured model passed the bounded no-write probe and one natural
+source-bound Anna read with fallback false. This evidence is separated in the
+matrix from the unpassed held-out draft/correction, two-shift, PDF/image,
+cross-replica, restore, identity, audio and institutional gates.
 
 ## 25 September coherent synthetic ward-day increment
 
@@ -606,7 +673,7 @@ Status is a structured capability surface, not one broad “Offline” boolean. 
 
 ## 24. Realistic synthetic data and testing scope
 
-Use existing approximately fifteen fictional longitudinal profiles and enhance them coherently rather than reseeding unrelated data every iteration. Six-patient nursing default plus zero/two/twelve assignment tests. Profiles include source-tagged existing diagnoses, care preferences, encounters, goals, tasks, medication context, time-series records, intentional missing/conflicting data, readmission and adjacent shifts.
+Use existing approximately fifteen fictional longitudinal profiles and enhance them coherently rather than reseeding unrelated data every iteration. The current care-assistant default is eight assigned patients; adding the documented fictional ninth patient must change the relevant denominator without code edits. Keep zero/two/twelve assignment boundary tests. Profiles include source-tagged existing diagnoses, care preferences, encounters, goals, tasks, medication context, time-series records, intentional missing/conflicting data, readmission and adjacent shifts.
 
 Use a controlled scenario clock with its mode visible. Do not present a weeks-old measurement as this shift's latest observation merely to populate a card. Do not generate clinical images and present them as real evidence; use labelled synthetic or licensed teaching material appropriately. Do not reproduce licensed interRAI/BESA/LEP instruments or codes without permission.
 
@@ -777,6 +844,14 @@ Recheck official documentation against the actual installed dependency versions 
 - **T7:** WCAG 2.2: https://www.w3.org/TR/WCAG22/ — engineering accessibility target and specific criterion definitions.
 - **T8:** OWASP uploads: https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html — layered file validation/storage controls.
 - **T9:** OpenAI key safety: https://help.openai.com/en/articles/5112595-best-practices-for-api-key-safety — server-only secrets, revocation and usage review; do not copy example commands that print keys into agent logs.
+- **T10:** OpenAI prompt caching: https://developers.openai.com/api/docs/guides/prompt-caching — keep stable prompt prefixes first, use a stable cache key/breakpoint where supported, and measure cached input separately; cache hits are not free and do not change authorization.
+- **T11:** OpenAI function calling: https://developers.openai.com/api/docs/guides/function-calling — use strict native function schemas and disable parallel calls for this bounded sequential clinical tool loop; server validation and authorization remain decisive.
+- **T12:** OpenAI file inputs: https://developers.openai.com/api/docs/guides/file-inputs — provider file inputs are an optional reviewed adapter, not a replacement for local access control, malware isolation, digest binding or source provenance.
+- **T13:** OpenAI reasoning/model guidance: https://developers.openai.com/api/docs/guides/reasoning and https://developers.openai.com/api/docs/guides/latest-model?model=gpt-5.6 — select bounded reasoning/verbosity per task and evaluate actual quality/cost rather than assuming more tokens are safer.
+- **T14:** OpenAI production checklist: https://developers.openai.com/api/docs/guides/deployment-checklist — retain staged evaluation, limits, monitoring, secret hygiene and failure handling around hosted inference.
+- **T15:** Docling Serve: https://github.com/docling-project/docling-serve and https://docling-project.github.io/docling/usage/api_server/ — pinned self-hosted conversion/OCR service selected for the isolated PDF/image extraction tier; output remains untrusted content.
+- **T16:** OCRmyPDF security: https://ocrmypdf.readthedocs.io/en/latest/pdfsecurity.html — OCR tooling is not a sanitizer and untrusted PDFs require resource/process isolation.
+- **T17:** PDF.js: https://mozilla.github.io/pdf.js/ — maintained browser PDF rendering option for a future safe preview surface; rendering does not establish clinical truth.
 - **CH1:** EDÖB AI: https://www.edoeb.admin.ch/de/ki-und-datenschutz — Swiss data-protection obligations apply to AI; assess high-risk processing.
 - **CH2:** EDÖB outsourcing: https://www.edoeb.admin.ch/de/outsourcing-auftragsdatenbearbeitung — outsourcing does not remove the controller's responsibilities.
 - **CH3:** EDÖB patient disclosure: https://www.edoeb.admin.ch/de/bekanntgabe-von-patientendaten — sensitive health data, professional secrecy and purpose-limited sharing.

@@ -1,4 +1,77 @@
-# Pflegehelfer owner test guide — UI wiring increment
+# Pflegehelfer owner test guide — editable synthetic ward day
+
+## 27 September scenario and document increment — locally verified
+
+Reviewed baseline: `45ad887a13d0245d137cda5fc61797daf7949738` on
+`codex/genui-production-showcase`, PR #1. The preserved pre-change archives and
+hash manifest are local under
+`.data/exports/pre-scenario-release-20260926T195022Z/`; they contain synthetic
+stores and are intentionally ignored by Git. Both PostgreSQL custom archives
+pass `pg_restore -l` with PostgreSQL 16.15. That is archive-readability
+evidence, not the still-open fresh-environment restore/reconciliation drill.
+
+The current canonical scenario is
+`config/demo-scenarios/kronenhof-ward-day-v1.json`: 15 fictional staff, 15
+fictional patients, eight care-assistant assignments, six initial tasks, seven
+observations, nine notes, one communication, two initial shared comments, two
+private text attachments and one bounded project. `src/core/seed.ts` is now only
+a compatibility projection of that validated pack. Owner edits persist in the
+active PostgreSQL scenario run and ordinary startup does not replace them.
+
+Use **Demo verwalten** as `u-it`, or the equivalent CLI:
+
+```sh
+PFH_BASE_URL=http://127.0.0.1:3000 pnpm pfhctl demo status
+PFH_BASE_URL=http://127.0.0.1:3000 pnpm pfhctl demo export ./scenario-export.json
+PFH_BASE_URL=http://127.0.0.1:3000 pnpm pfhctl demo clone "Owner working copy" frozen current
+PFH_BASE_URL=http://127.0.0.1:3000 pnpm pfhctl demo apply patients ./fictional-patient.json
+PFH_BASE_URL=http://127.0.0.1:3000 pnpm pfhctl demo event call-luca
+```
+
+Exports are created with mode `0600` and refuse to overwrite an existing path.
+Imports and clones remain inactive. **Reset preview** is read-only and returns
+a confirmation digest; integrated activation is explicitly blocked until a
+stopped isolated process can restore and reconcile PostgreSQL, Medplum, files
+and provider receipts together. The old broad reset is available only in the
+isolated memory test profile, never against the integrated owner demo.
+
+Library uploads now expose an inspection result. Plain UTF-8 text is read
+locally. PDF/PNG/JPEG analysis truthfully says unavailable unless the isolated
+pinned Docling service is configured; start that optional service with
+`pnpm documents:up` and configure
+`PFH_DOCUMENT_INSPECTION_BASE_URL=http://127.0.0.1:5001` before starting the
+API. Extracted text is digest-bound and visibly marked untrusted/human-review
+required. It is not yet automatically injected into the clinical conversation,
+and successful OCR is not proof that a statement is clinically true.
+
+Implementation `3c006f0ed3b4cc61b4878d0d70947c99456214ac` is the tested source
+for this increment. On 26–27 September, `pnpm verify` passed formatting,
+zero-warning lint, both TypeScript targets, 54 test files with 474 enabled tests
+and 26 declared skips, plus the PWA/API production builds. The complete
+five-project Playwright run passed 101 journeys with 39 deliberate capability
+or viewport skips and no failures. Security and air-gap preflights passed;
+operations health/readiness and an isolated synthetic backup/restore checksum
+passed. The explicitly isolated PostgreSQL acceptance database passed all 24
+real-store tests before it was dropped, and the Medplum stale-version check
+passed 1/1 and cleaned its resource. These results do not close the remaining
+two-replica, previous-release restore, OIDC/RLS or institutional gates.
+
+The preserved integrated run is
+`581433ab-51a4-4624-b794-2c186056f894`. The inactive owner copy is
+`8ad792ef-5edd-4711-8bd6-cc0ed55d5d3a`. The pre-change archives are readable
+and their manifest retains exact SHA-256 hashes, but the live demo was not
+reset. A real private UTF-8 upload was inspected through the API as attachment
+`b3969edb-a978-461a-9768-f03be31f71cd`; Library read-back showed the exact
+digest-bound content and the untrusted-input warning.
+
+The same-runtime no-write probe passed on `gpt-5.6-terra` in 6.1 seconds with
+one application read, fallback `false` and no writes. The normal caller then
+answered `Was ist bei Anna heute wichtig?` using one
+`get_patient_summary` function call and five exact, row-provenance-bound facts.
+Its two provider responses reported 2,968 uncached input + 15 output tokens,
+then 1,464 uncached input + 2,188 cached input + 556 output tokens. This is
+progressive real-model read acceptance, not the unpassed held-out draft,
+correction, model-swap or ASR suite.
 
 Prepared 24 September and updated/exercised 25 September 2026. This is the tested handoff for the
 UI foundation at `2ad9c228a2f4479631c3a1f150db49ddbbd5a9ed` plus the audited
@@ -20,9 +93,9 @@ Morgenmobilisation project and Nora's direct early-shift message after a demo
 reset. These checks passed on desktop and 390 px mobile; light and dark desktop
 plans were visually inspected.
 
-The 25 September post-reset model probe used the configured hosted-test key and
+The 26 September bounded model probe used the configured hosted-test key and
 passed the actual same-runtime transport plus one authorized application read
-in 10.7 seconds. It reported `fallbackUsed:false`, one tool call and no clinical
+in 6.1 seconds. It reported `fallbackUsed:false`, one tool call and no clinical
 write. Treat this as connected read acceptance only. The complete progressive
 model/write suite, ASR acceptance and institutional/vendor approval remain
 open.
@@ -36,10 +109,10 @@ benefit.
 
 | Item                        | Tested value                                                                                                         |
 | --------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| Pre-increment remote head   | `5ca30eda6c78198ef5d2bb1a8b2ff440d5c51d23`                                                                           |
-| Implementation source       | UI/model/profile/handover increment `314e88959c088b94c81a5906ac15cecb4109e6e0`                                       |
-| Last clean API artifact     | `pfh-314e88959c08`, source `314e88959c088b94c81a5906ac15cecb4109e6e0`, `dirty:false`                                 |
-| Last clean PWA artifact     | `pfh-314e88959c08`, same source, `dirty:false`, `matchingSource:true`                                                |
+| Reviewed pre-increment head | `45ad887a13d0245d137cda5fc61797daf7949738`                                                                           |
+| Implementation source       | Editable scenario/document/model increment `3c006f0ed3b4cc61b4878d0d70947c99456214ac`                                |
+| Last clean API artifact     | `pfh-3c006f0ed3b4`, source `3c006f0ed3b4cc61b4878d0d70947c99456214ac`, `dirty:false`                                 |
+| Last clean PWA artifact     | `pfh-3c006f0ed3b4`, same source, `dirty:false`, `matchingSource:true`                                                |
 | Local URLs                  | PWA `http://127.0.0.1:5173`; API `http://127.0.0.1:3000`; clean memory artifact `http://127.0.0.1:4173`              |
 | Runtime                     | `integrated-demo`, persistent PostgreSQL, Medplum FHIR R4 `5.1.37-82e609c`, independent provider simulator           |
 | Primary/second/denied roles | `u-nurse` Nora Frei; `u-assistant` Lea Bernasconi; `u-hr` Lina Wenger                                                |
@@ -52,7 +125,7 @@ benefit.
 
 The bounded no-write model probe previously reached the provider and genuinely
 failed HTTP 429 with sanitized `credit_balance_exhausted`/
-`insufficient_quota`, model `gpt-5.6-terra`, fallback `false`. On 25 September,
+`insufficient_quota`, model `gpt-5.6-terra`, fallback `false`. On 26 September,
 the current configured provider passed transport and authorized-read probes;
 one natural patient-context request also completed through the real caller with
 one authorized tool call and exact evidence claims. `/models` connectivity and
@@ -103,10 +176,10 @@ Automated evidence: direct-lens/no-model and MRN association regressions pass.
 3. For connected-model acceptance, ask `Was ist für Anna noch offen?`, then
    `Zeig mir dieselben Aufgaben als Tabelle. Danach erkläre es kurz.`
 
-Observed on 25 September: the configured model completed a natural Anna-context
-request through the actual caller, selected the authorized
-`get_patient_summary` tool and returned exact Patient resource/version/path
-claims with fallback `false`. The earlier 429 remains retained failure evidence,
+Observed on 26 September: the configured model completed a natural Anna-context
+request through the actual caller, selected one authorized
+`get_patient_summary` native function and returned five exact row-provenance-
+bound facts with fallback `false`. The earlier 429 remains retained failure evidence,
 not the current provider state. The UI must still show component failures
 without relabelling API or records offline. Do not accept a generic fallback as
 T04 success. Clarification, faithful draft/correction, model swap and all agreed
@@ -238,6 +311,12 @@ diagnostics.
 
 ## Verification record
 
+- The 27 September source gate for `3c006f0ed3b4cc61b4878d0d70947c99456214ac`
+  passed 474 tests with 26 declared skips, formatting, lint, both typechecks and
+  both builds. The five-project browser matrix passed 101/101 executed journeys
+  with 39 deliberate skips. `verify:security`, `verify:airgap` and `verify:ops`
+  passed. The measured main PWA chunk is 2,414.46 kB minified / 700.11 kB gzip
+  and therefore remains an open G7 performance item.
 - The 25 September `pnpm verify` rerun passed formatting, zero-warning lint,
   both TypeScript targets, 462 enabled tests with 26 declared environment skips,
   and matching PWA/API production builds. The exact clean implementation SHA
@@ -277,8 +356,8 @@ diagnostics.
   the development reload then issued exactly one context POST (HTTP 200), and
   the focused production browser file passed 3 journeys with 3 deliberate
   project skips across desktop/mobile.
-- The preserved integrated demo now contains one fictional private Library
-  file, one reviewed Anna profile preference, one addressed Anna team comment
+- The preserved integrated demo now contains two fictional private Library
+  files, one reviewed Anna profile preference, one addressed Anna team comment
   and one two-member project linked to an existing task. These are additive
   synthetic fixtures; no live-demo reset or provider fault injection was run.
 
@@ -286,6 +365,13 @@ diagnostics.
 
 These are local evidence files from the actual integrated PWA, not automatic
 acceptance of the remaining gates:
+
+The 26 September in-app inspection additionally covered the live subject
+picker, full Anna and Lea profiles, `0/8` three-part handover, Library parsed
+excerpt, project, patient, team and role-authorized provider views at desktop
+and 390×844 dark compact width with no console errors or horizontal overflow.
+The browser capture command timed out twice, so no new screenshot file is
+claimed for that run; the retained dated files below remain the capture index.
 
 - `.gstack/qa-reports/screenshots/ui-wiring-after-patient-desktop-2026-09-24-v4.png`
 - `.gstack/qa-reports/screenshots/ui-wiring-after-patient-desktop-dark-2026-09-24.png`
@@ -328,11 +414,15 @@ record, not a declaration that the product or institutional pilot is complete.
 
 ```sh
 git switch codex/genui-production-showcase
-git show --stat 2ad9c228a2f4479631c3a1f150db49ddbbd5a9ed
+git show --stat 3c006f0ed3b4cc61b4878d0d70947c99456214ac
 pnpm install --frozen-lockfile
 pnpm verify
+pnpm verify:e2e
+pnpm verify:security
+pnpm verify:airgap
+pnpm verify:ops
 PFH_TTS_MODE=browser-demo pnpm demo:test-memory
-pnpm exec playwright test --project=desktop --project=mobile-390
+PFH_BASE_URL=http://127.0.0.1:3000 pnpm pfhctl demo status
 ```
 
 For destructive/restart tests create a dedicated temporary database and
