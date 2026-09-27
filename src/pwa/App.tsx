@@ -55,14 +55,14 @@ const workflowOpenings: Partial<Record<Role, ConversationOpening>> = {
   "care-assistant": {
     eyebrow: "Dein Arbeitstag · Schritt 1 von 10",
     title: "Guten Morgen.",
-    summary: "Die Übergabe ist vorbereitet. Was möchtest du zuerst ansehen?",
-    progress: "Übergabe · Aufgaben · Teamfragen",
+    summary: "Dein Arbeitstag beginnt mit der vorbereiteten Schichtübergabe.",
+    progress: "1 Übergabe · 2 Arbeitsplan · 3 Prüfen & übergeben",
   },
   "registered-nurse": {
     eyebrow: "Dein Arbeitstag · Schritt 1 von 10",
     title: "Guten Morgen.",
-    summary: "Die Schichtübergabe ist bereit. Womit möchtest du beginnen?",
-    progress: "Übergabe · Aufgaben · Teamfragen",
+    summary: "Dein Arbeitstag beginnt mit der vorbereiteten Schichtübergabe.",
+    progress: "1 Übergabe · 2 Arbeitsplan · 3 Prüfen & übergeben",
   },
   physician: {
     eyebrow: "Ärztlicher Dienst · Visitenworkflow",
@@ -709,7 +709,9 @@ function ContextPanel({
   const actions: Array<[string, WorkspaceDestination]> = [
     ["Mein Assistent", "Chat"],
     ["Bibliothek", "Library"],
+    ["Übergabe", "Handover"],
     ["Pläne", "Plans"],
+    ["Aufgaben", "Tasks"],
     ["Projekte", "Projects"],
     ["Patient:innen", "Patients"],
     ["Team & @Fragen", "Team"],
@@ -760,7 +762,7 @@ function ContextPanel({
         onClick={() =>
           void onPatient(null).then((changed) => {
             if (!changed) return;
-            onNavigate("Plans");
+            onNavigate("Handover");
             close();
           })
         }
@@ -1757,6 +1759,7 @@ export function App() {
             externallyBusy={contextBusy}
             onBusyChange={setAssistantBusy}
             onNavigate={setDestination}
+            workdayStage={workday?.stage ?? null}
           />
         ) : (
           <WorkspaceView
@@ -1773,8 +1776,11 @@ export function App() {
             }
             busy={contextBusy || assistantBusy}
             onPatient={(id) => {
-              const returnDestination =
-                destination === "Plans" ? "Plans" : "Profile";
+              const returnDestination = ["Handover", "Plans", "Tasks"].includes(
+                destination,
+              )
+                ? destination
+                : "Profile";
               void choosePatient(id).then((changed) => {
                 if (changed) setDestination(returnDestination);
               });
@@ -1789,10 +1795,17 @@ export function App() {
               setWorkday(next);
               const activePatientId = next.activeEpisode?.patientId ?? null;
               if (activePatientId) {
-                await api("/api/v1/assistant/context", userId, {
-                  method: "POST",
-                  body: JSON.stringify({ patientId: activePatientId }),
-                });
+                if (
+                  [
+                    "start-episode",
+                    "interrupt-and-start",
+                    "resume-episode",
+                  ].includes(command.type)
+                )
+                  await api("/api/v1/assistant/context", userId, {
+                    method: "POST",
+                    body: JSON.stringify({ patientId: activePatientId }),
+                  });
                 assistantContextBinding.current.markBound({
                   userId,
                   patientId: activePatientId,
@@ -1800,7 +1813,8 @@ export function App() {
                 setSelectedPatientId(activePatientId);
                 sessionStorage.setItem("pfh-patient-context", activePatientId);
               }
-              await load();
+              if (["complete-episode", "close-shift"].includes(command.type))
+                await load(activePatientId || selectedPatientId);
             }}
           />
         )}

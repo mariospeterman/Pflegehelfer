@@ -183,6 +183,29 @@
   color: var(--blue);
   font-weight: 700;
 }
+.shift-entry-card {
+  margin: 12px 4px 4px 60px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--blue) 26%, var(--line));
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--blue-soft) 62%, var(--surface));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+.shift-entry-card > div {
+  display: grid;
+  gap: 3px;
+}
+.shift-entry-card small {
+  color: var(--muted);
+  font-size: 11px;
+}
+.shift-entry-card button {
+  min-height: 40px;
+  white-space: nowrap;
+}
 .openui-conversation .openui-agent-thread-messages {
   display: grid;
   gap: 24px;
@@ -219,18 +242,62 @@
   color: var(--ink);
   font-size: 18px;
 }
-.workday-readout {
+.workday-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+.workday-steps button {
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 720;
+  cursor: pointer;
+}
+.workday-steps button span {
+  display: inline-grid;
+  place-items: center;
+  width: 21px;
+  height: 21px;
+  margin-right: 4px;
+  border-radius: 999px;
+  background: var(--canvas);
+}
+.workday-steps button.active {
+  border-color: var(--blue);
+  background: var(--blue-soft);
+  color: var(--blue);
+}
+.handover-readout {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  margin-top: 8px;
 }
-.workday-readout button {
-  min-height: 44px;
+.handover-readout-button {
+  min-height: 32px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface-soft);
+  color: var(--blue);
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 760;
+  cursor: pointer;
 }
-.workday-readout small {
+.handover-readout small {
   flex: 1 1 260px;
   color: var(--muted);
+  font-size: 10px;
+}
+.handover-readout-error {
+  display: block;
+  margin-top: 5px;
+  color: var(--danger);
 }
 .workday-started {
   padding: 10px 12px;
@@ -244,6 +311,121 @@
 .workday-roster {
   display: grid;
   gap: 8px;
+}
+.workday-gate {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 13px;
+  border: 1px solid color-mix(in srgb, var(--warning) 34%, var(--line));
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--warning) 8%, var(--surface));
+}
+.workday-gate > div {
+  display: grid;
+  gap: 4px;
+}
+.workday-gate small {
+  color: var(--muted);
+}
+.work-plan-list {
+  display: grid;
+  gap: 9px;
+}
+.work-plan-card {
+  display: grid;
+  grid-template-columns: 30px minmax(160px, 0.8fr) minmax(260px, 1.3fr);
+  align-items: start;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-soft);
+}
+.work-plan-order {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: var(--blue-soft);
+  color: var(--blue);
+  font-weight: 800;
+}
+.work-plan-patient {
+  display: grid;
+  gap: 4px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 3px 0;
+  text-align: left;
+  cursor: pointer;
+}
+.work-plan-patient span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.work-plan-card dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px 12px;
+  margin: 0;
+}
+.work-plan-card dt {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 760;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.work-plan-card dd {
+  margin: 2px 0 0;
+  font-size: 11px;
+  line-height: 1.35;
+}
+.workday-next,
+.add-work-button {
+  justify-self: end;
+}
+.task-evidence {
+  color: var(--success) !important;
+}
+.episode-review,
+.additional-work,
+.shift-close-review {
+  display: grid;
+  gap: 10px;
+  padding: 13px;
+  border: 1px solid color-mix(in srgb, var(--blue) 28%, var(--line));
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--blue-soft) 40%, var(--surface));
+}
+.episode-review p,
+.shift-close-review p {
+  margin: 0;
+  line-height: 1.5;
+}
+.episode-review small,
+.shift-close-review small {
+  color: var(--muted);
+}
+.additional-work label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 720;
+}
+.additional-work input,
+.additional-work select {
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--ink);
+  padding: 0 10px;
 }
 .workday-panel .handover-sections {
   grid-column: 1 / -1;
@@ -469,23 +651,6 @@ input:focus-visible {
   white-space: nowrap;
   border: 0;
 }
-.skip-link {
-  position: fixed;
-  left: 12px;
-  top: 8px;
-  z-index: 200;
-  transform: translateY(-180%);
-  background: var(--surface);
-  color: var(--blue);
-  border: 2px solid var(--blue);
-  border-radius: 9px;
-  padding: 9px 12px;
-  font-weight: 800;
-}
-.skip-link:focus {
-  transform: translateY(0);
-}
-
 .clinical-coworker-shell {
   height: 100dvh;
   display: grid;
@@ -2755,6 +2920,40 @@ button:disabled {
 }
 
 @media (max-width: 700px) {
+  .shift-entry-card {
+    margin-left: 0;
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .shift-entry-card button {
+    width: 100%;
+  }
+  .workday-steps {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .workday-steps button {
+    text-align: left;
+    padding-inline: 10px;
+  }
+  .workday-gate {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .work-plan-card {
+    grid-template-columns: 30px minmax(0, 1fr);
+  }
+  .work-plan-card dl {
+    grid-column: 1 / -1;
+  }
+  .handover-row > .workday-patient {
+    order: 1;
+  }
+  .handover-row > .handover-expanded {
+    order: 2;
+  }
+  .handover-row > .status-button {
+    order: 3;
+  }
   .workspace-card {
     width: calc(100% - 18px);
     margin: 9px auto;

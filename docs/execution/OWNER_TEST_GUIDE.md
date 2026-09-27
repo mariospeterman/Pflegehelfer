@@ -124,15 +124,18 @@ implementation `314e88959c088b94c81a5906ac15cecb4109e6e0`.
 The coherent ward-day and populated demo-fixture increment is
 `14d0374d1aa262b77cc97e3ed81d39543f68813d`. It preserves the same APIs and
 authority model while changing the default AGS early shift to eight fictional
-patients. From the empty general conversation, click **Übergabe**: this must
-open **Pläne** directly, show `0/8`, and create no user chat bubble. Open each
-patient, read the three handover sections, then click **Gelesen & übernehmen**.
-Only the eighth acknowledgement may show **Dein sicherer Arbeitsplan**, `8/8`
-and the explicit workday-started notice. **Bibliothek**, **Projekte** and
-**Team & @Fragen** must show the labelled synthetic checklist, the
-Morgenmobilisation project and Nora's direct early-shift message after a demo
-reset. These checks passed on desktop and 390 px mobile; light and dark desktop
-plans were visually inspected.
+patients. The current coworker correction keeps three explicit views over that
+same authority. From the empty general conversation, click **Schichtübergabe
+öffnen**: this opens **Übergabe**, shows `0/8`, and creates no user chat bubble.
+Open each patient, read the three handover sections, optionally use that
+patient's small **Vorlesen** control, then click **Gelesen & übernehmen**.
+After the eighth acknowledgement, open **Pläne** for the ordered read-only
+working plan and **Aufgaben** to begin, interrupt, resume or add work. A task's
+summary is shown once more before **Geprüft schreiben & abschliessen**; only
+then is it accepted for the existing persistence/delivery path and later
+outgoing handover. **Bibliothek**, **Projekte** and **Team & @Fragen** continue
+to show the labelled synthetic checklist, the Morgenmobilisation project and
+Nora's direct early-shift message after a demo reset.
 
 The 26 September bounded model probe used the configured hosted-test key and
 passed the actual same-runtime transport plus one authorized application read
@@ -303,25 +306,36 @@ task through the integrated browser. After switching accounts and recovering
 the browser session, Lea saw the same versioned project and link. Concurrent
 member conflict acceptance remains pending.
 
-### 8. Plans, dictation and read-aloud — mixed result
+### 8. Übergabe, Arbeitsplan, Aufgaben, dictation and read-aloud — mixed result
 
-1. Open menu → **Pläne**. Confirm the ward handover appears here, not beneath
-   Anna's private conversation.
+1. In **Mein Assistent**, click **Schichtübergabe öffnen** or open menu →
+   **Übergabe**. Confirm the ward handover appears here, not beneath Anna's
+   private conversation.
 2. Expand Anna and confirm **Wichtig zu wissen**, **Was in der letzten Schicht
-   passiert ist** and **Wichtige nächste Schritte**. Run the fictional handover
-   controls and start/resume work only according to the synthetic fixture.
-3. In chat, use **Sprachnachricht aufnehmen**, stop, inspect
+   passiert ist** and **Wichtige nächste Schritte**. Click Anna's small
+   **Vorlesen** control below those sections, stop it, then acknowledge Anna.
+3. Open **Pläne**. Confirm the ordered plan shows patient, activity, time,
+   reason/source, dependencies and state without work-execution controls.
+4. After all eight handover acknowledgements, open **Aufgaben**. Begin one
+   milestone, enter only work actually performed, interrupt it, add a
+   spontaneous item, complete that item, resume the first item and inspect the
+   explicit summary review before writing. Resolve or transfer all remaining
+   responsibilities before preparing the next-shift handover.
+5. In chat, use **Sprachnachricht aufnehmen**, stop, inspect
    **Sprachtranskript prüfen**, submit, check the explicit transcript/context
    box, then edit the transcript.
-4. On a completed assistant message, click **Nachricht vorlesen**, then
+6. On a completed assistant message, click **Nachricht vorlesen**, then
    **Vorlesen stoppen**.
 
-Observed: the workday reload/draft journey passes. A synthetic MediaRecorder
-and accepted fixture response prove patient binding, explicit transcript
-review and review invalidation after correction; this is not real ASR
-acceptance. Browser SpeechSynthesis receives the chosen message's visible
-semantic content and stop cancels playback; context cleanup is implemented.
-Actual device audio, server TTS and a real microphone remain blocked/not run.
+Expected durable result: acknowledgement, episodes, interruption drafts,
+completion evidence and responsibility transfers remain in the PostgreSQL
+workday authority; accepted documentation follows the existing Medplum and
+provider delivery path. Browser SpeechSynthesis receives only the selected
+visible frozen patient handover; listening never acknowledges it. A synthetic
+MediaRecorder and accepted fixture response prove patient binding, explicit
+transcript review and review invalidation after correction; this is not real
+ASR acceptance. Actual device audio, server TTS and a real microphone remain
+blocked/not run.
 
 ### 9. Precise status and provider view — PASS for truthful display
 
@@ -413,6 +427,17 @@ excerpt, project, patient, team and role-authorized provider views at desktop
 and 390×844 dark compact width with no console errors or horizontal overflow.
 The browser capture command timed out twice, so no new screenshot file is
 claimed for that run; the retained dated files below remain the capture index.
+
+The 27 September workday correction added actual integrated captures of the
+single shift entry and patient-local handover at desktop and 390×844 in light
+and dark modes. The dark capture deliberately remains a conversation start;
+it does not claim hardware audio playback.
+
+- `.gstack/qa-reports/screenshots/after-initial-desktop.png`
+- `.gstack/qa-reports/screenshots/after-handover-desktop.png`
+- `.gstack/qa-reports/screenshots/after-live-handover-mobile.png`
+- `.gstack/qa-reports/screenshots/after-live-handover-expanded-mobile.png`
+- `.gstack/qa-reports/screenshots/after-live-handover-mobile-dark.png`
 
 - `.gstack/qa-reports/screenshots/ui-wiring-after-patient-desktop-2026-09-24-v4.png`
 - `.gstack/qa-reports/screenshots/ui-wiring-after-patient-desktop-dark-2026-09-24.png`

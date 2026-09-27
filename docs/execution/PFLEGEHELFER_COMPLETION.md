@@ -891,3 +891,35 @@ Recheck official documentation against the actual installed dependency versions 
 - **M3:** Anthropic healthcare and OpenAI healthcare platform descriptions: https://www.anthropic.com/news/healthcare-life-sciences and https://openai.com/index/openai-for-healthcare/ — generic healthcare conversation/integration capabilities are a moving market baseline, not evidence of customer-specific comparative performance.
 
 Obtain actual institution-approved SOPs, applicable professional/cantonal guidance, provider specifications and required legal/clinical reviews before real activation. Do not replace unavailable sources with a coding agent's assumptions.
+
+## 31. Workday coworker UI correction — 27 September 2026
+
+This correction does not promote any G0–G7 constituent or external approval.
+It removes the initial `Zum Gespräch` loading control and the duplicate
+Übergabe/Aufgaben/Teamfragen pseudo-prompts from the general composer. The
+general conversation now has one explicit shift-start entry; ward-wide controls
+remain absent from private patient conversations.
+
+Three views project the existing PostgreSQL workday authority without adding a
+second plan or task store:
+
+1. **Übergabe** keeps the exact frozen incoming patient snapshots and
+   version-bound acknowledgements. Read-aloud is attached below the expanded
+   patient's three visible sections and speaks only that patient's exact
+   presented snapshot. Listening remains independent of acknowledgement.
+2. **Pläne** is a read-only ordered orientation view with patient, activity,
+   time window, reason/source, dependencies and state. It remains gated until
+   the required handover acknowledgements are complete.
+3. **Aufgaben** executes the employee's milestones through the existing
+   work-episode commands. It supports start, pause, resume, visible transfer,
+   spontaneous additional work and interruption. Completion evidence receives
+   an explicit final review before the existing accepted write/delivery path;
+   resolved or transferred responsibilities feed the outgoing handover.
+
+The acknowledgement client uses the durable `POST /api/v1/workday` response
+directly instead of reloading snapshot and conversation state. A synthetic
+memory-store measurement on 27 September recorded 0.057 seconds for one
+acknowledgement request; this is engineering evidence, not a production latency
+claim. Browser speech regressions prove selected text, pause/stop state and no
+acknowledgement side effect. Actual supported-device audio and the full TTS/ASR
+acceptance gate remain unpassed.

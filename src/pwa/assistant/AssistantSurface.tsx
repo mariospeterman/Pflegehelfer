@@ -23,6 +23,7 @@ import {
   type MutableSubmissionChannel,
 } from "../conversation/ClinicalComposer";
 import type { WorkspaceDestination } from "../workspace/WorkspaceView";
+import type { WorkdayView } from "../../core/workday";
 
 export type { AssistantHandoff };
 
@@ -139,6 +140,7 @@ export function AssistantSurface({
   onBusyChange,
   externallyBusy,
   onNavigate,
+  workdayStage,
 }: {
   patient: Patient | null;
   userId: string;
@@ -152,6 +154,7 @@ export function AssistantSurface({
   onBusyChange: (busy: boolean) => void;
   externallyBusy: boolean;
   onNavigate: (destination: WorkspaceDestination) => void;
+  workdayStage: WorkdayView["stage"] | null;
 }) {
   const [error, setError] = useState<string | null>(null);
   const storage = useMemo(() => createConversationStorage(userId), [userId]);
@@ -215,6 +218,38 @@ export function AssistantSurface({
                     <small>{opening.progress}</small>
                   </div>
                 </div>
+                {!patient && workdayStage && (
+                  <div className="shift-entry-card" aria-label="Arbeitstag">
+                    <div>
+                      <strong>
+                        {workdayStage === "handover"
+                          ? "1 · Übergabe lesen"
+                          : workdayStage === "closed"
+                            ? "Schicht abgeschlossen"
+                            : "Arbeitstag läuft"}
+                      </strong>
+                      <small>
+                        Übergabe → Arbeitsplan → Dokumentation prüfen und
+                        übergeben
+                      </small>
+                    </div>
+                    {workdayStage !== "closed" && (
+                      <button
+                        type="button"
+                        className="primary"
+                        onClick={() =>
+                          onNavigate(
+                            workdayStage === "handover" ? "Handover" : "Tasks",
+                          )
+                        }
+                      >
+                        {workdayStage === "handover"
+                          ? "Schichtübergabe öffnen"
+                          : "Heutige Aufgaben öffnen"}
+                      </button>
+                    )}
+                  </div>
+                )}
                 {patient && (
                   <div className="conversation-context-event">
                     <span aria-hidden="true">✓</span>
@@ -253,20 +288,7 @@ export function AssistantSurface({
                           prompt: "Was ist noch offen?",
                         },
                       ]
-                    : [
-                        {
-                          label: "Übergabe",
-                          action: () => onNavigate("Plans"),
-                        },
-                        {
-                          label: "Meine Aufgaben",
-                          action: () => onNavigate("Plans"),
-                        },
-                        {
-                          label: "Teamfragen",
-                          action: () => onNavigate("Team"),
-                        },
-                      ]
+                    : []
                 }
                 onError={setError}
                 onBusy={onBusyChange}

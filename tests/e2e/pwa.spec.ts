@@ -52,7 +52,7 @@ test("is one responsive conversation with drawer context and no module dashboard
   ).toBeVisible();
   await expect(page).toHaveTitle(/Pflegehelfer · Kronenhof/);
   await expect(page.locator(".workday-panel")).toHaveCount(0);
-  await openDestination(page, "Pläne");
+  await openDestination(page, "Übergabe");
   await expect(
     page.getByRole("heading", { name: "Übergabe patientenweise übernehmen" }),
   ).toBeVisible();
@@ -243,7 +243,7 @@ test("workday context changes lock the composer until the server confirms the ac
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop", "state transition runs once");
-  await openDestination(page, "Pläne");
+  await openDestination(page, "Übergabe");
 
   for (const patient of [
     "Anna Beispiel",
@@ -268,8 +268,10 @@ test("workday context changes lock the composer until the server confirms the ac
       ).toBeVisible();
     }
   }
+  await expect(page.getByText("8/8 Patientenkontexte geprüft")).toBeVisible();
+  await openDestination(page, "Aufgaben");
   await expect(
-    page.getByRole("heading", { name: "Dein sicherer Arbeitsplan" }),
+    page.getByRole("heading", { name: "Deine heutigen Aufgaben" }),
   ).toBeVisible();
 
   await page.route("**/api/v1/workday", async (route) => {
@@ -298,7 +300,7 @@ test("workday context changes lock the composer until the server confirms the ac
     .fill("Morgenpflege begonnen; Mobilisation wartet noch.");
   await draftSaved;
   await page.reload();
-  await openDestination(page, "Pläne");
+  await openDestination(page, "Aufgaben");
   await expect(
     page.getByLabel("Was wurde tatsächlich durchgeführt?"),
   ).toHaveValue("Morgenpflege begonnen; Mobilisation wartet noch.");
@@ -503,7 +505,7 @@ test("large text and a reduced keyboard viewport keep the composer usable", asyn
 test("handover readout uses explicit controllable browser speech", async ({
   page,
 }) => {
-  await openDestination(page, "Pläne");
+  await openDestination(page, "Übergabe");
   await page.evaluate(() => {
     const state = { spokenText: "", paused: false, cancelled: false };
     class TestSpeechSynthesisUtterance {
@@ -532,6 +534,7 @@ test("handover readout uses explicit controllable browser speech", async ({
         speak: (utterance: TestSpeechSynthesisUtterance) => {
           state.spokenText = utterance.text;
         },
+        getVoices: () => [],
       },
     });
     Object.defineProperty(window, "__pfhSpeechTestState", {
@@ -539,17 +542,18 @@ test("handover readout uses explicit controllable browser speech", async ({
       value: state,
     });
   });
-  const readout = page.getByRole("button", {
-    name: "Übergabe vorlesen",
-    exact: true,
-  });
+  const expanded = page.getByRole("button", { expanded: true }).first();
+  const row = expanded.locator("xpath=..");
+  const readout = row.getByRole("button", { name: /Übergabe von .* vorlesen/ });
   await expect(readout).toBeVisible();
   await readout.click();
-  await expect(page.getByRole("button", { name: "Pause" })).toBeVisible();
-  await page.getByRole("button", { name: "Stop" }).click();
+  await expect(
+    row.getByRole("button", { name: /Übergabe von .* pausieren/ }),
+  ).toBeVisible();
+  await row.getByRole("button", { name: "Stop" }).click();
   await expect(readout).toBeVisible();
   await expect(
-    page.getByText(/Inhalt entspricht exakt dem eingefrorenen/),
+    row.getByText(/Liest genau diesen eingefrorenen Patientenstand/),
   ).toBeVisible();
   const speechState = await page.evaluate(
     () =>

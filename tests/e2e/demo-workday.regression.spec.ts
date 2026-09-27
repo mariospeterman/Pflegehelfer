@@ -25,7 +25,7 @@ async function openDestination(page: Page, name: string) {
 test("general workday action opens the complete handover and starts the day only after every patient is checked", async ({
   page,
 }) => {
-  await page.getByRole("button", { name: "Übergabe", exact: true }).click();
+  await page.getByRole("button", { name: "Schichtübergabe öffnen" }).click();
   await expect(
     page.getByRole("heading", { name: "Übergabe patientenweise übernehmen" }),
   ).toBeVisible();
@@ -59,15 +59,15 @@ test("general workday action opens the complete handover and starts the day only
       ).toBeVisible();
   }
 
-  await expect(
-    page.getByRole("heading", { name: "Dein sicherer Arbeitsplan" }),
-  ).toBeVisible();
   await expect(page.getByText("8/8 Patientenkontexte geprüft")).toBeVisible();
+  await openDestination(page, "Pläne");
   await expect(
-    page.getByText(
-      /Übergabe vollständig geprüft. Dein Arbeitstag ist gestartet/,
-    ),
+    page.getByRole("heading", { name: "Dein Arbeitsplan" }),
   ).toBeVisible();
+  await expect(
+    page.getByText(/Zeitfenster, Begründung und aktueller Stand/),
+  ).toBeVisible();
+  await openDestination(page, "Aufgaben");
   await expect(
     page.getByRole("button", { name: /Arbeit beginnen:/ }),
   ).toHaveCount(8);

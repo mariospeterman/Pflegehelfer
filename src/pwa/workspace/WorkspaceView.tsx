@@ -15,7 +15,9 @@ import { DemoAdminView } from "./DemoAdminView";
 export type WorkspaceDestination =
   | "Chat"
   | "Library"
+  | "Handover"
   | "Plans"
+  | "Tasks"
   | "Projects"
   | "Patients"
   | "Team"
@@ -1240,17 +1242,26 @@ export function WorkspaceView({
         <SectionState>Demo-Verwaltung ist nur für IT freigegeben.</SectionState>
       </section>
     );
-  if (destination === "Plans")
+  if (["Handover", "Plans", "Tasks"].includes(destination))
     return (
       <section className="workspace-card plans-workspace">
         {workday ? (
           <WorkdayPanel
+            key={destination}
             workday={workday}
             patients={snapshot.patients}
             busy={busy}
             onPatient={onPatient}
             onError={onError}
             onAction={onWorkdayAction}
+            view={
+              destination === "Handover"
+                ? "handover"
+                : destination === "Tasks"
+                  ? "tasks"
+                  : "plan"
+            }
+            onNavigate={onNavigate}
           />
         ) : (
           <SectionState>
