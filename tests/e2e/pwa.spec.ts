@@ -614,15 +614,18 @@ test("each assistant message can play and stop supported browser speech", async 
   await expect(
     page.getByRole("button", { name: "Vorlesen stoppen" }),
   ).toBeVisible();
-  const spokenText = await page.evaluate(
-    () =>
-      (
-        window as unknown as {
-          __pfhMessageSpeechTest: { spokenText: string };
-        }
-      ).__pfhMessageSpeechTest.spokenText,
-  );
-  expect(spokenText).toContain("Anna Beispiel");
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (
+            window as unknown as {
+              __pfhMessageSpeechTest: { spokenText: string };
+            }
+          ).__pfhMessageSpeechTest.spokenText,
+      ),
+    )
+    .toContain("Anna Beispiel");
   await page.getByRole("button", { name: "Vorlesen stoppen" }).click();
   const cancelled = await page.evaluate(
     () =>
