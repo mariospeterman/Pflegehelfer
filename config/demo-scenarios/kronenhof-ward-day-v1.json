@@ -1,0 +1,1773 @@
+{
+  "schemaVersion": 1,
+  "id": "kronenhof-ward-day",
+  "version": 1,
+  "label": "Kronenhof – vollständiger synthetischer Stationstag",
+  "synthetic": true,
+  "sitePackId": "tertianum-kronenhof",
+  "clock": {
+    "mode": "frozen",
+    "anchor": "2026-09-05T08:00:00.000Z",
+    "timeZone": "Europe/Zurich"
+  },
+  "state": {
+    "users": [
+      {
+        "id": "u-assistant",
+        "displayName": "Lea Bernasconi",
+        "role": "care-assistant",
+        "wardIds": ["rehab-2"],
+        "patientIds": [
+          "p-anna",
+          "p-luca",
+          "p-ruth",
+          "p-peter",
+          "p-sofia",
+          "p-emil",
+          "p-mei",
+          "p-jonas"
+        ],
+        "managedDevice": true,
+        "defaultPurpose": "direct-care",
+        "qualificationIds": [],
+        "directoryProfile": {
+          "professionalTitle": "Assistentin Gesundheit und Soziales EBA",
+          "team": "Interprofessionelles Team Rehabilitation",
+          "station": "Station Rehabilitation Nord",
+          "workEmail": "lea.bernasconi@pflegezentrum.example.invalid",
+          "workPhone": "+41 44 555 01 40",
+          "languages": ["Deutsch", "Italienisch"],
+          "responsibilities": [
+            "Zugewiesene Körperpflege",
+            "Mobilisation und Transfers nach Plan",
+            "Alltags- und Mahlzeitenbegleitung",
+            "Beobachtungen weitergeben"
+          ]
+        }
+      },
+      {
+        "id": "u-nurse",
+        "displayName": "Nora Frei",
+        "role": "registered-nurse",
+        "wardIds": ["rehab-2"],
+        "patientIds": [
+          "p-anna",
+          "p-luca",
+          "p-ruth",
+          "p-peter",
+          "p-sofia",
+          "p-emil",
+          "p-mei",
+          "p-jonas",
+          "p-eva",
+          "p-samir",
+          "p-paul",
+          "p-aline",
+          "p-theo",
+          "p-mila",
+          "p-noah"
+        ],
+        "managedDevice": true,
+        "defaultPurpose": "direct-care",
+        "qualificationIds": [
+          "clinical-observation-independent-review",
+          "clinical-note-independent-review"
+        ],
+        "directoryProfile": {
+          "professionalTitle": "Dipl. Pflegefachfrau HF · Tagesverantwortung",
+          "team": "Interprofessionelles Team Rehabilitation",
+          "station": "Station Rehabilitation Nord",
+          "workEmail": "nora.frei@pflegezentrum.example.invalid",
+          "workPhone": "+41 44 555 01 40",
+          "languages": ["Deutsch", "Französisch", "Englisch"],
+          "responsibilities": [
+            "Schichtkoordination",
+            "Pflegefachliche Beurteilung",
+            "Eintritt"
+          ]
+        }
+      },
+      {
+        "id": "u-nurse-evening",
+        "displayName": "Samira Vogel",
+        "role": "registered-nurse",
+        "wardIds": ["rehab-2"],
+        "patientIds": [
+          "p-anna",
+          "p-luca",
+          "p-ruth",
+          "p-peter",
+          "p-sofia",
+          "p-emil",
+          "p-mei",
+          "p-jonas",
+          "p-eva",
+          "p-samir",
+          "p-paul",
+          "p-aline",
+          "p-theo",
+          "p-mila",
+          "p-noah"
+        ],
+        "managedDevice": true,
+        "defaultPurpose": "direct-care",
+        "qualificationIds": [
+          "clinical-observation-independent-review",
+          "clinical-note-independent-review"
+        ],
+        "directoryProfile": {
+          "professionalTitle": "Dipl. Pflegefachfrau HF · Spätdienst",
+          "team": "Interprofessionelles Team Rehabilitation",
+          "station": "Station Rehabilitation Nord",
+          "workEmail": "samira.vogel@pflegezentrum.example.invalid",
+          "workPhone": "+41 44 555 01 40",
+          "languages": ["Deutsch", "Türkisch", "Englisch"],
+          "responsibilities": [
+            "Schichtkoordination",
+            "Pflegefachliche Beurteilung",
+            "Übergabe"
+          ]
+        }
+      },
+      {
+        "id": "u-physician",
+        "displayName": "Dr. David Keller",
+        "role": "physician",
+        "wardIds": ["rehab-2", "ltc-1"],
+        "patientIds": [
+          "p-anna",
+          "p-luca",
+          "p-ruth",
+          "p-peter",
+          "p-sofia",
+          "p-emil",
+          "p-mei",
+          "p-jonas",
+          "p-eva",
+          "p-samir",
+          "p-paul",
+          "p-aline",
+          "p-theo",
+          "p-mila",
+          "p-noah"
+        ],
+        "managedDevice": true,
+        "defaultPurpose": "direct-care",
+        "qualificationIds": [
+          "clinical-observation-independent-review",
+          "clinical-note-independent-review"
+        ],
+        "directoryProfile": {
+          "professionalTitle": "Facharzt Allgemeine Innere Medizin",
+          "team": "Interprofessionelles Team Rehabilitation",
+          "station": "Station Rehabilitation Nord",
+          "workEmail": "david.keller@pflegezentrum.example.invalid",
+          "workPhone": "+41 44 555 01 40",
+          "languages": ["Deutsch"],
+          "responsibilities": [
+            "Ärztliche Visite",
+            "Therapieentscheid",
+            "Medikationsfreigabe"
+          ]
+        }
+      },
+      {
+        "id": "u-physician-evening",
+        "displayName": "Dr. Elif Aydin",
+        "role": "physician",
+        "wardIds": ["rehab-2"],
+        "patientIds": [
+          "p-anna",
+          "p-luca",
+          "p-ruth",
+          "p-peter",
+          "p-sofia",
+          "p-emil",
+          "p-mei",
+          "p-jonas",
+          "p-eva",
+          "p-samir",
+          "p-paul",
+          "p-aline",
+          "p-theo",
+          "p-mila",
+          "p-noah"
+        ],
+        "managedDevice": true,
+        "defaultPurpose": "direct-care",
+        "qualificationIds": [
+          "clinical-observation-independent-review",
+          "clinical-note-independent-review"
+        ],
+        "directoryProfile": {
+          "professionalTitle": "Fachärztin Allgemeine Innere Medizin · Hintergrunddienst",
+          "team": "Interprofessionelles Team Rehabilitation",
+          "station": "Station Rehabilitation Nord",
+          "workEmail": "elif.aydin@pflegezentrum.example.invalid",
+          "workPhone": "+41 44 555 01 40",
+          "languages": ["Deutsch", "Türkisch", "Englisch"],
+          "responsibilities": [
+            "Ärztlicher Hintergrunddienst",
+            "Dringliche Beurteilung"
+          ]
+        }
+      },
+      {
+        "id": "u-pharmacy",
+        "displayName": "Giulia Rossi",
+        "role": "pharmacy",
+        "wardIds": ["rehab-2"],
+        "patientIds": [
+          "p-anna",
+          "p-luca",
+          "p-ruth",
+          "p-peter",
+          "p-sofia",
+          "p-emil",
+          "p-mei",
+          "p-jonas",
+          "p-eva",
+          "p-samir",
+          "p-paul",
+          "p-aline",
+          "p-theo",
+          "p-mila",
+          "p-noah"
+        ],
+        "managedDevice": true,
+        "defaultPurpose": "direct-care",
+        "directoryProfile": {
+          "professionalTitle": "Eidg. dipl. Apothekerin",
+          "team": "Interprofessionelles Team Rehabilitation",
+          "station": "Station Rehabilitation Nord",
+          "workEmail": "giulia.rossi@pflegezentrum.example.invalid",
+          "workPhone": "+41 44 555 01 40",
+          "languages": ["Deutsch", "Italienisch", "Englisch"],
+          "responsibilities": ["Medikationsabgleich", "Interaktionsprüfung"]
+        }
+      },
+      {
+        "id": "u-physio",
+        "displayName": "Marc Dubois",
+        "role": "physiotherapy",
+        "wardIds": ["rehab-2"],
+        "patientIds": [
+          "p-anna",
+          "p-luca",
+          "p-ruth",
+          "p-peter",
+          "p-sofia",
+          "p-emil",
+          "p-mei",
+          "p-jonas"
+        ],
+        "managedDevice": true,
+        "defaultPurpose": "direct-care",
+        "directoryProfile": {
+          "professionalTitle": "Dipl. Physiotherapeut FH",
+          "team": "Interprofessionelles Team Rehabilitation",
+          "station": "Station Rehabilitation Nord",
+          "workEmail": "marc.dubois@pflegezentrum.example.invalid",
+          "workPhone": "+41 44 555 01 40",
+          "languages": ["Deutsch", "Französisch"],
+          "responsibilities": [
+            "Mobilitätsassessment",
+            "Gang- und Treppentraining"
+          ]
+        }
+      },
+      {
+        "id": "u-ergo",
+        "displayName": "Sofia Meier",
+        "role": "occupational-therapy",
+        "wardIds": ["rehab-2"],
+        "patientIds": ["p-mei"],
+        "managedDevice": true,
+        "defaultPurpose": "direct-care",
+        "directoryProfile": {
+          "professionalTitle": "Dipl. Ergotherapeutin FH",
+          "team": "Interprofessionelles Team Rehabilitation",
+          "station": "Station Rehabilitation Nord",
+          "workEmail": "sofia.meier@pflegezentrum.example.invalid",
+          "workPhone": "+41 44 555 01 40",
+          "languages": ["Deutsch"],
+          "responsibilities": ["ADL-Training", "Hilfsmittelabklärung"]
+        }
+      },
+      {
+        "id": "u-transport",
+        "displayName": "Jonas Roth",
+        "role": "transport",
+        "wardIds": ["rehab-2"],
+        "patientIds": ["p-luca"],
+        "managedDevice": true,
+        "defaultPurpose": "operations",
+        "directoryProfile": {
+          "professionalTitle": "Mitarbeiter Patiententransport",
+          "team": "Interprofessionelles Team Rehabilitation",
+          "station": "Station Rehabilitation Nord",
+          "workEmail": "jonas.roth@pflegezentrum.example.invalid",
+          "workPhone": "+41 44 555 01 40",
+          "languages": ["Deutsch"],
+          "responsibilities": ["Patiententransport", "Terminübergabe"]
+        }
+      },
+      {
+        "id": "u-service",
+        "displayName": "Elena Huber",
+        "role": "service",
+        "wardIds": ["rehab-2"],
+        "patientIds": [],
+        "managedDevice": true,
+        "defaultPurpose": "operations",
+        "directoryProfile": {
+          "professionalTitle": "Mitarbeiterin Hotellerie",
+          "team": "Interprofessionelles Team Rehabilitation",
+          "station": "Station Rehabilitation Nord",
+          "workEmail": "elena.huber@pflegezentrum.example.invalid",
+          "workPhone": "+41 44 555 01 40",
+          "languages": ["Deutsch"],
+          "responsibilities": ["Mahlzeitenservice", "Zimmerlogistik"]
+        }
+      },
+      {
+        "id": "u-admin",
+        "displayName": "Mia Schmid",
+        "role": "administration",
+        "wardIds": ["rehab-2"],
+        "patientIds": [
+          "p-anna",
+          "p-luca",
+          "p-ruth",
+          "p-peter",
+          "p-sofia",
+          "p-emil",
+          "p-mei",
+          "p-jonas",
+          "p-eva",
+          "p-samir",
+          "p-paul",
+          "p-aline",
+          "p-theo",
+          "p-mila",
+          "p-noah"
+        ],
+        "managedDevice": true,
+        "defaultPurpose": "administration",
+        "directoryProfile": {
+          "professionalTitle": "Mitarbeiterin Patientenadministration",
+          "team": "Interprofessionelles Team Rehabilitation",
+          "station": "Station Rehabilitation Nord",
+          "workEmail": "mia.schmid@pflegezentrum.example.invalid",
+          "workPhone": "+41 44 555 01 40",
+          "languages": ["Deutsch"],
+          "responsibilities": [
+            "Eintrittsadministration",
+            "Versicherungsangaben",
+            "Terminkoordination"
+          ]
+        }
+      },
+      {
+        "id": "u-manager",
+        "displayName": "Noah Graf",
+        "role": "management",
+        "wardIds": ["rehab-2"],
+        "patientIds": [],
+        "managedDevice": true,
+        "defaultPurpose": "operations",
+        "directoryProfile": {
+          "professionalTitle": "Bereichsleiter Rehabilitation",
+          "team": "Interprofessionelles Team Rehabilitation",
+          "station": "Station Rehabilitation Nord",
+          "workEmail": "noah.graf@pflegezentrum.example.invalid",
+          "workPhone": "+41 44 555 01 40",
+          "languages": ["Deutsch"],
+          "responsibilities": [
+            "Betriebsführung",
+            "Ressourcenplanung",
+            "Eskalationen"
+          ]
+        }
+      },
+      {
+        "id": "u-hr",
+        "displayName": "Lina Wenger",
+        "role": "hr",
+        "wardIds": [],
+        "patientIds": [],
+        "managedDevice": true,
+        "defaultPurpose": "operations",
+        "directoryProfile": {
+          "professionalTitle": "HR Business Partner",
+          "team": "Interprofessionelles Team Rehabilitation",
+          "station": "Station Rehabilitation Nord",
+          "workEmail": "lina.wenger@pflegezentrum.example.invalid",
+          "workPhone": "+41 44 555 01 40",
+          "languages": ["Deutsch"],
+          "responsibilities": ["Personaladministration", "Einsatzplanung"]
+        }
+      },
+      {
+        "id": "u-it",
+        "displayName": "Tim Gerber",
+        "role": "it",
+        "wardIds": [],
+        "patientIds": [],
+        "managedDevice": true,
+        "defaultPurpose": "operations",
+        "directoryProfile": {
+          "professionalTitle": "ICT Application Manager",
+          "team": "Interprofessionelles Team Rehabilitation",
+          "station": "Station Rehabilitation Nord",
+          "workEmail": "tim.gerber@pflegezentrum.example.invalid",
+          "workPhone": "+41 44 555 01 40",
+          "languages": ["Deutsch"],
+          "responsibilities": [
+            "Applikationsbetrieb",
+            "Zugriffsverwaltung",
+            "Supportkoordination"
+          ]
+        }
+      },
+      {
+        "id": "u-quality",
+        "displayName": "Sara Baumann",
+        "role": "quality-safety",
+        "wardIds": ["rehab-2"],
+        "patientIds": [],
+        "managedDevice": true,
+        "defaultPurpose": "quality-review",
+        "directoryProfile": {
+          "professionalTitle": "Fachspezialistin Qualität und Patientensicherheit",
+          "team": "Interprofessionelles Team Rehabilitation",
+          "station": "Station Rehabilitation Nord",
+          "workEmail": "sara.baumann@pflegezentrum.example.invalid",
+          "workPhone": "+41 44 555 01 40",
+          "languages": ["Deutsch"],
+          "responsibilities": [
+            "Qualitätsprüfung",
+            "Ereignisanalyse",
+            "Verbesserungsmassnahmen"
+          ]
+        }
+      }
+    ],
+    "patients": [
+      {
+        "id": "p-anna",
+        "displayName": "Anna Beispiel",
+        "birthDate": "1941-03-18",
+        "mrn": "SH-260901-001",
+        "room": "214A",
+        "wardId": "rehab-2",
+        "encounterId": "enc-anna-2026",
+        "allergyStatus": "confirmed",
+        "allergies": ["Penicillin – Exanthem"],
+        "risks": ["Sturzrisiko", "Antikoagulation"],
+        "diagnoses": [
+          "Schenkelhalsfraktur links, postoperativ",
+          "Arterielle Hypertonie"
+        ],
+        "careGoals": [
+          "Sicherer Transfer mit Rollator",
+          "30 m Mobilisation bis 09.09.2026"
+        ],
+        "medicationSummary": [
+          "Torasemid: Diskrepanz 5 mg / 10 mg – keine Änderung in Pflegehelfer",
+          "Apixaban 5 mg – nur lesbar"
+        ],
+        "carePreferences": ["Vor der Morgenpflege frühzeitig informieren"],
+        "communicationPreferences": [
+          "Vor Transfers kurz erklären, was als Nächstes geschieht",
+          "Brille für Gespräche bereitlegen"
+        ],
+        "dailyRoutine": [
+          "Morgenpflege nach dem Frühstück",
+          "Mittagsruhe ab 13:00"
+        ],
+        "source": {
+          "provider": "wicare",
+          "externalId": "WCD-L-10021",
+          "version": 7,
+          "mappingVersion": "demo-r4-ch-core-6.0.0-v1",
+          "effectiveAt": "2026-09-05T06:45:00.000Z",
+          "recordedAt": "2026-09-05T06:45:00.000Z",
+          "receivedAt": "2026-09-05T06:45:00.000Z",
+          "syncedAt": "2026-09-05T06:45:00.000Z"
+        }
+      },
+      {
+        "id": "p-luca",
+        "displayName": "Luca Demo",
+        "birthDate": "1937-11-02",
+        "mrn": "SH-260902-004",
+        "room": "207",
+        "wardId": "rehab-2",
+        "encounterId": "enc-luca-2026",
+        "allergyStatus": "unknown",
+        "allergies": [],
+        "risks": ["Delirrisiko", "Hörminderung"],
+        "diagnoses": ["Dekonditionierung nach Pneumonie"],
+        "careGoals": ["Selbstständige Körperpflege am Lavabo"],
+        "medicationSummary": ["Medikationsabgleich durch Apotheke ausstehend"],
+        "carePreferences": ["Körperpflege möglichst am Lavabo durchführen"],
+        "communicationPreferences": [
+          "Rechts ansprechen und Blickkontakt abwarten",
+          "Hörgerät vor längeren Gesprächen prüfen"
+        ],
+        "dailyRoutine": [
+          "Körperpflege am Lavabo",
+          "Kurze Gehstrecken mit Pausen"
+        ],
+        "source": {
+          "provider": "carecoach",
+          "externalId": "CC-88004",
+          "version": 4,
+          "mappingVersion": "demo-r4-ch-core-6.0.0-v1",
+          "effectiveAt": "2026-09-05T06:30:00.000Z",
+          "recordedAt": "2026-09-05T06:30:00.000Z",
+          "receivedAt": "2026-09-05T06:30:00.000Z",
+          "syncedAt": "2026-09-05T06:30:00.000Z"
+        }
+      },
+      {
+        "id": "p-mei",
+        "displayName": "Mei Muster",
+        "birthDate": "1948-06-27",
+        "mrn": "SH-260903-002",
+        "room": "211",
+        "wardId": "rehab-2",
+        "encounterId": "enc-mei-2026",
+        "allergyStatus": "confirmed",
+        "allergies": ["Latex"],
+        "risks": ["Aspirationsrisiko"],
+        "diagnoses": ["Zustand nach ischämischem Insult"],
+        "careGoals": ["Sicheres Schlucken gemäss Logopädieplan"],
+        "medicationSummary": ["Medikation im KIS – schreibgeschützt"],
+        "carePreferences": ["Mahlzeiten ohne Zeitdruck begleiten"],
+        "communicationPreferences": [
+          "Kurze Sätze",
+          "Schluckplan sichtbar bereithalten"
+        ],
+        "dailyRoutine": [
+          "Aufrechte Position zu Mahlzeiten",
+          "Nach Mahlzeiten 20 Minuten sitzen"
+        ],
+        "source": {
+          "provider": "sap-vitals",
+          "externalId": "SAP-PAT-7731",
+          "version": 3,
+          "mappingVersion": "demo-r4-ch-core-6.0.0-v1",
+          "effectiveAt": "2026-09-05T07:00:00.000Z",
+          "recordedAt": "2026-09-05T07:00:00.000Z",
+          "receivedAt": "2026-09-05T07:00:00.000Z",
+          "syncedAt": "2026-09-05T07:00:00.000Z"
+        }
+      },
+      {
+        "id": "p-ruth",
+        "displayName": "Ruth Fiktiv",
+        "birthDate": "1939-05-12",
+        "mrn": "SH-260904-006",
+        "room": "205",
+        "wardId": "rehab-2",
+        "encounterId": "enc-ruth-2026",
+        "allergyStatus": "unknown",
+        "allergies": [],
+        "risks": ["Sturzrisiko", "Schmerz bei Belastung"],
+        "diagnoses": ["Knie-Totalprothese rechts, postoperativ"],
+        "careGoals": ["Selbstständig ankleiden", "Sicher 20 m am Rollator"],
+        "medicationSummary": ["Medikation im führenden KIS – nur lesbar"],
+        "carePreferences": ["Kleidung selbst auswählen und bereitlegen lassen"],
+        "communicationPreferences": ["Schmerzen vor Belastung aktiv erfragen"],
+        "dailyRoutine": [
+          "Ankleiden mit bereitgelegter Kleidung",
+          "Mobilisation nach Schmerzbeurteilung"
+        ],
+        "source": {
+          "provider": "carecoach",
+          "externalId": "CC-88017",
+          "version": 2,
+          "mappingVersion": "demo-r4-ch-core-6.0.0-v1",
+          "effectiveAt": "2026-09-05T06:35:00.000Z",
+          "recordedAt": "2026-09-05T06:35:00.000Z",
+          "receivedAt": "2026-09-05T06:35:00.000Z",
+          "syncedAt": "2026-09-05T06:35:00.000Z"
+        }
+      },
+      {
+        "id": "p-peter",
+        "displayName": "Peter Beispiel",
+        "birthDate": "1943-09-21",
+        "mrn": "SH-260905-003",
+        "room": "208",
+        "wardId": "rehab-2",
+        "encounterId": "enc-peter-2026",
+        "allergyStatus": "confirmed",
+        "allergies": ["Pflasterkleber"],
+        "risks": ["Flüssigkeitsretention", "Hautrisiko Unterschenkel"],
+        "diagnoses": ["Herzinsuffizienz, rehabilitative Stabilisierung"],
+        "careGoals": [
+          "Gewicht täglich vergleichbar erfassen",
+          "Ödeme beobachten"
+        ],
+        "medicationSummary": [
+          "Diuretika-Verordnung im KIS – keine Änderung hier"
+        ],
+        "carePreferences": ["Gewicht immer vor dem Frühstück erfassen"],
+        "communicationPreferences": ["Tagesplan schriftlich am Tisch belassen"],
+        "dailyRoutine": [
+          "Gewicht vor dem Frühstück",
+          "Beine am Nachmittag hochlagern"
+        ],
+        "source": {
+          "provider": "wicare",
+          "externalId": "WCD-L-10044",
+          "version": 5,
+          "mappingVersion": "demo-r4-ch-core-6.0.0-v1",
+          "effectiveAt": "2026-09-05T06:42:00.000Z",
+          "recordedAt": "2026-09-05T06:42:00.000Z",
+          "receivedAt": "2026-09-05T06:42:00.000Z",
+          "syncedAt": "2026-09-05T06:42:00.000Z"
+        }
+      },
+      {
+        "id": "p-sofia",
+        "displayName": "Sofia Muster",
+        "birthDate": "1951-01-30",
+        "mrn": "SH-260906-008",
+        "room": "216B",
+        "wardId": "rehab-2",
+        "encounterId": "enc-sofia-2026",
+        "allergyStatus": "unknown",
+        "allergies": [],
+        "risks": ["Transfer mit zwei Mitarbeitenden", "Dekubitusrisiko"],
+        "diagnoses": ["Hemiparese links nach Insult"],
+        "careGoals": [
+          "Sicherer Transfer in den Rollstuhl",
+          "Haut bleibt intakt"
+        ],
+        "medicationSummary": ["Medikation im KIS – schreibgeschützt"],
+        "carePreferences": ["Beim Transfer die einzelnen Schritte ankündigen"],
+        "communicationPreferences": [
+          "Von rechts ansprechen",
+          "Ausreichend Antwortzeit lassen"
+        ],
+        "dailyRoutine": [
+          "Transfer mit zwei Mitarbeitenden",
+          "Druckentlastung gemäss Plan"
+        ],
+        "source": {
+          "provider": "sap-vitals",
+          "externalId": "SAP-PAT-7810",
+          "version": 2,
+          "mappingVersion": "demo-r4-ch-core-6.0.0-v1",
+          "effectiveAt": "2026-09-05T06:50:00.000Z",
+          "recordedAt": "2026-09-05T06:50:00.000Z",
+          "receivedAt": "2026-09-05T06:50:00.000Z",
+          "syncedAt": "2026-09-05T06:50:00.000Z"
+        }
+      },
+      {
+        "id": "p-emil",
+        "displayName": "Emil Demo",
+        "birthDate": "1936-07-08",
+        "mrn": "SH-260907-005",
+        "room": "203",
+        "wardId": "rehab-2",
+        "encounterId": "enc-emil-2026",
+        "allergyStatus": "explicit-negative",
+        "allergies": [],
+        "risks": ["Hörminderung", "Orientierung in neuer Umgebung"],
+        "diagnoses": ["Dekonditionierung nach abdominalem Eingriff"],
+        "careGoals": ["Hörhilfe selbst einsetzen", "Begleiteter Spaziergang"],
+        "medicationSummary": ["Medikationsabgleich abgeschlossen – nur lesbar"],
+        "carePreferences": ["Hörhilfe vor Pflegegesprächen einsetzen"],
+        "communicationPreferences": [
+          "Hörhilfe einsetzen und Verständnis rückfragen"
+        ],
+        "dailyRoutine": [
+          "Begleiteter Spaziergang am Vormittag",
+          "Orientierungskalender aktualisieren"
+        ],
+        "source": {
+          "provider": "carecoach",
+          "externalId": "CC-88029",
+          "version": 3,
+          "mappingVersion": "demo-r4-ch-core-6.0.0-v1",
+          "effectiveAt": "2026-09-05T06:55:00.000Z",
+          "recordedAt": "2026-09-05T06:55:00.000Z",
+          "receivedAt": "2026-09-05T06:55:00.000Z",
+          "syncedAt": "2026-09-05T06:55:00.000Z"
+        }
+      },
+      {
+        "id": "p-jonas",
+        "displayName": "Jonas Fiktiv",
+        "birthDate": "1960-02-14",
+        "mrn": "SH-260908-010",
+        "room": "202",
+        "wardId": "rehab-2",
+        "encounterId": "enc-jonas-2026",
+        "allergyStatus": "confirmed",
+        "allergies": ["Metamizol – Urtikaria"],
+        "risks": ["Orthostase", "Sturzrisiko"],
+        "diagnoses": ["Polytrauma, rehabilitative Mobilisation"],
+        "careGoals": [
+          "Treppentraining mit Physiotherapie",
+          "Schmerzadaptierte ADL"
+        ],
+        "medicationSummary": ["Analgesieplan im KIS – nur lesbar"],
+        "carePreferences": [
+          "Vor dem Aufstehen kurz im Sitzen orientieren lassen",
+          "Kleidung und Hilfsmittel in Griffnähe vorbereiten"
+        ],
+        "communicationPreferences": [
+          "Nächsten Schritt vor dem Transfer ankündigen",
+          "Schwindel und Schmerz mit eigenen Worten erfragen"
+        ],
+        "dailyRoutine": [
+          "ADL am Lavabo mit Sitzmöglichkeit",
+          "Therapietermine mit ausreichender Vorbereitungszeit"
+        ],
+        "source": {
+          "provider": "wicare",
+          "externalId": "WCD-L-10058",
+          "version": 6,
+          "mappingVersion": "demo-r4-ch-core-6.0.0-v1",
+          "effectiveAt": "2026-09-04T15:20:00.000Z",
+          "recordedAt": "2026-09-04T15:20:00.000Z",
+          "receivedAt": "2026-09-04T15:20:00.000Z",
+          "syncedAt": "2026-09-04T15:20:00.000Z"
+        }
+      },
+      {
+        "id": "p-eva",
+        "displayName": "Eva Muster",
+        "birthDate": "1946-12-01",
+        "mrn": "SH-260909-011",
+        "room": "204",
+        "wardId": "rehab-2",
+        "encounterId": "enc-eva-2026",
+        "allergyStatus": "explicit-negative",
+        "allergies": [],
+        "risks": ["Diabetes", "Hautintegrität"],
+        "diagnoses": ["Diabetisches Fusssyndrom, Nachsorge"],
+        "careGoals": [
+          "Druckentlastung einhalten",
+          "Hautveränderungen früh melden"
+        ],
+        "medicationSummary": [
+          "Insulinplan im KIS – Pflegehelfer ändert keine Dosis"
+        ],
+        "source": {
+          "provider": "carecoach",
+          "externalId": "CC-88035",
+          "version": 4,
+          "mappingVersion": "demo-r4-ch-core-6.0.0-v1",
+          "effectiveAt": "2026-09-04T17:10:00.000Z",
+          "recordedAt": "2026-09-04T17:10:00.000Z",
+          "receivedAt": "2026-09-04T17:10:00.000Z",
+          "syncedAt": "2026-09-04T17:10:00.000Z"
+        }
+      },
+      {
+        "id": "p-samir",
+        "displayName": "Samir Demo",
+        "birthDate": "1955-08-19",
+        "mrn": "SH-260910-012",
+        "room": "206",
+        "wardId": "rehab-2",
+        "encounterId": "enc-samir-2026",
+        "allergyStatus": "unknown",
+        "allergies": [],
+        "risks": ["Aspirationsrisiko", "Kommunikation mit Dolmetschhilfe"],
+        "diagnoses": ["Dysphagie nach Insult"],
+        "careGoals": [
+          "Sichere Kostform",
+          "Bedürfnisse mit Bildtafel ausdrücken"
+        ],
+        "medicationSummary": ["Medikation in WiCare – schreibgeschützt"],
+        "source": {
+          "provider": "wicare",
+          "externalId": "WCD-L-10061",
+          "version": 2,
+          "mappingVersion": "demo-r4-ch-core-6.0.0-v1",
+          "effectiveAt": "2026-09-03T13:40:00.000Z",
+          "recordedAt": "2026-09-03T13:40:00.000Z",
+          "receivedAt": "2026-09-03T13:40:00.000Z",
+          "syncedAt": "2026-09-03T13:40:00.000Z"
+        }
+      },
+      {
+        "id": "p-paul",
+        "displayName": "Paul Beispiel",
+        "birthDate": "1934-04-09",
+        "mrn": "SH-260911-013",
+        "room": "209",
+        "wardId": "rehab-2",
+        "encounterId": "enc-paul-2026-b",
+        "allergyStatus": "confirmed",
+        "allergies": ["Kontrastmittel – frühere Reaktion unklar"],
+        "risks": ["Delirrisiko", "Wiederaufnahme nach Sturz"],
+        "diagnoses": ["Beckenprellung nach Sturz", "Leichte kognitive Störung"],
+        "careGoals": [
+          "Tag-Nacht-Rhythmus stabilisieren",
+          "Sicherer Toilettengang"
+        ],
+        "medicationSummary": ["Wiederaufnahmemedikation in Abklärung"],
+        "source": {
+          "provider": "carecoach",
+          "externalId": "CC-88041",
+          "version": 8,
+          "mappingVersion": "demo-r4-ch-core-6.0.0-v1",
+          "effectiveAt": "2026-09-05T05:50:00.000Z",
+          "recordedAt": "2026-09-05T05:50:00.000Z",
+          "receivedAt": "2026-09-05T05:50:00.000Z",
+          "syncedAt": "2026-09-05T05:50:00.000Z"
+        }
+      },
+      {
+        "id": "p-aline",
+        "displayName": "Aline Fiktiv",
+        "birthDate": "1972-10-23",
+        "mrn": "SH-260912-014",
+        "room": "210",
+        "wardId": "rehab-2",
+        "encounterId": "enc-aline-2026",
+        "allergyStatus": "explicit-negative",
+        "allergies": [],
+        "risks": ["Fatigue", "Belastungsintoleranz"],
+        "diagnoses": ["Long-COVID-Rehabilitation"],
+        "careGoals": ["Aktivitäten dosieren", "Pausen selbstständig planen"],
+        "medicationSummary": ["Keine pflegerelevante Medikationsänderung"],
+        "source": {
+          "provider": "sap-vitals",
+          "externalId": "SAP-PAT-7892",
+          "version": 3,
+          "mappingVersion": "demo-r4-ch-core-6.0.0-v1",
+          "effectiveAt": "2026-09-02T10:15:00.000Z",
+          "recordedAt": "2026-09-02T10:15:00.000Z",
+          "receivedAt": "2026-09-02T10:15:00.000Z",
+          "syncedAt": "2026-09-02T10:15:00.000Z"
+        }
+      },
+      {
+        "id": "p-theo",
+        "displayName": "Theo Muster",
+        "birthDate": "1940-01-17",
+        "mrn": "SH-260913-015",
+        "room": "212",
+        "wardId": "rehab-2",
+        "encounterId": "enc-theo-2026",
+        "allergyStatus": "unknown",
+        "allergies": [],
+        "risks": ["Weglauftendenz", "Hörminderung"],
+        "diagnoses": ["Vaskuläre Demenz, rehabilitative Abklärung"],
+        "careGoals": ["Orientierungshilfen nutzen", "Begleitete Wege"],
+        "medicationSummary": ["Medikation im führenden KIS – nur lesbar"],
+        "source": {
+          "provider": "wicare",
+          "externalId": "WCD-L-10070",
+          "version": 5,
+          "mappingVersion": "demo-r4-ch-core-6.0.0-v1",
+          "effectiveAt": "2026-09-01T08:30:00.000Z",
+          "recordedAt": "2026-09-01T08:30:00.000Z",
+          "receivedAt": "2026-09-01T08:30:00.000Z",
+          "syncedAt": "2026-09-01T08:30:00.000Z"
+        }
+      },
+      {
+        "id": "p-mila",
+        "displayName": "Mila Demo",
+        "birthDate": "1981-07-11",
+        "mrn": "SH-260914-016",
+        "room": "215",
+        "wardId": "rehab-2",
+        "encounterId": "enc-mila-2026",
+        "allergyStatus": "confirmed",
+        "allergies": ["Latex"],
+        "risks": ["Rollstuhltransfer", "Druckstelle Sitzbein"],
+        "diagnoses": ["Querschnittlähmung, Hilfsmittelanpassung"],
+        "careGoals": [
+          "Selbstständiger Transfer",
+          "Druckentlastung dokumentieren"
+        ],
+        "medicationSummary": ["Medikation im KIS – schreibgeschützt"],
+        "source": {
+          "provider": "carecoach",
+          "externalId": "CC-88052",
+          "version": 7,
+          "mappingVersion": "demo-r4-ch-core-6.0.0-v1",
+          "effectiveAt": "2026-08-31T14:00:00.000Z",
+          "recordedAt": "2026-08-31T14:00:00.000Z",
+          "receivedAt": "2026-08-31T14:00:00.000Z",
+          "syncedAt": "2026-08-31T14:00:00.000Z"
+        }
+      },
+      {
+        "id": "p-noah",
+        "displayName": "Noah Fiktiv",
+        "birthDate": "1967-03-05",
+        "mrn": "SH-260915-017",
+        "room": "218",
+        "wardId": "rehab-2",
+        "encounterId": "enc-noah-2026",
+        "allergyStatus": "explicit-negative",
+        "allergies": [],
+        "risks": ["Krampfanfall", "Belastungsangst"],
+        "diagnoses": ["Zustand nach neurochirurgischem Eingriff"],
+        "careGoals": [
+          "Sicherer Stationsweg",
+          "Belastung schrittweise steigern"
+        ],
+        "medicationSummary": ["Antikonvulsiva im KIS – keine Änderung hier"],
+        "source": {
+          "provider": "sap-vitals",
+          "externalId": "SAP-PAT-7904",
+          "version": 4,
+          "mappingVersion": "demo-r4-ch-core-6.0.0-v1",
+          "effectiveAt": "2026-08-30T16:45:00.000Z",
+          "recordedAt": "2026-08-30T16:45:00.000Z",
+          "receivedAt": "2026-08-30T16:45:00.000Z",
+          "syncedAt": "2026-08-30T16:45:00.000Z"
+        }
+      }
+    ],
+    "tasks": [
+      {
+        "id": "t-bp-anna",
+        "patientId": "p-anna",
+        "encounterId": "enc-anna-2026",
+        "title": "Blutdruck kontrollieren",
+        "reason": "Erhöhter Morgenwert 168/96 mmHg",
+        "requesterId": "u-nurse",
+        "ownerRole": "care-assistant",
+        "ownerId": null,
+        "priority": "elevated",
+        "dueAt": "2026-09-05T08:45:00.000Z",
+        "state": "new",
+        "acknowledgementRequired": true,
+        "acknowledgedAt": null,
+        "dependencies": [],
+        "comments": [],
+        "completionEvidence": null,
+        "escalation": "Nach 30 Minuten an Pflegefachperson",
+        "source": {
+          "provider": "pflegehelfer",
+          "externalId": "Task/t-bp-anna",
+          "version": 1,
+          "mappingVersion": "demo-r4-ch-core-6.0.0-v1",
+          "effectiveAt": "2026-09-05T08:00:00.000Z",
+          "recordedAt": "2026-09-05T08:00:00.000Z",
+          "receivedAt": "2026-09-05T08:00:00.000Z",
+          "syncedAt": "2026-09-05T08:00:00.000Z"
+        }
+      },
+      {
+        "id": "t-mobilise-luca",
+        "patientId": "p-luca",
+        "encounterId": "enc-luca-2026",
+        "title": "Mobilisation mit Rollator",
+        "reason": "Rehabilitationsziel",
+        "requesterId": "u-physio",
+        "ownerRole": "care-assistant",
+        "ownerId": "u-assistant",
+        "priority": "routine",
+        "dueAt": "2026-09-05T10:30:00.000Z",
+        "state": "accepted",
+        "acknowledgementRequired": false,
+        "acknowledgedAt": "2026-09-05T07:42:00.000Z",
+        "dependencies": [],
+        "comments": [
+          "Bei Schwindel pausieren und Pflegefachperson informieren."
+        ],
+        "completionEvidence": null,
+        "escalation": "Bei Nichtdurchführung Grund dokumentieren",
+        "source": {
+          "provider": "pflegehelfer",
+          "externalId": "Task/t-mobilise-luca",
+          "version": 1,
+          "mappingVersion": "demo-r4-ch-core-6.0.0-v1",
+          "effectiveAt": "2026-09-05T08:00:00.000Z",
+          "recordedAt": "2026-09-05T08:00:00.000Z",
+          "receivedAt": "2026-09-05T08:00:00.000Z",
+          "syncedAt": "2026-09-05T08:00:00.000Z"
+        }
+      },
+      {
+        "id": "t-transport-luca",
+        "patientId": "p-luca",
+        "encounterId": "enc-luca-2026",
+        "title": "Transport zur Radiologie",
+        "reason": "Kontrollaufnahme",
+        "requesterId": "u-physician",
+        "ownerRole": "transport",
+        "ownerId": null,
+        "priority": "routine",
+        "dueAt": "2026-09-05T11:20:00.000Z",
+        "state": "new",
+        "acknowledgementRequired": true,
+        "acknowledgedAt": null,
+        "dependencies": [],
+        "comments": [],
+        "completionEvidence": null,
+        "escalation": "Transportkoordination informieren",
+        "source": {
+          "provider": "pflegehelfer",
+          "externalId": "Task/t-transport-luca",
+          "version": 1,
+          "mappingVersion": "demo-r4-ch-core-6.0.0-v1",
+          "effectiveAt": "2026-09-05T08:00:00.000Z",
+          "recordedAt": "2026-09-05T08:00:00.000Z",
+          "receivedAt": "2026-09-05T08:00:00.000Z",
+          "syncedAt": "2026-09-05T08:00:00.000Z"
+        }
+      },
+      {
+        "id": "t-service-214",
+        "patientId": null,
+        "encounterId": null,
+        "title": "Defekte Leselampe Zimmer 214",
+        "reason": "Patientenkomfort",
+        "requesterId": "u-assistant",
+        "ownerRole": "service",
+        "ownerId": null,
+        "priority": "routine",
+        "dueAt": "2026-09-05T14:00:00.000Z",
+        "state": "new",
+        "acknowledgementRequired": true,
+        "acknowledgedAt": null,
+        "dependencies": [],
+        "comments": ["Kein klinischer Kontext erforderlich."],
+        "completionEvidence": null,
+        "escalation": "Facility-Leitung",
+        "source": {
+          "provider": "pflegehelfer",
+          "externalId": "Task/t-service-214",
+          "version": 1,
+          "mappingVersion": "demo-r4-ch-core-6.0.0-v1",
+          "effectiveAt": "2026-09-05T08:00:00.000Z",
+          "recordedAt": "2026-09-05T08:00:00.000Z",
+          "receivedAt": "2026-09-05T08:00:00.000Z",
+          "syncedAt": "2026-09-05T08:00:00.000Z"
+        }
+      },
+      {
+        "id": "t-intake-anna-med",
+        "patientId": "p-anna",
+        "encounterId": "enc-anna-2026",
+        "title": "Eintritt: Medikationsdiskrepanz klären",
+        "reason": "Import aus WiCare und Austrittsbericht ist widersprüchlich",
+        "requesterId": "system-import",
+        "ownerRole": "pharmacy",
+        "ownerId": null,
+        "priority": "elevated",
+        "dueAt": "2026-09-05T10:00:00.000Z",
+        "state": "new",
+        "acknowledgementRequired": true,
+        "acknowledgedAt": null,
+        "dependencies": [],
+        "comments": ["Keine Medikamentenänderung in Pflegehelfer."],
+        "completionEvidence": null,
+        "escalation": "Bei Unklarheit an ärztlichen Dienst und Pflegefachperson",
+        "source": {
+          "provider": "pflegehelfer",
+          "externalId": "Task/t-intake-anna-med",
+          "version": 1,
+          "mappingVersion": "demo-r4-ch-core-6.0.0-v1",
+          "effectiveAt": "2026-09-05T08:00:00.000Z",
+          "recordedAt": "2026-09-05T08:00:00.000Z",
+          "receivedAt": "2026-09-05T08:00:00.000Z",
+          "syncedAt": "2026-09-05T08:00:00.000Z"
+        }
+      },
+      {
+        "id": "t-intake-luca-consent",
+        "patientId": "p-luca",
+        "encounterId": "enc-luca-2026",
+        "title": "Eintritt: Einwilligungsdokument nachfordern",
+        "reason": "Import meldet fehlendes unterschriebenes Dokument",
+        "requesterId": "system-import",
+        "ownerRole": "administration",
+        "ownerId": null,
+        "priority": "routine",
+        "dueAt": "2026-09-05T14:00:00.000Z",
+        "state": "new",
+        "acknowledgementRequired": true,
+        "acknowledgedAt": null,
+        "dependencies": [],
+        "comments": [],
+        "completionEvidence": null,
+        "escalation": "Stationsadministration informieren",
+        "source": {
+          "provider": "pflegehelfer",
+          "externalId": "Task/t-intake-luca-consent",
+          "version": 1,
+          "mappingVersion": "demo-r4-ch-core-6.0.0-v1",
+          "effectiveAt": "2026-09-05T08:00:00.000Z",
+          "recordedAt": "2026-09-05T08:00:00.000Z",
+          "receivedAt": "2026-09-05T08:00:00.000Z",
+          "syncedAt": "2026-09-05T08:00:00.000Z"
+        }
+      }
+    ],
+    "observations": [
+      {
+        "id": "o-bp-anna-1",
+        "patientId": "p-anna",
+        "encounterId": "enc-anna-2026",
+        "code": "blood-pressure",
+        "label": "Blutdruck",
+        "value": 168,
+        "secondaryValue": 96,
+        "unit": "mmHg",
+        "effectiveAt": "2026-09-05T06:55:00.000Z",
+        "performerId": "device-bp-4",
+        "deviceId": "device-bp-4",
+        "status": "synced",
+        "version": 2,
+        "basedOnVersion": 1,
+        "approvalPolicy": "standard",
+        "approvals": ["device-gateway"],
+        "approvedAt": "2026-09-05T06:55:00.000Z",
+        "source": {
+          "provider": "device-gateway",
+          "externalId": "OBS-20260905-331",
+          "version": 2,
+          "mappingVersion": "demo-r4-ch-core-6.0.0-v1",
+          "effectiveAt": "2026-09-05T06:55:00.000Z",
+          "recordedAt": "2026-09-05T06:55:00.000Z",
+          "receivedAt": "2026-09-05T06:55:00.000Z",
+          "syncedAt": "2026-09-05T06:55:00.000Z"
+        }
+      },
+      {
+        "id": "o-temp-luca-1",
+        "patientId": "p-luca",
+        "encounterId": "enc-luca-2026",
+        "code": "temperature",
+        "label": "Temperatur",
+        "value": 37.4,
+        "secondaryValue": null,
+        "unit": "°C",
+        "effectiveAt": "2026-09-05T06:40:00.000Z",
+        "performerId": "u-nurse",
+        "deviceId": null,
+        "status": "synced",
+        "version": 1,
+        "basedOnVersion": 0,
+        "approvalPolicy": "standard",
+        "approvals": ["u-nurse"],
+        "approvedAt": "2026-09-05T06:40:00.000Z",
+        "source": {
+          "provider": "carecoach",
+          "externalId": "CC-VITAL-411",
+          "version": 1,
+          "mappingVersion": "demo-r4-ch-core-6.0.0-v1",
+          "effectiveAt": "2026-09-05T06:40:00.000Z",
+          "recordedAt": "2026-09-05T06:40:00.000Z",
+          "receivedAt": "2026-09-05T06:40:00.000Z",
+          "syncedAt": "2026-09-05T06:40:00.000Z"
+        }
+      },
+      {
+        "id": "o-spo2-mei-1",
+        "patientId": "p-mei",
+        "encounterId": "enc-mei-2026",
+        "code": "oxygen-saturation",
+        "label": "Sauerstoffsättigung",
+        "value": 94,
+        "secondaryValue": null,
+        "unit": "%",
+        "effectiveAt": "2026-09-05T07:05:00.000Z",
+        "performerId": "device-spo2-2",
+        "deviceId": "device-spo2-2",
+        "status": "synced",
+        "version": 3,
+        "basedOnVersion": 2,
+        "approvalPolicy": "standard",
+        "approvals": ["device-gateway"],
+        "approvedAt": "2026-09-05T07:05:00.000Z",
+        "source": {
+          "provider": "sap-vitals",
+          "externalId": "SAP-VITAL-992",
+          "version": 3,
+          "mappingVersion": "demo-r4-ch-core-6.0.0-v1",
+          "effectiveAt": "2026-09-05T07:05:00.000Z",
+          "recordedAt": "2026-09-05T07:05:00.000Z",
+          "receivedAt": "2026-09-05T07:05:00.000Z",
+          "syncedAt": "2026-09-05T07:05:00.000Z"
+        }
+      },
+      {
+        "id": "o-bp-jonas-1",
+        "patientId": "p-jonas",
+        "encounterId": "enc-jonas-2026",
+        "code": "blood-pressure",
+        "label": "Blutdruck",
+        "value": 132,
+        "secondaryValue": 78,
+        "unit": "mmHg",
+        "effectiveAt": "2026-09-04T07:15:00.000Z",
+        "performerId": "u-nurse",
+        "deviceId": "device-bp-2",
+        "status": "synced",
+        "version": 1,
+        "basedOnVersion": 0,
+        "approvalPolicy": "standard",
+        "approvals": ["u-nurse"],
+        "approvedAt": "2026-09-04T07:15:00.000Z",
+        "source": {
+          "provider": "wicare",
+          "externalId": "OBS-JONAS-19",
+          "version": 1,
+          "mappingVersion": "demo-r4-ch-core-6.0.0-v1",
+          "effectiveAt": "2026-09-04T07:15:00.000Z",
+          "recordedAt": "2026-09-04T07:15:00.000Z",
+          "receivedAt": "2026-09-04T07:15:00.000Z",
+          "syncedAt": "2026-09-04T07:15:00.000Z"
+        }
+      },
+      {
+        "id": "o-weight-eva-1",
+        "patientId": "p-eva",
+        "encounterId": "enc-eva-2026",
+        "code": "weight",
+        "label": "Gewicht",
+        "value": 67.8,
+        "secondaryValue": null,
+        "unit": "kg",
+        "effectiveAt": "2026-09-02T06:50:00.000Z",
+        "performerId": "u-nurse",
+        "deviceId": "device-scale-1",
+        "status": "synced",
+        "version": 2,
+        "basedOnVersion": 1,
+        "approvalPolicy": "standard",
+        "approvals": ["u-nurse"],
+        "approvedAt": "2026-09-02T06:50:00.000Z",
+        "source": {
+          "provider": "carecoach",
+          "externalId": "OBS-EVA-28",
+          "version": 2,
+          "mappingVersion": "demo-r4-ch-core-6.0.0-v1",
+          "effectiveAt": "2026-09-02T06:50:00.000Z",
+          "recordedAt": "2026-09-02T06:50:00.000Z",
+          "receivedAt": "2026-09-02T06:50:00.000Z",
+          "syncedAt": "2026-09-02T06:50:00.000Z"
+        }
+      },
+      {
+        "id": "o-pulse-aline-1",
+        "patientId": "p-aline",
+        "encounterId": "enc-aline-2026",
+        "code": "pulse",
+        "label": "Puls",
+        "value": 92,
+        "secondaryValue": null,
+        "unit": "/min",
+        "effectiveAt": "2026-09-01T09:40:00.000Z",
+        "performerId": "u-nurse",
+        "deviceId": null,
+        "status": "synced",
+        "version": 1,
+        "basedOnVersion": 0,
+        "approvalPolicy": "standard",
+        "approvals": ["u-nurse"],
+        "approvedAt": "2026-09-01T09:40:00.000Z",
+        "source": {
+          "provider": "sap-vitals",
+          "externalId": "OBS-ALINE-12",
+          "version": 1,
+          "mappingVersion": "demo-r4-ch-core-6.0.0-v1",
+          "effectiveAt": "2026-09-01T09:40:00.000Z",
+          "recordedAt": "2026-09-01T09:40:00.000Z",
+          "receivedAt": "2026-09-01T09:40:00.000Z",
+          "syncedAt": "2026-09-01T09:40:00.000Z"
+        }
+      },
+      {
+        "id": "o-spo2-noah-1",
+        "patientId": "p-noah",
+        "encounterId": "enc-noah-2026",
+        "code": "oxygen-saturation",
+        "label": "Sauerstoffsättigung",
+        "value": 97,
+        "secondaryValue": null,
+        "unit": "%",
+        "effectiveAt": "2026-08-30T17:10:00.000Z",
+        "performerId": "device-spo2-3",
+        "deviceId": "device-spo2-3",
+        "status": "synced",
+        "version": 1,
+        "basedOnVersion": 0,
+        "approvalPolicy": "standard",
+        "approvals": ["device-gateway"],
+        "approvedAt": "2026-08-30T17:10:00.000Z",
+        "source": {
+          "provider": "sap-vitals",
+          "externalId": "OBS-NOAH-7",
+          "version": 1,
+          "mappingVersion": "demo-r4-ch-core-6.0.0-v1",
+          "effectiveAt": "2026-08-30T17:10:00.000Z",
+          "recordedAt": "2026-08-30T17:10:00.000Z",
+          "receivedAt": "2026-08-30T17:10:00.000Z",
+          "syncedAt": "2026-08-30T17:10:00.000Z"
+        }
+      }
+    ],
+    "notes": [
+      {
+        "id": "n-anna-evening-transfer",
+        "patientId": "p-anna",
+        "encounterId": "enc-anna-2026",
+        "transcript": null,
+        "structuredText": "Beim Transfer am Abend Schwindel angegeben. Im Sitzen abgewartet; zuständige Pflegefachperson informiert und ärztliche Rückfrage eröffnet.",
+        "criticalEntities": ["Schwindel", "Transfer"],
+        "authorId": "u-nurse-evening",
+        "status": "synced",
+        "version": 1,
+        "basedOnVersion": 0,
+        "approvalPolicy": "standard",
+        "approvals": ["u-nurse-evening"],
+        "approvedAt": "2026-09-05T07:20:00.000Z",
+        "provider": "wicare",
+        "source": {
+          "provider": "wicare",
+          "externalId": "NOTE-ANNA-51",
+          "version": 1,
+          "mappingVersion": "demo-r4-ch-core-6.0.0-v1",
+          "effectiveAt": "2026-09-05T07:20:00.000Z",
+          "recordedAt": "2026-09-05T07:20:00.000Z",
+          "receivedAt": "2026-09-05T07:20:00.000Z",
+          "syncedAt": "2026-09-05T07:20:00.000Z"
+        }
+      },
+      {
+        "id": "n-luca-morning-care",
+        "patientId": "p-luca",
+        "encounterId": "enc-luca-2026",
+        "transcript": null,
+        "structuredText": "Körperpflege am Lavabo mit Vorbereitung durchgeführt. Luca übernahm Gesicht und Oberkörper selbst; für den sicheren Stand war Begleitung nötig.",
+        "criticalEntities": [],
+        "authorId": "u-assistant",
+        "status": "synced",
+        "version": 1,
+        "basedOnVersion": 0,
+        "approvalPolicy": "standard",
+        "approvals": ["u-assistant"],
+        "approvedAt": "2026-09-05T07:10:00.000Z",
+        "provider": "carecoach",
+        "source": {
+          "provider": "carecoach",
+          "externalId": "NOTE-LUCA-33",
+          "version": 1,
+          "mappingVersion": "demo-r4-ch-core-6.0.0-v1",
+          "effectiveAt": "2026-09-05T07:10:00.000Z",
+          "recordedAt": "2026-09-05T07:10:00.000Z",
+          "receivedAt": "2026-09-05T07:10:00.000Z",
+          "syncedAt": "2026-09-05T07:10:00.000Z"
+        }
+      },
+      {
+        "id": "n-ruth-evening-mobility",
+        "patientId": "p-ruth",
+        "encounterId": "enc-ruth-2026",
+        "transcript": null,
+        "structuredText": "Abendlicher Weg ins Bad am Rollator begleitet. Belastungsschmerz am rechten Knie angegeben; keine weitere Strecke durchgeführt.",
+        "criticalEntities": ["Belastungsschmerz", "rechtes Knie"],
+        "authorId": "u-nurse-evening",
+        "status": "synced",
+        "version": 1,
+        "basedOnVersion": 0,
+        "approvalPolicy": "standard",
+        "approvals": ["u-nurse-evening"],
+        "approvedAt": "2026-09-05T06:50:00.000Z",
+        "provider": "carecoach",
+        "source": {
+          "provider": "carecoach",
+          "externalId": "NOTE-RUTH-12",
+          "version": 1,
+          "mappingVersion": "demo-r4-ch-core-6.0.0-v1",
+          "effectiveAt": "2026-09-05T06:50:00.000Z",
+          "recordedAt": "2026-09-05T06:50:00.000Z",
+          "receivedAt": "2026-09-05T06:50:00.000Z",
+          "syncedAt": "2026-09-05T06:50:00.000Z"
+        }
+      },
+      {
+        "id": "n-peter-evening-skin",
+        "patientId": "p-peter",
+        "encounterId": "enc-peter-2026",
+        "transcript": null,
+        "structuredText": "Beim Auskleiden beidseits sichtbare Unterschenkelödeme dokumentiert. Haut ohne neue offene Stelle; Gewichtskontrolle am Morgen bleibt geplant.",
+        "criticalEntities": ["Unterschenkelödeme"],
+        "authorId": "u-nurse-evening",
+        "status": "synced",
+        "version": 1,
+        "basedOnVersion": 0,
+        "approvalPolicy": "standard",
+        "approvals": ["u-nurse-evening"],
+        "approvedAt": "2026-09-05T06:35:00.000Z",
+        "provider": "wicare",
+        "source": {
+          "provider": "wicare",
+          "externalId": "NOTE-PETER-29",
+          "version": 1,
+          "mappingVersion": "demo-r4-ch-core-6.0.0-v1",
+          "effectiveAt": "2026-09-05T06:35:00.000Z",
+          "recordedAt": "2026-09-05T06:35:00.000Z",
+          "receivedAt": "2026-09-05T06:35:00.000Z",
+          "syncedAt": "2026-09-05T06:35:00.000Z"
+        }
+      },
+      {
+        "id": "n-sofia-evening-transfer",
+        "patientId": "p-sofia",
+        "encounterId": "enc-sofia-2026",
+        "transcript": null,
+        "structuredText": "Transfer Bett–Rollstuhl mit zwei Mitarbeitenden nach Plan durchgeführt. Linker Arm wurde während des Transfers geführt.",
+        "criticalEntities": ["Transfer mit zwei Mitarbeitenden"],
+        "authorId": "u-nurse-evening",
+        "status": "synced",
+        "version": 1,
+        "basedOnVersion": 0,
+        "approvalPolicy": "standard",
+        "approvals": ["u-nurse-evening"],
+        "approvedAt": "2026-09-05T06:25:00.000Z",
+        "provider": "sap-vitals",
+        "source": {
+          "provider": "sap-vitals",
+          "externalId": "NOTE-SOFIA-21",
+          "version": 1,
+          "mappingVersion": "demo-r4-ch-core-6.0.0-v1",
+          "effectiveAt": "2026-09-05T06:25:00.000Z",
+          "recordedAt": "2026-09-05T06:25:00.000Z",
+          "receivedAt": "2026-09-05T06:25:00.000Z",
+          "syncedAt": "2026-09-05T06:25:00.000Z"
+        }
+      },
+      {
+        "id": "n-emil-evening-orientation",
+        "patientId": "p-emil",
+        "encounterId": "enc-emil-2026",
+        "transcript": null,
+        "structuredText": "Hörhilfe vor dem Abendgespräch eingesetzt. Mit Orientierungskalender fand Emil anschliessend selbstständig Datum und nächsten Termin.",
+        "criticalEntities": [],
+        "authorId": "u-assistant",
+        "status": "synced",
+        "version": 1,
+        "basedOnVersion": 0,
+        "approvalPolicy": "standard",
+        "approvals": ["u-assistant"],
+        "approvedAt": "2026-09-05T06:15:00.000Z",
+        "provider": "carecoach",
+        "source": {
+          "provider": "carecoach",
+          "externalId": "NOTE-EMIL-18",
+          "version": 1,
+          "mappingVersion": "demo-r4-ch-core-6.0.0-v1",
+          "effectiveAt": "2026-09-05T06:15:00.000Z",
+          "recordedAt": "2026-09-05T06:15:00.000Z",
+          "receivedAt": "2026-09-05T06:15:00.000Z",
+          "syncedAt": "2026-09-05T06:15:00.000Z"
+        }
+      },
+      {
+        "id": "n-jonas-mobility",
+        "patientId": "p-jonas",
+        "encounterId": "enc-jonas-2026",
+        "transcript": null,
+        "structuredText": "Treppentraining mit Physiotherapie durchgeführt; nach sechs Stufen kurze Pause, danach sicher zurück ins Zimmer.",
+        "criticalEntities": [],
+        "authorId": "u-physio",
+        "status": "synced",
+        "version": 2,
+        "basedOnVersion": 1,
+        "approvalPolicy": "standard",
+        "approvals": ["u-physio"],
+        "approvedAt": "2026-09-04T10:20:00.000Z",
+        "provider": "wicare",
+        "source": {
+          "provider": "wicare",
+          "externalId": "NOTE-JONAS-44",
+          "version": 2,
+          "mappingVersion": "demo-r4-ch-core-6.0.0-v1",
+          "effectiveAt": "2026-09-04T10:20:00.000Z",
+          "recordedAt": "2026-09-04T10:20:00.000Z",
+          "receivedAt": "2026-09-04T10:20:00.000Z",
+          "syncedAt": "2026-09-04T10:20:00.000Z"
+        }
+      },
+      {
+        "id": "n-samir-meal",
+        "patientId": "p-samir",
+        "encounterId": "enc-samir-2026",
+        "transcript": null,
+        "structuredText": "Mittagessen in freigegebener Konsistenz begleitet; langsam gegessen, kein Husten beobachtet.",
+        "criticalEntities": [],
+        "authorId": "u-nurse",
+        "status": "synced",
+        "version": 1,
+        "basedOnVersion": 0,
+        "approvalPolicy": "standard",
+        "approvals": ["u-nurse"],
+        "approvedAt": "2026-09-03T12:35:00.000Z",
+        "provider": "wicare",
+        "source": {
+          "provider": "wicare",
+          "externalId": "NOTE-SAMIR-17",
+          "version": 1,
+          "mappingVersion": "demo-r4-ch-core-6.0.0-v1",
+          "effectiveAt": "2026-09-03T12:35:00.000Z",
+          "recordedAt": "2026-09-03T12:35:00.000Z",
+          "receivedAt": "2026-09-03T12:35:00.000Z",
+          "syncedAt": "2026-09-03T12:35:00.000Z"
+        }
+      },
+      {
+        "id": "n-paul-readmission",
+        "patientId": "p-paul",
+        "encounterId": "enc-paul-2026-b",
+        "transcript": null,
+        "structuredText": "Wiederaufnahme: frühere Dokumentation gehört zum abgeschlossenen Aufenthalt; neue Sturzabklärung offen.",
+        "criticalEntities": ["enc-paul-2026-b"],
+        "authorId": "u-nurse",
+        "status": "synced",
+        "version": 1,
+        "basedOnVersion": 0,
+        "approvalPolicy": "standard",
+        "approvals": ["u-nurse"],
+        "approvedAt": "2026-09-05T06:10:00.000Z",
+        "provider": "carecoach",
+        "source": {
+          "provider": "carecoach",
+          "externalId": "NOTE-PAUL-RE-1",
+          "version": 1,
+          "mappingVersion": "demo-r4-ch-core-6.0.0-v1",
+          "effectiveAt": "2026-09-05T06:10:00.000Z",
+          "recordedAt": "2026-09-05T06:10:00.000Z",
+          "receivedAt": "2026-09-05T06:10:00.000Z",
+          "syncedAt": "2026-09-05T06:10:00.000Z"
+        }
+      }
+    ],
+    "communications": [
+      {
+        "id": "c-dizziness-anna",
+        "patientId": "p-anna",
+        "encounterId": "enc-anna-2026",
+        "request": "Bitte Medikation und Orthostasewerte beurteilen.",
+        "reason": "Neuer Schwindel bei Mobilisation.",
+        "senderId": "u-nurse",
+        "recipientRole": "physician",
+        "recipientId": "u-physician",
+        "escalationRecipientRole": null,
+        "escalatedAt": null,
+        "priority": "elevated",
+        "dueAt": "2026-09-05T09:30:00.000Z",
+        "state": "sent",
+        "acknowledgedBy": null,
+        "answeredBy": null,
+        "response": null,
+        "resultingTaskId": null,
+        "source": {
+          "provider": "pflegehelfer",
+          "externalId": "Communication/c-dizziness-anna",
+          "version": 1,
+          "mappingVersion": "demo-r4-ch-core-6.0.0-v1",
+          "effectiveAt": "2026-09-05T07:25:00.000Z",
+          "recordedAt": "2026-09-05T07:25:00.000Z",
+          "receivedAt": "2026-09-05T07:25:00.000Z",
+          "syncedAt": "2026-09-05T07:25:00.000Z"
+        }
+      }
+    ],
+    "intake": [
+      {
+        "id": "i-anna-id",
+        "patientId": "p-anna",
+        "label": "Identität und Aufenthalt",
+        "state": "complete",
+        "detail": "Zwei Identifikatoren und Encounter abgeglichen.",
+        "ownerRole": "administration",
+        "sourceLabels": ["SAP ADT", "WiCare"],
+        "taskId": null
+      },
+      {
+        "id": "i-anna-med",
+        "patientId": "p-anna",
+        "label": "Medikationsabgleich",
+        "state": "discrepancy",
+        "detail": "Torasemid 5 mg in WiCare, 10 mg im Austrittsbericht. Keine automatische Zusammenführung.",
+        "ownerRole": "pharmacy",
+        "sourceLabels": [
+          "WiCare 05.09. 06:45",
+          "Austrittsbericht 04.09. 15:10"
+        ],
+        "taskId": "t-intake-anna-med"
+      },
+      {
+        "id": "i-luca-consent",
+        "patientId": "p-luca",
+        "label": "Einwilligungsdokument",
+        "state": "missing",
+        "detail": "Unterschriebenes Dokument fehlt.",
+        "ownerRole": "administration",
+        "sourceLabels": ["careCoach Dokumente"],
+        "taskId": "t-intake-luca-consent"
+      }
+    ],
+    "roundActions": [],
+    "providerHealth": [
+      {
+        "provider": "wicare",
+        "status": "available",
+        "latencyMs": 45,
+        "checkedAt": "2026-09-05T08:00:00.000Z",
+        "message": "Simulator verfügbar"
+      },
+      {
+        "provider": "carecoach",
+        "status": "available",
+        "latencyMs": 45,
+        "checkedAt": "2026-09-05T08:00:00.000Z",
+        "message": "Simulator verfügbar"
+      },
+      {
+        "provider": "sap-vitals",
+        "status": "available",
+        "latencyMs": 45,
+        "checkedAt": "2026-09-05T08:00:00.000Z",
+        "message": "Simulator verfügbar"
+      },
+      {
+        "provider": "device-gateway",
+        "status": "available",
+        "latencyMs": 45,
+        "checkedAt": "2026-09-05T08:00:00.000Z",
+        "message": "Simulator verfügbar"
+      },
+      {
+        "provider": "nurse-call",
+        "status": "available",
+        "latencyMs": 12,
+        "checkedAt": "2026-09-05T08:00:00.000Z",
+        "message": "Simulator verfügbar"
+      }
+    ],
+    "outbox": []
+  },
+  "workspace": {
+    "comments": [
+      {
+        "id": "10000000-0000-4000-8000-000000000001",
+        "patientId": null,
+        "authorId": "u-nurse",
+        "body": "Frühdienst ist vollständig besetzt. Bitte zuerst die patientenweise Übergabe prüfen; melde Unterbrechungen direkt im laufenden Arbeitstag.",
+        "audience": {
+          "kind": "direct",
+          "memberIds": ["u-nurse", "u-assistant"]
+        },
+        "recipientIds": ["u-assistant"],
+        "recipientRoleIds": [],
+        "topicIds": [],
+        "parentId": null,
+        "createdAt": "2026-09-05T07:35:00.000Z",
+        "unread": true
+      },
+      {
+        "id": "10000000-0000-4000-8000-000000000002",
+        "patientId": "p-anna",
+        "authorId": "u-physio",
+        "body": "@Lea: Bitte Anna vor der Therapie um 09:15 am Rollator mobilisieren. Bei erneutem Schwindel pausieren und Nora informieren.",
+        "audience": {
+          "kind": "patient-team",
+          "memberIds": ["u-assistant", "u-nurse", "u-nurse-evening", "u-physio"]
+        },
+        "recipientIds": ["u-assistant", "u-nurse"],
+        "recipientRoleIds": ["care-assistant", "registered-nurse"],
+        "topicIds": ["mobilitaet"],
+        "parentId": null,
+        "createdAt": "2026-09-05T07:38:00.000Z",
+        "unread": true
+      }
+    ],
+    "commentReads": [],
+    "attachments": [
+      {
+        "record": {
+          "id": "20000000-0000-4000-8000-000000000001",
+          "patientId": null,
+          "uploadedBy": "u-assistant",
+          "fileName": "Fruehdienst-Checkliste-SYNTHETISCHE-DEMO.txt",
+          "mediaType": "text/plain",
+          "size": 245,
+          "sha256": "f956b876f1636a662471702d2d2973a0b34fd4c33e5c5bb97064500be19346c3",
+          "audience": { "kind": "private", "memberIds": ["u-assistant"] },
+          "topicIds": [],
+          "state": "available",
+          "createdAt": "2026-09-05T07:30:00.000Z",
+          "withdrawnAt": null
+        },
+        "contentBase64": "U1lOVEhFVElTQ0hFIERFTU8g4oCUIGtlaW5lIGVjaHRlbiBQYXRpZW50ZW5kYXRlbgpGcsO8aGRpZW5zdDogw5xiZXJnYWJlIHZvbGxzdMOkbmRpZyB1bmQgcGF0aWVudGVud2Vpc2UgcHLDvGZlbi4KQmVpIEFid2VpY2h1bmdlbiBvZGVyIFVudGVyYnJlY2h1bmdlbiB6dXN0w6RuZGlnZSBQZmxlZ2VmYWNocGVyc29uIGluZm9ybWllcmVuLgpOdXIgdGF0c8OkY2hsaWNoIGF1c2dlZsO8aHJ0ZSBBcmJlaXQgZG9rdW1lbnRpZXJlbi4="
+      },
+      {
+        "record": {
+          "id": "20000000-0000-4000-8000-000000000002",
+          "patientId": null,
+          "uploadedBy": "u-assistant",
+          "fileName": "Mobilisation-Kurzstandard-SYNTHETISCHE-DEMO.txt",
+          "mediaType": "text/plain",
+          "size": 265,
+          "sha256": "afe59f241e8cd00072388db62a6b11a27af02377828322f9cf38d87dc4e2c14f",
+          "audience": {
+            "kind": "private",
+            "memberIds": ["u-assistant"]
+          },
+          "topicIds": ["mobilitaet"],
+          "state": "available",
+          "inspection": {
+            "state": "available",
+            "engine": "plain-text",
+            "engineVersion": "utf-8",
+            "extractedText": "SYNTHETISCHE DEMO — keine echten Patientendaten\nMobilisation: Vor Beginn Tagesform erfragen. Hilfsmittel und Bremsen prüfen. Bei Schwindel stoppen, sichern und zuständige Pflegefachperson informieren. Nur tatsächlich ausgeführte Unterstützung dokumentieren.\n",
+            "extractedTextSha256": "afe59f241e8cd00072388db62a6b11a27af02377828322f9cf38d87dc4e2c14f",
+            "pageCount": null,
+            "inspectedAt": "2026-09-05T07:31:00.000Z",
+            "message": "Lokaler UTF-8-Text wurde extrahiert; Inhalt bleibt ungeprüft."
+          },
+          "createdAt": "2026-09-05T07:31:00.000Z",
+          "withdrawnAt": null
+        },
+        "contentBase64": "U1lOVEhFVElTQ0hFIERFTU8g4oCUIGtlaW5lIGVjaHRlbiBQYXRpZW50ZW5kYXRlbgpNb2JpbGlzYXRpb246IFZvciBCZWdpbm4gVGFnZXNmb3JtIGVyZnJhZ2VuLiBIaWxmc21pdHRlbCB1bmQgQnJlbXNlbiBwcsO8ZmVuLiBCZWkgU2Nod2luZGVsIHN0b3BwZW4sIHNpY2hlcm4gdW5kIHp1c3TDpG5kaWdlIFBmbGVnZWZhY2hwZXJzb24gaW5mb3JtaWVyZW4uIE51ciB0YXRzw6RjaGxpY2ggYXVzZ2Vmw7xocnRlIFVudGVyc3TDvHR6dW5nIGRva3VtZW50aWVyZW4uCg=="
+      }
+    ],
+    "projects": [
+      {
+        "id": "30000000-0000-4000-8000-000000000001",
+        "title": "Morgenmobilisation koordinieren",
+        "purpose": "Synthetische Demo für die abgestimmte Vorbereitung der morgendlichen Mobilisation im Reha-Team.",
+        "ownerId": "u-assistant",
+        "memberIds": ["u-assistant", "u-nurse", "u-physio"],
+        "status": "active",
+        "links": [{ "kind": "task", "id": "t-mobilise-luca" }],
+        "version": 1,
+        "createdAt": "2026-09-05T07:25:00.000Z",
+        "updatedAt": "2026-09-05T07:25:00.000Z"
+      }
+    ],
+    "profileFields": [],
+    "profileProposals": []
+  },
+  "predefinedEvents": [
+    {
+      "id": "call-luca",
+      "label": "Ruf von Luca während Annas Versorgung",
+      "kind": "nurse-call",
+      "patientId": "p-luca"
+    }
+  ]
+}

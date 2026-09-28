@@ -1,0 +1,3 @@
+# Backup and restore
+
+The integrated showcase persists fictional FHIR resources and an integrity-checked workflow checkpoint in Medplum/PostgreSQL. `pnpm verify:ops` proves the backup artifact/checksum/isolated-restore mechanism only for synthetic state; it is not production restore evidence. Production must back up PostgreSQL/Medplum, workflow/outbox, policy/configuration, audit/WORM storage, and required keys using encrypted immutable copies. Quarterly restore tests must use an isolated namespace, verify checksums and schema, reconcile counts/versions, exercise login/read/write, record RPO/RTO, and securely destroy test data.

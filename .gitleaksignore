@@ -1,0 +1,4 @@
+# Synthetic canary used only to prove that audit output redacts prompt secrets.
+# The exact immutable finding was introduced in the named historical commit;
+# any different commit, path, rule or line remains reportable.
+930c3565dabc628eac4d974a6422f1ad37ae669b:tests/assistant-security.test.ts:generic-api-key:402

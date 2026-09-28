@@ -1,0 +1,3 @@
+# Validation plan
+
+Validate journeys A–I with fictional Swiss data: admission discrepancy, routine shift, bell mirror, physician/pharmacy communication, rounds-to-task, signed/acknowledged handover, provider outage/recovery, stale conflict, and role isolation. Run unit, API, workflow, adapter, security, operations, and multi-viewport Playwright suites; inspect logs for PHI; verify AI-disabled and offline behavior; execute wrong-patient/four-eyes cases. Production adds user acceptance by each role, interface conformance against vendor sandboxes, terminology/model evaluation, backup/restore, load/resilience, penetration/accessibility testing, and signed clinical acceptance.

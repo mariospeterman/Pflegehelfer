@@ -1,0 +1,404 @@
+import { createHash, randomUUID } from "node:crypto";
+import {
+  adapterManifestSchema,
+  type AdapterManifest,
+  type CanonicalClinicalCommand,
+  type CanonicalResource,
+  type ExternalReference,
+  type InboundChangeBatch,
+  type PreparedProviderCommand,
+  type ProviderAcknowledgement,
+  type ProviderAdapter,
+  type ProviderCapability,
+  type ProviderHealth,
+  type ProviderRecord,
+  type ReconciliationRequest,
+  type ReconciliationResult,
+  type SyncCursor,
+} from "./contract.js";
+
+export type ProviderSimulatorMode =
+  "normal" | "delay" | "reject" | "down" | "conflict";
+
+export class ProviderTransportError extends Error {
+  constructor(public readonly code: "PROVIDER_UNAVAILABLE") {
+    super(code);
+    this.name = "ProviderTransportError";
+  }
+}
+
+interface SimulatorOptions {
+  records?: ProviderRecord[];
+  now?: () => string;
+  createId?: () => string;
+}
+
+export interface ProviderSimulatorState {
+  schemaVersion: 1;
+  mode: ProviderSimulatorMode;
+  records: ProviderRecord[];
+  changeLog: ProviderRecord[];
+  acknowledgements: Array<{
+    idempotencyKey: string;
+    payloadHash: string;
+    acknowledgement: ProviderAcknowledgement;
+    command: CanonicalClinicalCommand;
+    applied: boolean;
+  }>;
+}
+
+function clone<T>(value: T): T {
+  return structuredClone(value);
+}
+
+function parseCursor(cursor?: SyncCursor): number {
+  if (!cursor) return 0;
+  const match = /^sim:(\d+)$/.exec(cursor.value);
+  if (!match) throw new Error("INVALID_SIMULATOR_CURSOR");
+  return Number.parseInt(match[1]!, 10);
+}
+
+function nextVersion(expected: string | null): string {
+  const match = expected ? /^(?:sim-v)?(\d+)$/.exec(expected) : null;
+  return `sim-v${match ? Number.parseInt(match[1]!, 10) + 1 : 1}`;
+}
+
+/**
+ * Complete provider contract test double. It deliberately uses only synthetic
+ * semantics and cannot be configured with a vendor endpoint or credential.
+ */
+export class ProviderContractSimulator implements ProviderAdapter {
+  private readonly adapterManifest: AdapterManifest;
+  private readonly initialRecords: ProviderRecord[];
+  private readonly records: ProviderRecord[];
+  private readonly changeLog: ProviderRecord[];
+  private readonly acknowledgements = new Map<
+    string,
+    {
+      payloadHash: string;
+      acknowledgement: ProviderAcknowledgement;
+      command: CanonicalClinicalCommand;
+      applied: boolean;
+    }
+  >();
+  private readonly receiptById = new Map<string, string>();
+  private readonly now: () => string;
+  private readonly createId: () => string;
+  private mode: ProviderSimulatorMode = "normal";
+
+  constructor(manifest: AdapterManifest, options: SimulatorOptions = {}) {
+    this.adapterManifest = adapterManifestSchema.parse(manifest);
+    if (this.adapterManifest.profile !== "synthetic-simulator")
+      throw new Error("SIMULATOR_REQUIRES_SYNTHETIC_PROFILE");
+    this.initialRecords = clone(options.records ?? []);
+    this.records = clone(this.initialRecords);
+    this.changeLog = clone(this.initialRecords);
+    this.now = options.now ?? (() => new Date().toISOString());
+    this.createId = options.createId ?? randomUUID;
+  }
+
+  setMode(mode: ProviderSimulatorMode): void {
+    this.mode = mode;
+  }
+
+  reset(): void {
+    this.mode = "normal";
+    this.acknowledgements.clear();
+    this.receiptById.clear();
+    this.records.splice(0, this.records.length, ...clone(this.initialRecords));
+    this.changeLog.splice(
+      0,
+      this.changeLog.length,
+      ...clone(this.initialRecords),
+    );
+  }
+
+  exportState(): ProviderSimulatorState {
+    return clone({
+      schemaVersion: 1,
+      mode: this.mode,
+      records: this.records,
+      changeLog: this.changeLog,
+      acknowledgements: [...this.acknowledgements.entries()].map(
+        ([idempotencyKey, value]) => ({ idempotencyKey, ...value }),
+      ),
+    });
+  }
+
+  restoreState(state: ProviderSimulatorState): void {
+    if (state.schemaVersion !== 1) throw new Error("SIMULATOR_STATE_VERSION");
+    this.mode = state.mode;
+    this.records.splice(0, this.records.length, ...clone(state.records));
+    this.changeLog.splice(0, this.changeLog.length, ...clone(state.changeLog));
+    this.acknowledgements.clear();
+    this.receiptById.clear();
+    for (const stored of state.acknowledgements) {
+      const { idempotencyKey, ...value } = stored;
+      this.acknowledgements.set(idempotencyKey, clone(value));
+      this.receiptById.set(value.acknowledgement.receiptId, idempotencyKey);
+    }
+  }
+
+  /** Add a synthetic provider-side change so inbound polling can be tested. */
+  injectInboundRecord(record: ProviderRecord): void {
+    const existing = this.records.findIndex(
+      (candidate) =>
+        candidate.reference.resourceType === record.reference.resourceType &&
+        candidate.reference.externalId === record.reference.externalId,
+    );
+    if (existing >= 0) this.records[existing] = clone(record);
+    else this.records.push(clone(record));
+    this.changeLog.push(clone(record));
+  }
+
+  manifest(): AdapterManifest {
+    return clone(this.adapterManifest);
+  }
+
+  async discoverCapabilities(): Promise<ProviderCapability[]> {
+    await Promise.resolve();
+    return clone(this.adapterManifest.capabilities);
+  }
+
+  async health(): Promise<ProviderHealth> {
+    await Promise.resolve();
+    return this.healthSnapshot();
+  }
+
+  healthSnapshot(): ProviderHealth {
+    return {
+      status:
+        this.mode === "down"
+          ? "unavailable"
+          : this.mode === "delay"
+            ? "degraded"
+            : "available",
+      checkedAt: this.now(),
+      latencyMs: this.mode === "down" ? null : this.mode === "delay" ? 2500 : 5,
+      message:
+        this.mode === "normal"
+          ? "Synthetic provider simulator available"
+          : `Synthetic provider simulator mode: ${this.mode}`,
+    };
+  }
+
+  async pullChanges(cursor?: SyncCursor): Promise<InboundChangeBatch> {
+    await Promise.resolve();
+    this.assertAvailable();
+    const offset = parseCursor(cursor);
+    const pageSize = 50;
+    const records = this.changeLog.slice(offset, offset + pageSize);
+    const nextOffset = offset + records.length;
+    return {
+      records: clone(records),
+      nextCursor: { value: `sim:${nextOffset}` },
+      hasMore: nextOffset < this.changeLog.length,
+    };
+  }
+
+  async read(reference: ExternalReference): Promise<ProviderRecord> {
+    await Promise.resolve();
+    this.assertAvailable();
+    const record = this.records.find(
+      (candidate) =>
+        candidate.reference.resourceType === reference.resourceType &&
+        candidate.reference.externalId === reference.externalId,
+    );
+    if (!record) throw new Error("SIMULATOR_RECORD_NOT_FOUND");
+    return clone(record);
+  }
+
+  async mapInbound(record: ProviderRecord): Promise<CanonicalResource[]> {
+    await Promise.resolve();
+    const payload = record.payload;
+    if (!payload || typeof payload !== "object" || Array.isArray(payload))
+      throw new Error("SIMULATOR_INVALID_INBOUND_RECORD");
+    const objectPayload = payload as Record<string, unknown>;
+    const resourceType = objectPayload.resourceType;
+    const id = objectPayload.id;
+    if (typeof resourceType !== "string" || typeof id !== "string")
+      throw new Error("SIMULATOR_INVALID_INBOUND_RECORD");
+    return [{ resourceType, id, body: clone(objectPayload) }];
+  }
+
+  async prepareCommand(
+    command: CanonicalClinicalCommand,
+  ): Promise<PreparedProviderCommand> {
+    await Promise.resolve();
+    const capability = this.adapterManifest.capabilities.find(
+      (candidate) => candidate.operation === command.operation,
+    );
+    if (
+      !capability ||
+      !["supported", "conditional"].includes(capability.support)
+    )
+      throw new Error("CAPABILITY_NOT_AVAILABLE");
+    const payloadHash = createHash("sha256")
+      .update(JSON.stringify(command))
+      .digest("hex");
+    return {
+      provider: this.adapterManifest.provider,
+      adapterVersion: this.adapterManifest.adapterVersion,
+      command: clone(command),
+      payloadHash,
+      preparedAt: this.now(),
+    };
+  }
+
+  async executeCommand(
+    prepared: PreparedProviderCommand,
+  ): Promise<ProviderAcknowledgement> {
+    await Promise.resolve();
+    this.assertAvailable();
+    if (
+      prepared.provider !== this.adapterManifest.provider ||
+      prepared.adapterVersion !== this.adapterManifest.adapterVersion
+    )
+      throw new Error("PREPARED_COMMAND_ADAPTER_MISMATCH");
+    const expectedHash = createHash("sha256")
+      .update(JSON.stringify(prepared.command))
+      .digest("hex");
+    if (expectedHash !== prepared.payloadHash)
+      throw new Error("PREPARED_COMMAND_HASH_MISMATCH");
+
+    const previous = this.acknowledgements.get(prepared.command.idempotencyKey);
+    if (previous) {
+      if (previous.payloadHash !== prepared.payloadHash)
+        throw new Error("IDEMPOTENCY_KEY_PAYLOAD_MISMATCH");
+      return clone(previous.acknowledgement);
+    }
+
+    const currentRecord = this.records.find(
+      (candidate) =>
+        candidate.reference.resourceType ===
+          prepared.command.resource.resourceType &&
+        candidate.reference.externalId === prepared.command.resource.id,
+    );
+    const currentVersion = currentRecord?.originVersion ?? null;
+    const forcedConflict = this.mode === "conflict";
+    const versionConflict =
+      forcedConflict ||
+      ((this.mode === "normal" || this.mode === "delay") &&
+        prepared.command.expectedProviderVersion !== currentVersion);
+    const providerVersion = forcedConflict
+      ? nextVersion(prepared.command.expectedProviderVersion)
+      : versionConflict
+        ? currentVersion
+        : nextVersion(currentVersion);
+    const receiptId = `sim-${this.createId()}`;
+    const acknowledgement: ProviderAcknowledgement = {
+      receiptId,
+      idempotencyKey: prepared.command.idempotencyKey,
+      status:
+        this.mode === "delay"
+          ? "pending"
+          : this.mode === "reject"
+            ? "rejected"
+            : versionConflict
+              ? "conflict"
+              : "acknowledged",
+      providerVersion,
+      errorCode:
+        this.mode === "reject"
+          ? "SIMULATED_CONTENT_REJECTION"
+          : forcedConflict
+            ? "SIMULATED_VERSION_CONFLICT"
+            : versionConflict
+              ? "PROVIDER_VERSION_CONFLICT"
+              : null,
+      errorClassification:
+        this.mode === "reject"
+          ? "clinical-content"
+          : versionConflict
+            ? "version-conflict"
+            : null,
+      providerSnapshot: versionConflict
+        ? currentRecord
+          ? clone(currentRecord)
+          : {
+              reference: {
+                resourceType: prepared.command.resource.resourceType,
+                externalId: prepared.command.resource.id,
+              },
+              originVersion: providerVersion ?? "absent",
+              effectiveAt: prepared.command.approvedAt,
+              recordedAt: this.now(),
+              receivedAt: this.now(),
+              payload: {
+                resourceType: prepared.command.resource.resourceType,
+                id: prepared.command.resource.id,
+                syntheticConflict: true,
+              },
+            }
+        : null,
+      receivedAt: this.now(),
+    };
+    if (forcedConflict && !currentRecord && acknowledgement.providerSnapshot)
+      this.injectInboundRecord(acknowledgement.providerSnapshot);
+    this.acknowledgements.set(prepared.command.idempotencyKey, {
+      payloadHash: prepared.payloadHash,
+      acknowledgement: clone(acknowledgement),
+      command: clone(prepared.command),
+      applied: false,
+    });
+    this.receiptById.set(receiptId, prepared.command.idempotencyKey);
+    if (acknowledgement.status === "acknowledged")
+      this.applyAcknowledgedWrite(prepared.command.idempotencyKey);
+    return clone(acknowledgement);
+  }
+
+  async getCommandStatus(receiptId: string): Promise<ProviderAcknowledgement> {
+    await Promise.resolve();
+    this.assertAvailable();
+    const idempotencyKey = this.receiptById.get(receiptId);
+    const acknowledgement = idempotencyKey
+      ? this.acknowledgements.get(idempotencyKey)?.acknowledgement
+      : undefined;
+    if (!acknowledgement) throw new Error("SIMULATOR_RECEIPT_NOT_FOUND");
+    if (acknowledgement.status === "pending") {
+      acknowledgement.status = "acknowledged";
+      acknowledgement.errorCode = null;
+      acknowledgement.errorClassification = null;
+    }
+    if (acknowledgement.status === "acknowledged")
+      this.applyAcknowledgedWrite(idempotencyKey!);
+    return clone(acknowledgement);
+  }
+
+  async reconcile(
+    request: ReconciliationRequest,
+  ): Promise<ReconciliationResult> {
+    const acknowledgement = await this.getCommandStatus(request.receiptId);
+    if (acknowledgement.idempotencyKey !== request.idempotencyKey)
+      throw new Error("SIMULATOR_RECONCILIATION_KEY_MISMATCH");
+    return { status: acknowledgement.status, acknowledgement };
+  }
+
+  private assertAvailable(): void {
+    if (this.mode === "down")
+      throw new ProviderTransportError("PROVIDER_UNAVAILABLE");
+  }
+
+  private applyAcknowledgedWrite(idempotencyKey: string): void {
+    const stored = this.acknowledgements.get(idempotencyKey);
+    if (!stored || stored.applied) return;
+    const { command, acknowledgement } = stored;
+    const timestamp = this.now();
+    this.injectInboundRecord({
+      reference: {
+        resourceType: command.resource.resourceType,
+        externalId: command.resource.id,
+      },
+      originVersion: acknowledgement.providerVersion ?? "sim-v1",
+      effectiveAt: command.approvedAt,
+      recordedAt: timestamp,
+      receivedAt: timestamp,
+      payload: {
+        ...clone(command.resource.body),
+        resourceType: command.resource.resourceType,
+        id: command.resource.id,
+      },
+    });
+    stored.applied = true;
+  }
+}

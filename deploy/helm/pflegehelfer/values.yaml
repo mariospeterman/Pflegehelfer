@@ -1,0 +1,21 @@
+image:
+  repository: registry.example.invalid/pflegehelfer
+  tag: "0.1.0"
+  digest: ""
+# The current checkpoint repository has process-local read state. Run one
+# writer/reader replica until a shared coherent read model is implemented.
+replicaCount: 1
+resources:
+  requests: { cpu: 100m, memory: 128Mi }
+  limits: { cpu: 500m, memory: 512Mi }
+config:
+  aiEnabled: false
+  demoMode: false
+  storageMode: medplum
+  fhirBaseUrl: "https://medplum-api.example.invalid/"
+  medplumAppBaseUrl: "https://medplum.example.invalid/"
+secrets:
+  # Keys: MEDPLUM_CLIENT_ID, MEDPLUM_CLIENT_SECRET and a minimum-32-byte
+  # PFH_CHECKPOINT_HMAC_KEY and optionally
+  # PFH_CHECKPOINT_HMAC_PREVIOUS_KEYS during controlled rotation.
+  existingSecret: pflegehelfer-runtime

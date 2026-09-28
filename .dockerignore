@@ -1,0 +1,11 @@
+.git
+.gstack
+.pfh
+.data
+.env.demo
+node_modules
+dist
+artifacts
+test-results
+docs
+*.log

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: pflegehelfer
+description: Pflegehelfer modular-monolith application shell
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
