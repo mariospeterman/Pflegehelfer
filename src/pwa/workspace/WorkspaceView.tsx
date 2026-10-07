@@ -747,7 +747,11 @@ function LibraryView({
               {item.mediaType} · {Math.ceil(item.size / 1024)} KB
             </small>
             <span>
-              {item.state === "available" ? "Verfügbar" : "Zurückgezogen"}
+              {item.state === "available"
+                ? "Verfügbar"
+                : item.state === "quarantined"
+                  ? "Quarantäne · nicht downloadbar"
+                  : "Zurückgezogen"}
             </span>
             {item.inspection && (
               <small>
@@ -1251,6 +1255,7 @@ export function WorkspaceView({
             workday={workday}
             patients={snapshot.patients}
             busy={busy}
+            userId={userId}
             onPatient={onPatient}
             onError={onError}
             onAction={onWorkdayAction}

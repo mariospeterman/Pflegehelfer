@@ -243,6 +243,28 @@ describe("purpose-specific BFF", () => {
     ).toBe("accepted");
   });
 
+  it("binds a command receipt to the concrete route target", async () => {
+    const app = buildApp(undefined, { demoMode: true });
+    apps.push(app);
+    const commandId = crypto.randomUUID();
+    const headers = commandHeaders("u-assistant", commandId);
+    const first = await app.inject({
+      method: "POST",
+      url: "/api/v1/tasks/t-bp-anna/accept",
+      headers,
+      payload: {},
+    });
+    expect(first.statusCode).toBe(200);
+    const differentTarget = await app.inject({
+      method: "POST",
+      url: "/api/v1/tasks/t-mobilise-luca/start",
+      headers,
+      payload: {},
+    });
+    expect(differentTarget.statusCode).toBe(409);
+    expect(differentTarget.json()).toMatchObject({ error: "INVALID_STATE" });
+  });
+
   it("keeps treatment instructions out of the generic task endpoint", async () => {
     const app = buildApp(undefined, { demoMode: true });
     apps.push(app);

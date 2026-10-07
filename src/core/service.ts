@@ -1461,7 +1461,10 @@ export class PflegehelferService {
       title: `Klingel ${patient.room}`,
       reason: "Gespiegeltes Ereignis der primären Rufanlage",
       ownerRole: "care-assistant",
-      priority: "urgent",
+      // The mirror records that the primary call system emitted an event. It
+      // must not synthesize a clinical urgency level that the source did not
+      // provide; routing/escalation is represented separately below.
+      priority: "routine",
       dueAt: new Date(Date.now() + 2 * 60_000).toISOString(),
       escalation:
         "Primäre Rufanlage bleibt massgebend; nach 2 Minuten an Pflegefachperson.",
@@ -1578,7 +1581,6 @@ export class PflegehelferService {
       )
         continue;
       item.state = "escalated";
-      item.priority = "urgent";
       item.escalationRecipientRole = item.recipientRole;
       item.escalatedAt = now;
       item.source.version += 1;

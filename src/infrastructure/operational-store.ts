@@ -3,6 +3,7 @@ import type { Resource } from "@medplum/fhirtypes";
 import pg from "pg";
 import { workflowForRole, type WorkflowDefinition } from "../core/workflows.js";
 import type { DurableIntentRecord } from "../core/assistant.js";
+import type { AssistantResponse } from "../core/assistant-service.js";
 import type { ServiceCheckpoint } from "../core/service.js";
 import {
   providerIdSchema,
@@ -371,6 +372,23 @@ export interface PendingIntentReview {
   responseId: string;
 }
 
+export interface AssistantRequestClaim {
+  state: "claimed" | "in-progress" | "completed";
+  response?: AssistantResponse;
+}
+
+export interface AssistantRequestIdentity {
+  commandId: string;
+  requestHash: string;
+  actorId: string;
+  role: Role;
+  context: AssistantContextBinding;
+}
+
+export interface AssistantRequestCompletion extends AssistantRequestIdentity {
+  response: AssistantResponse;
+}
+
 export interface OperationalStore {
   readonly mode: "in-memory" | "postgresql";
   initialize(): Promise<void>;
@@ -424,7 +442,12 @@ export interface OperationalStore {
     role: Role,
     turn: StoredConversationTurn,
     context?: AssistantContextBinding,
+    requestCompletion?: AssistantRequestCompletion,
   ): Promise<void>;
+  claimAssistantRequest(
+    input: AssistantRequestIdentity,
+  ): Promise<AssistantRequestClaim>;
+  releaseAssistantRequest(input: AssistantRequestIdentity): Promise<void>;
   clearConversation(
     actorId: string,
     role: Role,
@@ -656,6 +679,13 @@ export class InMemoryOperationalStore implements OperationalStore {
   private readonly acceptedCommands = new Map<
     string,
     { requestHash: string; receipt: AcceptedCommandReceipt }
+  >();
+  private readonly assistantRequests = new Map<
+    string,
+    AssistantRequestIdentity & {
+      state: "in-progress" | "completed";
+      response?: AssistantResponse;
+    }
   >();
   private readonly clinicalProjectionJobs: Array<
     ClinicalProjectionJob & {
@@ -941,6 +971,7 @@ export class InMemoryOperationalStore implements OperationalStore {
     role: Role,
     turn: StoredConversationTurn,
     context?: AssistantContextBinding,
+    requestCompletion?: AssistantRequestCompletion,
   ): Promise<void> {
     await this.getOrStartSession(actorId, role);
     const session = this.sessions.get(actorId)!;
@@ -973,8 +1004,69 @@ export class InMemoryOperationalStore implements OperationalStore {
           turn.originContextRevision !== context.contextRevision))
     )
       throw new Error("ASSISTANT_CONTEXT_STALE");
+    if (requestCompletion) {
+      const key = `${requestCompletion.actorId}:${requestCompletion.commandId}`;
+      const request = this.assistantRequests.get(key);
+      if (
+        !request ||
+        request.state !== "in-progress" ||
+        request.requestHash !== requestCompletion.requestHash ||
+        request.context.threadId !== requestCompletion.context.threadId ||
+        request.context.contextRevision !==
+          requestCompletion.context.contextRevision
+      )
+        throw new Error("ASSISTANT_REQUEST_CLAIM_STALE");
+    }
     thread.turns = [...thread.turns, structuredClone(turn)].slice(-80);
     thread.lastActivityAt = new Date().toISOString();
+    if (requestCompletion) {
+      const key = `${requestCompletion.actorId}:${requestCompletion.commandId}`;
+      this.assistantRequests.set(key, {
+        ...requestCompletion,
+        state: "completed",
+        response: structuredClone(requestCompletion.response),
+      });
+    }
+  }
+  claimAssistantRequest(
+    input: AssistantRequestIdentity,
+  ): Promise<AssistantRequestClaim> {
+    const key = `${input.actorId}:${input.commandId}`;
+    const existing = this.assistantRequests.get(key);
+    if (existing) {
+      if (
+        existing.requestHash !== input.requestHash ||
+        existing.role !== input.role ||
+        existing.context.threadId !== input.context.threadId ||
+        existing.context.contextRevision !== input.context.contextRevision
+      )
+        throw new DomainError(
+          "INVALID_STATE",
+          "Befehls-ID wurde bereits für eine andere Assistenzanfrage verwendet.",
+          409,
+        );
+      return Promise.resolve({
+        state: existing.state,
+        ...(existing.response
+          ? { response: structuredClone(existing.response) }
+          : {}),
+      });
+    }
+    this.assistantRequests.set(key, {
+      ...structuredClone(input),
+      state: "in-progress",
+    });
+    return Promise.resolve({ state: "claimed" });
+  }
+  releaseAssistantRequest(input: AssistantRequestIdentity): Promise<void> {
+    const key = `${input.actorId}:${input.commandId}`;
+    const existing = this.assistantRequests.get(key);
+    if (
+      existing?.state === "in-progress" &&
+      existing.requestHash === input.requestHash
+    )
+      this.assistantRequests.delete(key);
+    return Promise.resolve();
   }
   async listConversations(
     actorId: string,
@@ -2966,6 +3058,7 @@ export class PostgresOperationalStore
     role: Role,
     turn: StoredConversationTurn,
     context?: AssistantContextBinding,
+    requestCompletion?: AssistantRequestCompletion,
   ): Promise<void> {
     const session = await this.getOrStartSession(actorId, role);
     const targetThreadId =
@@ -3056,6 +3149,27 @@ export class PostgresOperationalStore
          WHERE organization_id=$1 AND id=$2`,
         [organizationId, targetThreadId],
       );
+      if (requestCompletion) {
+        const completed = await client.query(
+          `UPDATE assistant_request_claims
+           SET state='completed',response=$1,updated_at=now(),expires_at=now()+interval '24 hours'
+           WHERE organization_id=$2 AND site_id=$3 AND actor_id=$4
+             AND command_id=$5 AND request_hash=$6 AND state='in-progress'
+             AND thread_id=$7 AND context_revision=$8`,
+          [
+            requestCompletion.response,
+            organizationId,
+            siteConfiguration.siteId,
+            actorId,
+            requestCompletion.commandId,
+            requestCompletion.requestHash,
+            requestCompletion.context.threadId,
+            requestCompletion.context.contextRevision,
+          ],
+        );
+        if (completed.rowCount !== 1)
+          throw new Error("ASSISTANT_REQUEST_CLAIM_STALE");
+      }
       await client.query("COMMIT");
     } catch (error) {
       await client.query("ROLLBACK");
@@ -3063,6 +3177,93 @@ export class PostgresOperationalStore
     } finally {
       client.release();
     }
+  }
+  async claimAssistantRequest(
+    input: AssistantRequestIdentity,
+  ): Promise<AssistantRequestClaim> {
+    await this.pool.query(
+      `DELETE FROM assistant_request_claims
+       WHERE organization_id=$1 AND site_id=$2 AND actor_id=$3
+         AND expires_at <= now()`,
+      [organizationId, siteConfiguration.siteId, input.actorId],
+    );
+    const inserted = await this.pool.query(
+      `INSERT INTO assistant_request_claims
+         (organization_id,site_id,actor_id,effective_role,command_id,request_hash,
+          session_id,thread_id,context_revision,client_context_id,state,expires_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'in-progress',now()+interval '5 minutes')
+       ON CONFLICT (organization_id,site_id,actor_id,command_id) DO NOTHING
+       RETURNING command_id`,
+      [
+        organizationId,
+        siteConfiguration.siteId,
+        input.actorId,
+        input.role,
+        input.commandId,
+        input.requestHash,
+        input.context.sessionId,
+        input.context.threadId,
+        input.context.contextRevision,
+        input.context.clientContextId,
+      ],
+    );
+    if (inserted.rowCount === 1) return { state: "claimed" };
+    const result = await this.pool.query<{
+      effective_role: Role;
+      request_hash: string;
+      session_id: string;
+      thread_id: string;
+      context_revision: number;
+      client_context_id: string;
+      state: "in-progress" | "completed";
+      response: AssistantResponse | null;
+    }>(
+      `SELECT effective_role,request_hash,session_id,thread_id,context_revision,
+              client_context_id,state,response
+       FROM assistant_request_claims
+       WHERE organization_id=$1 AND site_id=$2 AND actor_id=$3 AND command_id=$4`,
+      [
+        organizationId,
+        siteConfiguration.siteId,
+        input.actorId,
+        input.commandId,
+      ],
+    );
+    const existing = result.rows[0];
+    if (
+      !existing ||
+      existing.effective_role !== input.role ||
+      existing.request_hash !== input.requestHash ||
+      existing.session_id !== input.context.sessionId ||
+      existing.thread_id !== input.context.threadId ||
+      Number(existing.context_revision) !== input.context.contextRevision ||
+      existing.client_context_id !== input.context.clientContextId
+    )
+      throw new DomainError(
+        "INVALID_STATE",
+        "Befehls-ID wurde bereits für eine andere Assistenzanfrage verwendet.",
+        409,
+      );
+    return {
+      state: existing.state,
+      ...(existing.response ? { response: existing.response } : {}),
+    };
+  }
+  async releaseAssistantRequest(
+    input: AssistantRequestIdentity,
+  ): Promise<void> {
+    await this.pool.query(
+      `DELETE FROM assistant_request_claims
+       WHERE organization_id=$1 AND site_id=$2 AND actor_id=$3
+         AND command_id=$4 AND request_hash=$5 AND state='in-progress'`,
+      [
+        organizationId,
+        siteConfiguration.siteId,
+        input.actorId,
+        input.commandId,
+        input.requestHash,
+      ],
+    );
   }
   async clearConversation(
     actorId: string,

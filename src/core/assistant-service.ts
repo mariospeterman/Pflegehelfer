@@ -379,6 +379,7 @@ function safeSourceFreePatientDialogue(
     containsProtectedTerm(dialogue, protectedTerms) ||
     canonicalClaimTokens(dialogue).length > 0 ||
     requiresDedicatedClinicalWorkflow(dialogue) ||
+    prohibitedAssistanceRequest(dialogue) !== null ||
     /\b(?:diagnos|schmerzfrei|stabil|unauffällig|reizlos|verabreicht|gegeben|durchgeführt|erledigt|offen|vollständig|dokumentiert)\p{L}*\b/iu.test(
       dialogue,
     )
@@ -406,6 +407,7 @@ function verifiedCoworkerContent(
     run.text.trim().length === 0
   )
     return null;
+  if (prohibitedAssistanceRequest(run.text) !== null) return null;
 
   if (run.toolCalls === 0) {
     if (
@@ -999,6 +1001,42 @@ function explicitlyRequestsNote(prompt: string): boolean {
   );
 }
 
+type ProhibitedAssistanceRequest = "clinical-decision" | "employment-decision";
+
+function prohibitedAssistanceRequest(
+  input: string,
+): ProhibitedAssistanceRequest | null {
+  const text = input.toLocaleLowerCase("de-CH");
+  const clinicalSubject =
+    /\b(?:blutdruck|puls|temperatur|sauerstoff|spo2|messwert|symptom|schwindel|schmerz|wunde|patient|bewohner|diagnos|therapie|behandlung|medikament|dosis|intervention|verschlechter)\p{L}*\b/iu.test(
+      text,
+    );
+  const clinicalDecision =
+    /\b(?:interpretier|deute|bewerte|beurteile|analysiere|diagnostizier|prognostizier|empfiehl|empfehlung|welche\s+(?:therapie|behandlung|medikation)|behandlung\s+wählen|therapie\s+wählen|dosis\s+(?:ändern|anpassen|erhöhen|senken)|wer\s+(?:ist|hat)\s+(?:am\s+meisten\s+)?(?:gefährdet|risiko)|priorisier\p{L}*\s+patient|nach\s+verschlechterung\s+(?:sortier|priorisier)|dringende?\s+intervention)\b/iu.test(
+      text,
+    ) ||
+    /\bwer\s+ist\s+(?:am\s+meisten\s+)?gefährdet\b/iu.test(text) ||
+    /\bpriorisier\p{L}*\b[^.!?]{0,80}\bpatient\p{L}*\b|\bpatient\p{L}*\b[^.!?]{0,80}\bnach\s+verschlechterung\b/iu.test(
+      text,
+    ) ||
+    (/\b(?:sollte|muss|am\s+besten|ich\s+empfehle)\b/iu.test(text) &&
+      /\b(?:hinsetzen|trinken|behandeln|therapieren|verabreichen|geben|absetzen|überwachen|kontrollieren)\b/iu.test(
+        text,
+      ));
+  if (clinicalDecision && (clinicalSubject || /\bgefährdet\b/iu.test(text)))
+    return "clinical-decision";
+
+  const employmentSubject =
+    /\b(?:mitarbeiter|mitarbeiterin|angestellte|bewerber|bewerberin|personal|pflegekraft|teammitglied)\p{L}*\b/iu.test(
+      text,
+    );
+  const employmentDecision =
+    /\b(?:kündig|entlass|einstell|ablehn|disziplin|beförder|rangliste|rank|leistung\s+bewert|performance|emotion|psycholog|schicht\s+zuteil|dienst\s+zuteil)\p{L}*\b/iu.test(
+      text,
+    );
+  return employmentSubject && employmentDecision ? "employment-decision" : null;
+}
+
 function validateDurableIntentPayload(
   record: Pick<DurableIntentRecord, "command" | "payload">,
 ): void {
@@ -1266,6 +1304,7 @@ export class AssistantService {
         "Patientenkontext ist für diese Assistenzanfrage nicht freigegeben.",
         403,
       );
+    const prohibitedRequest = prohibitedAssistanceRequest(prompt);
 
     const modelContext: AuthorizedModelContext | undefined =
       request.workingContext
@@ -1292,9 +1331,14 @@ export class AssistantService {
     // Its free-language path must not pay for, or depend on, a separate model
     // intent enum. The deterministic route remains only a fast presentation
     // hint and an honest degraded-mode control surface.
-    const classified = canRunBoundedAgent
-      ? this.models.classifyDeterministically(prompt)
-      : await this.models.classify(prompt, modelContext, request.signal);
+    const classified = prohibitedRequest
+      ? {
+          ...this.models.classifyDeterministically(prompt),
+          intent: "medication-request" as const,
+        }
+      : canRunBoundedAgent
+        ? this.models.classifyDeterministically(prompt)
+        : await this.models.classify(prompt, modelContext, request.signal);
     // Raw-language safety gates are authoritative even when a configured
     // model chose a broader keyword route.
     let safeIntent = classified.intent;
@@ -3005,6 +3049,17 @@ export class AssistantService {
           break;
         }
         case "medication-request": {
+          if (prohibitedRequest) {
+            components.push({
+              type: "SafetyAlert",
+              severity: "warning",
+              message:
+                prohibitedRequest === "employment-decision"
+                  ? "Pflegehelfer trifft oder empfiehlt keine Personalentscheidungen und erstellt keine Ranglisten. Ich kann freigegebene administrative Fristen, Qualifikationen oder bereits beschlossene Einsatzbedingungen anzeigen."
+                  : "Pflegehelfer interpretiert keine Messwerte oder Symptome, priorisiert keine Personen nach klinischem Risiko und empfiehlt keine Diagnose, Therapie, Dosis oder dringende Intervention. Ich kann autorisierte Quelldaten unverändert anzeigen oder deinen eigenen Bericht zur Prüfung dokumentieren.",
+            });
+            break;
+          }
           const current = patient;
           if (!current) {
             components.push(patientPicker());

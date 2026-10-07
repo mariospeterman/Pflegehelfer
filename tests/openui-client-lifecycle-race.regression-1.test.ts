@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createConversationStorage } from "../src/pwa/conversation/openui-client.js";
+import {
+  createConversationLlm,
+  createConversationStorage,
+} from "../src/pwa/conversation/openui-client.js";
 import { completedOpenUi } from "../src/pwa/conversation/conversation-presentations.js";
 
 const conversation = (status: "pending" | "consumed") => ({
@@ -56,5 +59,41 @@ describe("OpenUI proposal lifecycle read consistency", () => {
       name: "pflegehelfer-proposal:consumed:1",
       content: completedOpenUi,
     });
+  });
+});
+
+describe("OpenUI assistant request identity", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("reuses the command id when the same user message is retried", async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response("ok", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const llm = createConversationLlm({
+      userId: "u-assistant",
+      patientId: null,
+      purpose: "care-delivery",
+      submissionChannel: { take: () => null },
+    });
+    const messages = [
+      {
+        id: "client-user-message-1",
+        role: "user" as const,
+        content: [{ type: "text" as const, text: "Zeige meine Aufgaben." }],
+      },
+    ];
+
+    await llm.send({ messages } as Parameters<typeof llm.send>[0]);
+    await llm.send({ messages } as Parameters<typeof llm.send>[0]);
+
+    const first = new Headers(fetchMock.mock.calls[0]![1]?.headers).get(
+      "x-command-id",
+    );
+    const second = new Headers(fetchMock.mock.calls[1]![1]?.headers).get(
+      "x-command-id",
+    );
+    expect(first).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(second).toBe(first);
   });
 });

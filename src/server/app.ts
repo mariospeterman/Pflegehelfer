@@ -61,6 +61,7 @@ import {
 import {
   InMemoryOperationalStore,
   type AssistantContextBinding,
+  type AssistantRequestIdentity,
   type DurableVoiceAuthority,
   type OperationalStore,
 } from "../infrastructure/operational-store.js";
@@ -642,6 +643,37 @@ export function buildApp(
     object,
     { key: string; requestHash: string }
   >();
+  const assistantRequestIdentity = (
+    request: FastifyRequest,
+    actorId: string,
+    role: Parameters<OperationalStore["getOrStartSession"]>[1],
+    context: AssistantContextBinding,
+    body: AssistantQueryBody,
+  ): AssistantRequestIdentity => {
+    const commandId = request.headers["x-command-id"];
+    if (typeof commandId !== "string" || !z.uuid().safeParse(commandId).success)
+      throw new DomainError(
+        "VALIDATION",
+        "Assistenzanfragen benötigen eine stabile Befehls-ID.",
+        400,
+      );
+    return {
+      commandId,
+      requestHash: createHash("sha256")
+        .update(
+          canonicalJson({
+            actorId,
+            role,
+            context,
+            body,
+          }),
+        )
+        .digest("hex"),
+      actorId,
+      role,
+      context,
+    };
+  };
   const committedCommandKeys = new Set(service.commandReceiptKeys());
   const persist = <T>(
     operation: () => T | Promise<T>,
@@ -1235,23 +1267,23 @@ export function buildApp(
       );
     const actorId = userId(request);
     service.user(actorId);
-    const key = `${actorId}:${request.method}:${route}:${commandId}`;
-    // Preserve the established receipt hash for ordinary API commands so
-    // durable receipts from the previous release remain replayable. The
-    // assistant execution route additionally binds the concrete one-use
-    // intent token; its Fastify route template alone is not sufficient.
-    const requestHashInput =
-      route === "/api/v1/assistant/intents/:token/execute"
-        ? canonicalJson({
-            path: request.url.split("?", 1)[0],
-            body: request.body ?? null,
-          })
-        : route === "/api/v1/workspace/attachments"
-          ? canonicalJson({
-              url: request.url,
-              contentHash: request.headers["x-content-sha256"] ?? null,
-            })
-          : JSON.stringify(request.body ?? null);
+    // v2 receipts deliberately do not alias the unsafe legacy key format.
+    // Every mutation binds its concrete target path as well as tenant/site,
+    // actor, operation and normalized content. A UUID replay against another
+    // target must conflict instead of returning the first target's receipt.
+    const key = `${siteConfiguration.institutionId}:${siteConfiguration.siteId}:${actorId}:v2:${request.method}:${route}:${commandId}`;
+    const requestHashInput = canonicalJson({
+      organizationId: siteConfiguration.institutionId,
+      siteId: siteConfiguration.siteId,
+      actorId,
+      method: request.method,
+      route,
+      path: request.url.split("?", 1)[0],
+      body: request.body ?? null,
+      ...(route === "/api/v1/workspace/attachments"
+        ? { contentHash: request.headers["x-content-sha256"] ?? null }
+        : {}),
+    });
     const requestHash = createHash("sha256")
       .update(requestHashInput)
       .digest("hex");
@@ -2042,6 +2074,12 @@ export function buildApp(
       });
       const safeName =
         file.filename.split(/[\\/]/).at(-1)?.slice(0, 180) || "Datei";
+      const inspection = await documentInspection.inspect({
+        bytes,
+        fileName: safeName,
+        mediaType,
+        expectedSha256: sha256,
+      });
       const record: WorkspaceAttachment = {
         id: randomUUID(),
         patientId: query.patientId ?? null,
@@ -2052,15 +2090,10 @@ export function buildApp(
         sha256,
         audience,
         topicIds,
-        state: "available",
+        state: inspection.state === "available" ? "available" : "quarantined",
         createdAt: new Date().toISOString(),
         withdrawnAt: null,
-        inspection: await documentInspection.inspect({
-          bytes,
-          fileName: safeName,
-          mediaType,
-          expectedSha256: sha256,
-        }),
+        inspection,
       };
       const result = await operationalStore.storeWorkspaceAttachment({
         record,
@@ -3281,6 +3314,7 @@ export function buildApp(
     let disconnected = false;
     let generatedResponse: AssistantResponse | null = null;
     let revocation = Promise.resolve();
+    let authorityPersistence = Promise.resolve();
     const transportDisconnected = () =>
       request.raw.aborted ||
       reply.raw.destroyed ||
@@ -3289,9 +3323,11 @@ export function buildApp(
       if (generatedResponse) assistant.revokeResponseIntents(generatedResponse);
       const responseId = generatedResponse?.id;
       if (responseId)
-        revocation = revocation.then(() =>
-          operationalStore.revokeResponseAuthorities(actorId, responseId),
-        );
+        revocation = revocation
+          .then(() => authorityPersistence.catch(() => undefined))
+          .then(() =>
+            operationalStore.revokeResponseAuthorities(actorId, responseId),
+          );
       return revocation;
     };
     const revokeAfterDisconnect = () => {
@@ -3335,56 +3371,78 @@ export function buildApp(
         "Assistenzanfrage stimmt nicht mit dem bewusst gewählten Patientenkontext überein.",
         403,
       );
-    const voiceTranscriptProvenance = await consumeValidatedVoiceReceipt(
+    const requestIdentity = assistantRequestIdentity(
+      request,
       actorId,
+      actor.role,
+      context,
       body,
-      context,
     );
-    const previousCarePlan =
-      context.patientId && context.encounterId
-        ? await operationalStore.loadPendingCarePlan(
-            actorId,
-            context.patientId,
-            context.encounterId,
-            context.threadId,
-          )
-        : null;
-    const workingContext = await assistantWorkingContext(
-      actorId,
-      context,
-      previousCarePlan,
-    );
-    const response = await runAssistantQuery(() =>
-      assistant.query(userId(request), {
-        prompt: body.prompt,
-        patientId: body.patientId,
-        inputModality: body.inputModality,
-        voiceTranscriptConfirmed: body.voiceTranscriptConfirmed ?? false,
-        ...(voiceTranscriptProvenance ? { voiceTranscriptProvenance } : {}),
-        signal: inferenceController.signal,
-        workingContext,
-        ...(body.purpose ? { purpose: body.purpose } : {}),
-      }),
-    );
-    generatedResponse = response;
-    if (inferenceController.signal.aborted || transportDisconnected()) {
-      await revokeAfterDisconnect();
+    const claim = await operationalStore.claimAssistantRequest(requestIdentity);
+    if (claim.state === "in-progress")
       throw new DomainError(
         "INVALID_STATE",
-        "Assistenzanfrage wurde abgebrochen.",
-        499,
+        "Diese Assistenzanfrage wird bereits verarbeitet.",
+        409,
       );
-    }
-    await persistResponseAuthorities(response, context);
-    if (inferenceController.signal.aborted || transportDisconnected()) {
-      await revokeAfterDisconnect();
-      throw new DomainError(
-        "INVALID_STATE",
-        "Assistenzanfrage wurde abgebrochen.",
-        499,
-      );
-    }
+    if (claim.state === "completed" && claim.response) return claim.response;
+    let requestCommitted = false;
     try {
+      const voiceTranscriptProvenance = await consumeValidatedVoiceReceipt(
+        actorId,
+        body,
+        context,
+      );
+      const previousCarePlan =
+        context.patientId && context.encounterId
+          ? await operationalStore.loadPendingCarePlan(
+              actorId,
+              context.patientId,
+              context.encounterId,
+              context.threadId,
+            )
+          : null;
+      const workingContext = await assistantWorkingContext(
+        actorId,
+        context,
+        previousCarePlan,
+      );
+      const response = await runAssistantQuery(() =>
+        assistant.query(userId(request), {
+          prompt: body.prompt,
+          patientId: body.patientId,
+          inputModality: body.inputModality,
+          voiceTranscriptConfirmed: body.voiceTranscriptConfirmed ?? false,
+          ...(voiceTranscriptProvenance ? { voiceTranscriptProvenance } : {}),
+          signal: inferenceController.signal,
+          workingContext,
+          ...(body.purpose ? { purpose: body.purpose } : {}),
+        }),
+      );
+      generatedResponse = response;
+      if (inferenceController.signal.aborted || transportDisconnected()) {
+        await revokeAfterDisconnect();
+        throw new DomainError(
+          "INVALID_STATE",
+          "Assistenzanfrage wurde abgebrochen.",
+          499,
+        );
+      }
+      // Assign the lifecycle promise before persistence starts. A store adapter
+      // may synchronously surface a socket close before returning its promise;
+      // revocation must still wait for that insert to settle before deleting it.
+      authorityPersistence = Promise.resolve().then(() =>
+        persistResponseAuthorities(response, context),
+      );
+      await authorityPersistence;
+      if (inferenceController.signal.aborted || transportDisconnected()) {
+        await revokeAfterDisconnect();
+        throw new DomainError(
+          "INVALID_STATE",
+          "Assistenzanfrage wurde abgebrochen.",
+          499,
+        );
+      }
       await operationalStore.appendConversationTurn(
         actorId,
         actor.role,
@@ -3403,20 +3461,24 @@ export function buildApp(
           originContextRevision: context.contextRevision,
         },
         context,
+        { ...requestIdentity, response },
       );
+      requestCommitted = true;
+      if (inferenceController.signal.aborted || transportDisconnected()) {
+        await revokeAfterDisconnect();
+        throw new DomainError(
+          "INVALID_STATE",
+          "Assistenzanfrage wurde abgebrochen.",
+          499,
+        );
+      }
+      return response;
     } catch (error) {
       await revokeAuthorities();
+      if (!requestCommitted)
+        await operationalStore.releaseAssistantRequest(requestIdentity);
       throw error;
     }
-    if (inferenceController.signal.aborted || transportDisconnected()) {
-      await revokeAfterDisconnect();
-      throw new DomainError(
-        "INVALID_STATE",
-        "Assistenzanfrage wurde abgebrochen.",
-        499,
-      );
-    }
-    return response;
   });
 
   app.post("/api/v1/assistant/query/stream", async (request, reply) => {
@@ -3480,26 +3542,53 @@ export function buildApp(
         "Assistenzanfrage stimmt nicht mit dem bewusst gewählten Patientenkontext überein.",
         403,
       );
-    const voiceTranscriptProvenance = await consumeValidatedVoiceReceipt(
+    const requestIdentity = assistantRequestIdentity(
+      request,
       actorId,
+      actor.role,
+      context,
       body,
-      context,
     );
-
-    const previousCarePlan =
-      context.patientId && context.encounterId
-        ? await operationalStore.loadPendingCarePlan(
-            actorId,
-            context.patientId,
-            context.encounterId,
-            context.threadId,
-          )
-        : null;
-    const workingContext = await assistantWorkingContext(
-      actorId,
-      context,
-      previousCarePlan,
-    );
+    const claim = await operationalStore.claimAssistantRequest(requestIdentity);
+    if (claim.state === "in-progress")
+      throw new DomainError(
+        "INVALID_STATE",
+        "Diese Assistenzanfrage wird bereits verarbeitet.",
+        409,
+      );
+    const replayedResponse = claim.response ?? null;
+    let requestCommitted = claim.state === "completed";
+    let voiceTranscriptProvenance: VoiceTranscriptProvenance | null = null;
+    let workingContext: Awaited<
+      ReturnType<typeof assistantWorkingContext>
+    > | null = null;
+    try {
+      if (!replayedResponse) {
+        voiceTranscriptProvenance = await consumeValidatedVoiceReceipt(
+          actorId,
+          body,
+          context,
+        );
+        const previousCarePlan =
+          context.patientId && context.encounterId
+            ? await operationalStore.loadPendingCarePlan(
+                actorId,
+                context.patientId,
+                context.encounterId,
+                context.threadId,
+              )
+            : null;
+        workingContext = await assistantWorkingContext(
+          actorId,
+          context,
+          previousCarePlan,
+        );
+      }
+    } catch (error) {
+      if (!requestCommitted)
+        await operationalStore.releaseAssistantRequest(requestIdentity);
+      throw error;
+    }
     const uiStream = createUIMessageStream({
       generateId: () => randomUUID(),
       execute: async ({ writer }) => {
@@ -3531,49 +3620,64 @@ export function buildApp(
         writer.write({ type: "start", messageId: streamId });
         emitProgress("Ich prüfe den freigegebenen Gesprächskontext …");
         try {
-          const response = await runAssistantQuery(() =>
-            assistant.query(actorId, {
-              prompt: body.prompt,
-              patientId: body.patientId,
-              inputModality: body.inputModality,
-              voiceTranscriptConfirmed: body.voiceTranscriptConfirmed ?? false,
-              ...(voiceTranscriptProvenance
-                ? { voiceTranscriptProvenance }
-                : {}),
-              signal: inferenceController.signal,
-              workingContext,
-              onProgress: ({ stage, toolName }) => {
-                if (stage === "tool")
-                  emitProgress(
-                    toolName === "prepare_clinical_draft"
-                      ? "Ich bereite die Angaben für deine Prüfung vor …"
-                      : "Ich lese die autorisierten Angaben …",
-                  );
-                if (stage === "validation")
-                  emitProgress("Ich gleiche Antwort und Quellen ab …");
-              },
-              ...(body.purpose ? { purpose: body.purpose } : {}),
-            }),
-          );
-          streamedResponse = response;
+          const response =
+            replayedResponse ??
+            (await runAssistantQuery(() =>
+              assistant.query(actorId, {
+                prompt: body.prompt,
+                patientId: body.patientId,
+                inputModality: body.inputModality,
+                voiceTranscriptConfirmed:
+                  body.voiceTranscriptConfirmed ?? false,
+                ...(voiceTranscriptProvenance
+                  ? { voiceTranscriptProvenance }
+                  : {}),
+                signal: inferenceController.signal,
+                workingContext: workingContext!,
+                onProgress: ({ stage, toolName }) => {
+                  if (stage === "tool")
+                    emitProgress(
+                      toolName === "prepare_clinical_draft"
+                        ? "Ich bereite die Angaben für deine Prüfung vor …"
+                        : "Ich lese die autorisierten Angaben …",
+                    );
+                  if (stage === "validation")
+                    emitProgress("Ich gleiche Antwort und Quellen ab …");
+                },
+                ...(body.purpose ? { purpose: body.purpose } : {}),
+              }),
+            ));
+          if (!replayedResponse) streamedResponse = response;
           if (inferenceController.signal.aborted || transportDisconnected()) {
             await revokeAfterDisconnect();
+            if (!requestCommitted)
+              await operationalStore.releaseAssistantRequest(requestIdentity);
             return;
           }
-          emitProgress(
-            response.components.some(
-              (component) => component.type === "DraftAction",
-            )
-              ? "Die Prüfung ist abgeschlossen; ich sichere den neuesten Entwurf …"
-              : "Die Prüfung ist abgeschlossen; ich sichere die Antwort …",
-          );
-          authorityPersistence = persistResponseAuthorities(response, context);
-          await authorityPersistence;
+          if (!replayedResponse)
+            emitProgress(
+              response.components.some(
+                (component) => component.type === "DraftAction",
+              )
+                ? "Die Prüfung ist abgeschlossen; ich sichere den neuesten Entwurf …"
+                : "Die Prüfung ist abgeschlossen; ich sichere die Antwort …",
+            );
+          // Defer persistence by one microtask so the lifecycle promise is
+          // visible to the close handler before any store callback can abort
+          // the transport synchronously.
+          if (!replayedResponse) {
+            authorityPersistence = Promise.resolve().then(() =>
+              persistResponseAuthorities(response, context),
+            );
+            await authorityPersistence;
+          }
           if (inferenceController.signal.aborted || transportDisconnected()) {
             await revokeAfterDisconnect();
+            if (!requestCommitted)
+              await operationalStore.releaseAssistantRequest(requestIdentity);
             return;
           }
-          try {
+          if (!replayedResponse)
             await operationalStore.appendConversationTurn(
               actorId,
               actor.role,
@@ -3592,15 +3696,9 @@ export function buildApp(
                 originContextRevision: context.contextRevision,
               },
               context,
+              { ...requestIdentity, response },
             );
-          } catch {
-            await revokeAuthorities();
-            throw new DomainError(
-              "INVALID_STATE",
-              "Der Gesprächszustand konnte nicht sicher gespeichert werden. Es wurde keine Aktion freigeschaltet.",
-              503,
-            );
-          }
+          requestCommitted = true;
           if (inferenceController.signal.aborted || transportDisconnected()) {
             await revokeAfterDisconnect();
             return;
@@ -3610,7 +3708,9 @@ export function buildApp(
           emitMessage(`openui-${response.id}`, response.openUi);
           writer.write({ type: "finish", finishReason: "stop" });
         } catch (error) {
-          await revokeAuthorities();
+          if (!replayedResponse) await revokeAuthorities();
+          if (!requestCommitted)
+            await operationalStore.releaseAssistantRequest(requestIdentity);
           throw error;
         }
       },
@@ -3826,6 +3926,10 @@ export function buildApp(
             );
             if (!workspace.loadResourceVersions)
               throw new Error("CLINICAL_VERSION_READ_NOT_AVAILABLE");
+            const sourceReferences = [
+              `Patient/${fhirResourceId("Patient", execution.patientId)}`,
+              `Encounter/${fhirResourceId("Encounter", execution.encounterId)}`,
+            ];
             const clinicalReferences = [
               ...changedResources.map(
                 (resource) => `${resource.resourceType}/${resource.id}`,
@@ -3833,7 +3937,16 @@ export function buildApp(
               ...removedReferences,
             ];
             const clinicalExpectedVersions =
-              await workspace.loadResourceVersions(clinicalReferences);
+              await workspace.loadResourceVersions([
+                ...new Set([...sourceReferences, ...clinicalReferences]),
+              ]);
+            if (
+              workspace.mode === "medplum" &&
+              sourceReferences.some(
+                (reference) => clinicalExpectedVersions[reference] === null,
+              )
+            )
+              throw new Error("CLINICAL_SOURCE_VERSION_NOT_AVAILABLE");
             const providerCommands = service
               .pendingProviderCommands()
               .filter(
@@ -3868,16 +3981,14 @@ export function buildApp(
               resultPayload: result,
               selectedActionIds: execution.reviewedActionIds ?? [],
               policyVersion: runtimeSitePack.packDigest,
-              sourceReadSet: [
-                {
-                  reference: `Patient/${fhirResourceId("Patient", execution.patientId)}`,
-                  version: execution.resourceVersion,
-                },
-                {
-                  reference: `Encounter/${fhirResourceId("Encounter", execution.encounterId)}`,
-                  version: execution.resourceVersion,
-                },
-              ],
+              sourceReadSet: sourceReferences.map((reference) => ({
+                reference,
+                version: clinicalExpectedVersions[reference] ?? null,
+                versionAuthority:
+                  workspace.mode === "medplum"
+                    ? "fhir-meta-versionId"
+                    : "unavailable-in-memory-demo",
+              })),
               auditEntries: service.audit.slice(beforeAuditLength),
               clinicalResources: changedResources,
               removedReferences,
@@ -4511,6 +4622,111 @@ export function buildApp(
             detail: { taskId: task.id },
           });
           return task;
+        },
+        request,
+        201,
+        true,
+      );
+      await persistScenarioState();
+      return reply.code(201).send(result);
+    });
+
+    app.post("/api/v1/admin/demo/task-assignment", async (request, reply) => {
+      const operator = requireDemoAdministrator(request);
+      const body = z
+        .object({
+          task: taskFixtureSchema.omit({ dueAt: true }),
+          dueOffsetMinutes: z
+            .number()
+            .int()
+            .min(1)
+            .max(7 * 24 * 60),
+          actorId: z.string().regex(/^u-[a-z0-9-]{2,70}$/),
+          patientIds: z.array(z.string().regex(/^p-[a-z0-9-]{2,70}$/)).max(100),
+        })
+        .strict()
+        .parse(request.body);
+      const active = await scenarioStore.active();
+      const occurredAt =
+        active.clock.mode === "frozen"
+          ? active.clock.anchor
+          : new Date().toISOString();
+      const result = await persist(
+        () => {
+          const checkpoint = service.checkpoint();
+          const patient = checkpoint.state.patients.find(
+            (item) => item.id === body.task.patientId,
+          );
+          const actor = checkpoint.state.users.find(
+            (item) => item.id === body.actorId,
+          );
+          if (!patient || !actor)
+            throw new DomainError(
+              "NOT_FOUND",
+              "Synthetische Person oder Mitarbeitende wurde nicht gefunden.",
+              404,
+            );
+          if (checkpoint.state.tasks.some((item) => item.id === body.task.id))
+            throw new DomainError(
+              "INVALID_STATE",
+              "Aufgaben-ID existiert bereits.",
+              409,
+            );
+          const knownPatients = new Set(
+            checkpoint.state.patients.map((item) => item.id),
+          );
+          if (
+            body.patientIds.some(
+              (patientId) => !knownPatients.has(patientId),
+            ) ||
+            (body.task.ownerId &&
+              !checkpoint.state.users.some(
+                (item) =>
+                  item.id === body.task.ownerId &&
+                  item.role === body.task.ownerRole,
+              ))
+          )
+            throw new DomainError(
+              "INVALID_STATE",
+              "Aufgabenverantwortung oder Zuweisung ist ungültig.",
+              409,
+            );
+          const task = {
+            ...body.task,
+            encounterId: patient.encounterId,
+            requesterId: operator.id,
+            dueAt: new Date(
+              Date.parse(occurredAt) + body.dueOffsetMinutes * 60_000,
+            ).toISOString(),
+            state: "new" as const,
+            acknowledgementRequired: true,
+            acknowledgedAt: null,
+            dependencies: [],
+            comments: [],
+            completionEvidence: null,
+            source: scenarioSource(
+              `scenario/${active.runId}/task/${body.task.id}`,
+              occurredAt,
+            ),
+          };
+          checkpoint.state.tasks.push(task);
+          actor.patientIds = [
+            ...new Set([...actor.patientIds, ...body.patientIds]),
+          ];
+          service.restoreCheckpoint(checkpoint);
+          service.audit.append({
+            actor: operator,
+            action: "demo-scenario:task-assignment-added",
+            patientId: patient.id,
+            purpose: "operations",
+            outcome: "success",
+            detail: {
+              taskId: task.id,
+              actorId: actor.id,
+              patientCount: actor.patientIds.length,
+            },
+          });
+          return { task, actorId: actor.id, patientIds: actor.patientIds };
         },
         request,
         201,

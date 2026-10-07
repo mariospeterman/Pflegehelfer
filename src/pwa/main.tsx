@@ -13,7 +13,10 @@ const ephemeralTunnel = window.location.hostname.endsWith(".ngrok-free.app");
 if ("serviceWorker" in navigator && import.meta.env.PROD && !ephemeralTunnel) {
   window.addEventListener(
     "load",
-    () => void navigator.serviceWorker.register("/sw.js"),
+    () =>
+      void navigator.serviceWorker.register(
+        `/sw.js?build=${encodeURIComponent(__PFH_BUILD_ID__)}`,
+      ),
   );
 }
 

@@ -1,3 +1,6 @@
+{{- if gt (int .Values.replicaCount) 1 }}
+{{- fail "replicaCount above 1 is unsafe until the process-local checkpoint read model is replaced" }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata: { name: {{ .Release.Name }} }
@@ -16,13 +19,14 @@ spec:
           env:
             - { name: HOST, value: "0.0.0.0" }
             - { name: PORT, value: "4173" }
+            - { name: PFH_RUNTIME_PROFILE, value: {{ .Values.config.runtimeProfile | quote }} }
             - { name: PFH_DEMO_MODE, value: {{ .Values.config.demoMode | quote }} }
             - { name: PFH_STORAGE_MODE, value: {{ .Values.config.storageMode | quote }} }
             - { name: PFH_FHIR_BASE_URL, value: {{ .Values.config.fhirBaseUrl | quote }} }
             - { name: MEDPLUM_APP_BASE_URL, value: {{ .Values.config.medplumAppBaseUrl | quote }} }
             - {
-                name: PFH_AI_ENABLED,
-                value: {{ .Values.config.aiEnabled | quote }},
+                name: PFH_AI_MODE,
+                value: {{ .Values.config.aiMode | quote }},
               }
           envFrom:
             - secretRef: { name: {{ .Values.secrets.existingSecret }} }

@@ -57,11 +57,15 @@ export interface SubmissionChannel {
   take(prompt: string): VoiceSubmission | null;
 }
 
-function requestHeaders(userId: string, write = false): HeadersInit {
+function requestHeaders(
+  userId: string,
+  write = false,
+  commandId?: string,
+): HeadersInit {
   return {
     "x-demo-user": userId,
     ...assistantClientContextHeaders(),
-    ...(write ? { "x-command-id": crypto.randomUUID() } : {}),
+    ...(write ? { "x-command-id": commandId ?? crypto.randomUUID() } : {}),
   };
 }
 
@@ -208,6 +212,7 @@ export function createConversationLlm(input: {
   purpose: string;
   submissionChannel: SubmissionChannel;
 }): ChatLLM {
+  const commandIds = new Map<string, string>();
   return {
     streamProtocol: vercelAIAdapter(),
     async send({ messages, signal }) {
@@ -217,11 +222,20 @@ export function createConversationLlm(input: {
       if (prompt.length < 2)
         throw new Error("Bitte gib mindestens zwei Zeichen ein.");
       const voice = input.submissionChannel.take(prompt);
+      const userMessage = messages.findLast((item) => item.role === "user");
+      const requestIdentity = `${userMessage?.id ?? "missing"}:${prompt}`;
+      let commandId = commandIds.get(requestIdentity);
+      if (!commandId) {
+        commandId = crypto.randomUUID();
+        commandIds.set(requestIdentity, commandId);
+        if (commandIds.size > 100)
+          commandIds.delete(commandIds.keys().next().value!);
+      }
       return fetch("/api/v1/assistant/query/stream", {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          ...requestHeaders(input.userId, true),
+          ...requestHeaders(input.userId, true, commandId),
         },
         body: JSON.stringify({
           prompt,

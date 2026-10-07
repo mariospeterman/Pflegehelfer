@@ -136,6 +136,62 @@ describe("persisted workspace collaboration", () => {
     expect(otherActor.statusCode).toBe(404);
   });
 
+  it("quarantines an attachment when inspection does not succeed", async () => {
+    const app = buildApp(undefined, {
+      demoMode: true,
+      documentInspection: {
+        status: () => ({
+          mode: "docling" as const,
+          configured: true,
+          message: "Synthetischer Prüfdienst.",
+        }),
+        inspect: () =>
+          Promise.resolve({
+            state: "failed" as const,
+            engine: "docling" as const,
+            engineVersion: null,
+            extractedText: null,
+            extractedTextSha256: null,
+            pageCount: null,
+            inspectedAt: new Date().toISOString(),
+            message: "Synthetischer Prüffehler.",
+          }),
+      },
+    });
+    apps.push(app);
+    const content = Buffer.from("synthetic library note\n", "utf8");
+    const digest = createHash("sha256").update(content).digest("hex");
+    const boundary = `pfh-${randomUUID()}`;
+    const payload = Buffer.concat([
+      Buffer.from(
+        `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="note.txt"\r\nContent-Type: text/plain\r\n\r\n`,
+      ),
+      content,
+      Buffer.from(`\r\n--${boundary}--\r\n`),
+    ]);
+    const upload = await app.inject({
+      method: "POST",
+      url: "/api/v1/workspace/attachments?audienceKind=private",
+      headers: {
+        ...headers("u-nurse"),
+        "content-type": `multipart/form-data; boundary=${boundary}`,
+        "x-content-sha256": digest,
+      },
+      payload,
+    });
+    expect(upload.statusCode).toBe(201);
+    const attachment = upload.json<{
+      value: { id: string; state: string };
+    }>().value;
+    expect(attachment.state).toBe("quarantined");
+    const download = await app.inject({
+      method: "GET",
+      url: `/api/v1/workspace/attachments/${attachment.id}/content`,
+      headers: { "x-demo-user": "u-nurse" },
+    });
+    expect(download.statusCode).toBe(404);
+  });
+
   it("requires review before a versioned profile update and rejects unauthorized edits", async () => {
     const app = buildApp(undefined, { demoMode: true });
     apps.push(app);

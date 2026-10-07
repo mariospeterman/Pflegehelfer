@@ -285,13 +285,13 @@ export function ClinicalComposer({
       const submittedPrompt = storedAttachment
         ? `${prompt}\n\nAnhang gespeichert: ${storedAttachment.fileName}.`
         : prompt;
-      setValue("");
-      setVoice(null);
-      setAttachment(null);
       await processMessage({
         role: "user",
         content: [{ type: "text", text: submittedPrompt }],
       });
+      setValue("");
+      setVoice(null);
+      setAttachment(null);
     } catch (error) {
       onError(
         error instanceof Error

@@ -23,6 +23,18 @@ import {
   createVoiceTranscriptProvenance,
   transcriptHash,
 } from "../src/core/voice-provenance.js";
+import { siteConfiguration } from "../src/core/site-config.js";
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value))
+    return `[${value.map((item) => canonicalJson(item)).join(",")}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
+    .join(",")}}`;
+}
 
 class RecordingWorkspace implements ClinicalWorkspace {
   readonly mode = "medplum" as const;
@@ -851,10 +863,21 @@ describe("durable workflow checkpoint", () => {
         priority: "routine",
         dueAt: "2026-09-06T14:00:00.000Z",
       };
+      const route = "/api/v1/tasks";
       const receipt: CommandReceipt = {
-        key: `u-nurse:POST:/api/v1/tasks:${commandId}`,
+        key: `${siteConfiguration.institutionId}:${siteConfiguration.siteId}:u-nurse:v2:POST:${route}:${commandId}`,
         requestHash: createHash("sha256")
-          .update(JSON.stringify(payload))
+          .update(
+            canonicalJson({
+              organizationId: siteConfiguration.institutionId,
+              siteId: siteConfiguration.siteId,
+              actorId: "u-nurse",
+              method: "POST",
+              route,
+              path: route,
+              body: payload,
+            }),
+          )
           .digest("hex"),
         statusCode: 201,
         payload: JSON.stringify({ id: `durable-task-${index}` }),
@@ -1003,7 +1026,10 @@ describe("durable workflow checkpoint", () => {
     const query = await first.inject({
       method: "POST",
       url: "/api/v1/assistant/query",
-      headers: { "x-demo-user": "u-nurse" },
+      headers: {
+        "x-demo-user": "u-nurse",
+        "x-command-id": crypto.randomUUID(),
+      },
       payload: {
         patientId: "p-anna",
         prompt:

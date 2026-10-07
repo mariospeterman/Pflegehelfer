@@ -13,6 +13,54 @@ afterEach(async () => {
 });
 
 describe("assistant request cancellation", () => {
+  it("replays one durable response for a retried assistant command", async () => {
+    const operationalStore = new InMemoryOperationalStore();
+    const append = vi.spyOn(operationalStore, "appendConversationTurn");
+    const app = buildApp(undefined, {
+      demoMode: true,
+      operationalStore,
+      modelGateway: new ModelGateway({ PFH_AI_MODE: "deterministic" }),
+    });
+    apps.push(app);
+    await app.inject({
+      method: "POST",
+      url: "/api/v1/assistant/context",
+      headers: {
+        "x-demo-user": "u-assistant",
+        "x-command-id": crypto.randomUUID(),
+      },
+      payload: { patientId: "p-luca" },
+    });
+    const commandId = crypto.randomUUID();
+    const request = {
+      method: "POST" as const,
+      url: "/api/v1/assistant/query",
+      headers: {
+        "x-demo-user": "u-assistant",
+        "x-command-id": commandId,
+      },
+      payload: {
+        patientId: "p-luca",
+        prompt: "Zeige mir die freigegebene Übersicht.",
+        inputModality: "typed" as const,
+      },
+    };
+
+    const first = await app.inject(request);
+    const replay = await app.inject(request);
+
+    expect(first.statusCode).toBe(200);
+    expect(replay.statusCode).toBe(200);
+    expect(replay.json()).toEqual(first.json());
+    expect(append).toHaveBeenCalledTimes(1);
+
+    const mismatch = await app.inject({
+      ...request,
+      payload: { ...request.payload, prompt: "Andere Anfrage." },
+    });
+    expect(mismatch.statusCode).toBe(409);
+  });
+
   it("retains one-use authority after a normally delivered HTTP response", async () => {
     const operationalStore = new InMemoryOperationalStore();
     const app = buildApp(undefined, {
@@ -162,21 +210,22 @@ describe("assistant request cancellation", () => {
         clientRequest.end(body);
       });
       await insertionReached;
-      await new Promise((resolve) => setTimeout(resolve, 20));
 
       expect(stored).toBeDefined();
       const authority = stored!;
-      await expect(
-        operationalStore.loadIntentAuthority({
-          tokenHash: authority.tokenHash,
-          actorId: authority.record.actorId,
-          sessionId: authority.sessionId,
-          threadId: authority.threadId,
-          contextRevision: authority.contextRevision,
-          patientId: authority.record.patientId,
-          encounterId: authority.record.encounterId,
-        }),
-      ).resolves.toBeNull();
+      await vi.waitFor(async () => {
+        await expect(
+          operationalStore.loadIntentAuthority({
+            tokenHash: authority.tokenHash,
+            actorId: authority.record.actorId,
+            sessionId: authority.sessionId,
+            threadId: authority.threadId,
+            contextRevision: authority.contextRevision,
+            patientId: authority.record.patientId,
+            encounterId: authority.record.encounterId,
+          }),
+        ).resolves.toBeNull();
+      });
     },
   );
 

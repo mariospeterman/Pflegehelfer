@@ -93,6 +93,7 @@ export function ClinicalAssistantMessage({
   const [speaking, setSpeaking] = useState(false);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioUrlRef = useRef<string | null>(null);
   if (!actions) throw new Error("ConversationActionsProvider fehlt.");
   const source = message.content ?? "";
   const proposalStatus = message.name?.match(
@@ -116,6 +117,7 @@ export function ClinicalAssistantMessage({
   useEffect(
     () => () => {
       audioRef.current?.pause();
+      if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
       window.speechSynthesis?.cancel();
     },
     [],
@@ -124,6 +126,8 @@ export function ClinicalAssistantMessage({
   const stopSpeaking = () => {
     audioRef.current?.pause();
     audioRef.current = null;
+    if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
+    audioUrlRef.current = null;
     window.speechSynthesis?.cancel();
     setSpeaking(false);
   };
@@ -176,14 +180,17 @@ export function ClinicalAssistantMessage({
         const url = URL.createObjectURL(await response.blob());
         const audio = new Audio(url);
         audioRef.current = audio;
+        audioUrlRef.current = url;
         audio.onended = () => {
           URL.revokeObjectURL(url);
           audioRef.current = null;
+          audioUrlRef.current = null;
           setSpeaking(false);
         };
         audio.onerror = () => {
           URL.revokeObjectURL(url);
           audioRef.current = null;
+          audioUrlRef.current = null;
           setSpeaking(false);
           actions.onError("Die Audiodatei konnte nicht abgespielt werden.");
         };

@@ -1,4 +1,6 @@
-const SHELL = "pflegehelfer-shell-v2";
+const BUILD_ID =
+  new URL(self.location.href).searchParams.get("build") ?? "unversioned";
+const SHELL = `pflegehelfer-shell-${BUILD_ID}`;
 const ASSETS = [
   "/",
   "/manifest.webmanifest",
@@ -43,6 +45,7 @@ self.addEventListener("fetch", (event) => {
   if (
     url.pathname.startsWith("/api/") ||
     url.pathname === "/health" ||
+    url.pathname === "/ready" ||
     event.request.method !== "GET"
   )
     return;

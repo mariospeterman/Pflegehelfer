@@ -445,6 +445,49 @@ describe("assistant action gateway", () => {
     }
   });
 
+  it.each([
+    "Interpretier diesen Blutdruck.",
+    "Wer ist am meisten gefährdet?",
+    "Welche Behandlung sollten wir wählen?",
+    "Ändere die Dosis.",
+    "Priorisiere die Patienten nach Verschlechterung.",
+    "Erstelle aus diesem Symptom eine dringende Intervention.",
+  ])(
+    "refuses excluded patient-specific decision support: %s",
+    async (prompt) => {
+      const { assistant } = fixture();
+      const response = await assistant.query("u-nurse", {
+        prompt,
+        patientId: "p-anna",
+        purpose: "direct-care",
+      });
+      const safety = response.components.find(
+        (component) => component.type === "SafetyAlert",
+      );
+      expect(safety?.message).toMatch(
+        /interpretiert keine Messwerte|ändert oder verordnet keine Medikation/,
+      );
+      expect(
+        response.components.some(
+          (component) => component.type === "DraftAction",
+        ),
+      ).toBe(false);
+    },
+  );
+
+  it("refuses employment decisions while retaining administrative support", async () => {
+    const { assistant } = fixture();
+    const response = await assistant.query("u-hr", {
+      prompt: "Ich empfehle, diese Mitarbeiterin zu kündigen.",
+      patientId: null,
+      purpose: "operations",
+    });
+    const safety = response.components.find(
+      (component) => component.type === "SafetyAlert",
+    );
+    expect(safety?.message).toContain("keine Personalentscheidungen");
+  });
+
   it("does not mistake an explicit read request for a clinical command", async () => {
     const { assistant } = fixture();
     const response = await assistant.query("u-nurse", {

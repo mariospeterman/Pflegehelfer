@@ -422,6 +422,7 @@ describe("deterministic clinical workflows", () => {
     const bell = service.triggerNurseCall("u-it", "p-anna");
     expect(bell.source.provider).toBe("nurse-call");
     expect(bell.reason).toMatch(/primären Rufanlage/);
+    expect(bell.priority).toBe("routine");
     expect(
       service.runNurseCallEscalations(
         "u-it",
