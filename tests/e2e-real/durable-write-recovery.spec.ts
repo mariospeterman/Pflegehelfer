@@ -110,7 +110,9 @@ test("recovers one durable write after the acceptance response is lost and the A
       },
       { times: 1 },
     );
-    await draft.getByRole("button", { name: "Auswahl bestätigen" }).click();
+    await draft
+      .getByRole("button", { name: "Erneut prüfen und übernehmen" })
+      .click();
     await expect.poll(() => serverExecuted).toBe(true);
     expect(commandId).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
@@ -217,9 +219,9 @@ test("recovers one durable write after the acceptance response is lost and the A
     await page.reload();
     await expect(page.getByLabel("Pflegehelfer Gespräch")).toBeVisible();
     await expect(page.getByText("Ausgeführt", { exact: true })).toBeVisible();
-    await expect(
-      page.getByRole("button", { name: "Auswahl bestätigen" }),
-    ).toHaveCount(0);
+    await expect(page.locator(".assistant-draft button.primary")).toHaveCount(
+      0,
+    );
     const uniqueness = await database.query<{
       accepted_count: string;
       provider_effect_count: string;
