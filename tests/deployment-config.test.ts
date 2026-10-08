@@ -55,6 +55,10 @@ describe("production deployment guards", () => {
     expect(workflow).toContain(
       "MEDPLUM_APP_BASE_URL=http://127.0.0.1:$PFH_MEDPLUM_APP_HOST_PORT/",
     );
+    expect(workflow).toContain("Dump isolated service diagnostics");
+    expect(workflow).toContain(
+      "--no-color --tail=300 pflegehelfer pflegehelfer-migrate test-idp",
+    );
   });
 });
 

@@ -177,6 +177,13 @@ jobs:
         run: pnpm verify:e2e:real-stack
       - name: Tenant RLS adversarial checks
         run: pnpm exec vitest run --maxWorkers=1 tests/postgres-rls.test.ts
+      - name: Dump isolated service diagnostics
+        if: failure()
+        run: |
+          pnpm e2e:guard
+          docker compose -p "$PFH_COMPOSE_PROJECT" --env-file .env.demo ps --all
+          docker compose -p "$PFH_COMPOSE_PROJECT" --env-file .env.demo logs \
+            --no-color --tail=300 pflegehelfer pflegehelfer-migrate test-idp
       - name: Stop isolated stack
         if: always()
         run: |
