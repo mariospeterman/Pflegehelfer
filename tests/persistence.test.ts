@@ -167,7 +167,9 @@ describe("durable workflow checkpoint", () => {
     });
     expect(
       resources.some(
-        (resource) => resource.resourceType === "QuestionnaireResponse",
+        (resource) =>
+          resource.resourceType === "QuestionnaireResponse" &&
+          resource.id === fhirResourceId("QuestionnaireResponse", created.id),
       ),
     ).toBe(false);
   });

@@ -17,11 +17,13 @@ import type {
 import { z } from "zod";
 import { verifyAuditEntries } from "../core/audit.js";
 import {
+  fromFhirResourceSet,
   fhirResourceId,
   legacyFhirResourceId,
   managedProjectionTag,
   tenantTag,
   tenantTagSystem,
+  type CanonicalClinicalState,
 } from "../core/fhir-resource-set.js";
 import { actionSchema, siteConfiguration } from "../core/site-config.js";
 import type { CommandReceipt, ServiceCheckpoint } from "../core/service.js";
@@ -537,6 +539,8 @@ export interface ClinicalWorkspace {
   loadResourceVersions?(
     references: readonly string[],
   ): Promise<Record<string, string | null>>;
+  loadManagedProjectionInventory?(): Promise<Record<string, number>>;
+  loadCanonicalClinicalState?(): Promise<CanonicalClinicalState>;
   verifyProjection?(
     resources: Resource[],
     removedReferences?: readonly string[],
@@ -569,6 +573,9 @@ export class InMemoryClinicalWorkspace implements ClinicalWorkspace {
     return Promise.resolve(
       Object.fromEntries(references.map((reference) => [reference, null])),
     );
+  }
+  loadManagedProjectionInventory(): Promise<Record<string, number>> {
+    return Promise.resolve({});
   }
   verifyProjection(): Promise<boolean> {
     return Promise.resolve(true);
@@ -952,6 +959,105 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
     return versions;
   }
 
+  async loadCanonicalClinicalState(): Promise<CanonicalClinicalState> {
+    await this.connect();
+    const canonicalTypes = [
+      "Practitioner",
+      "Patient",
+      "Task",
+      "Observation",
+      "Communication",
+      "DocumentReference",
+      "QuestionnaireResponse",
+    ] satisfies ResourceType[];
+    const scopedTenantTag = `${tenantTagSystem}|${tenantTag().code}`;
+    const scopedProjectionTag = `${managedProjectionTag.system}|${managedProjectionTag.code}`;
+    const readPass = async (): Promise<{
+      resources: Resource[];
+      fence: string;
+    }> => {
+      const resources: Resource[] = [];
+      for (const resourceType of canonicalTypes) {
+        const filter = `_tag=${encodeURIComponent(scopedTenantTag)}&_tag=${encodeURIComponent(scopedProjectionTag)}`;
+        const count = await this.client.search(
+          resourceType,
+          `${filter}&_summary=count&_total=accurate`,
+        );
+        if (!Number.isInteger(count.total) || (count.total ?? -1) < 0)
+          throw new Error(`CANONICAL_RESOURCE_COUNT_UNPROVEN:${resourceType}`);
+        const collected: Resource[] = [];
+        let pageCount = 0;
+        for await (const page of this.client.searchResourcePages(
+          resourceType,
+          new URLSearchParams(`${filter}&_count=100&_total=accurate`),
+        )) {
+          pageCount += 1;
+          if (pageCount > 100 || collected.length + page.length > 10_000)
+            throw new Error(
+              `CANONICAL_RESOURCE_SEARCH_INCOMPLETE:${resourceType}`,
+            );
+          collected.push(...page);
+        }
+        if (collected.length !== count.total)
+          throw new Error(`CANONICAL_RESOURCE_COUNT_MISMATCH:${resourceType}`);
+        const references = collected.map((resource) => {
+          if (!resource.id)
+            throw new Error(`CANONICAL_RESOURCE_ID_MISSING:${resourceType}`);
+          if (!resource.meta?.versionId)
+            throw new Error(
+              `CANONICAL_DOMAIN_VERSION_MISSING:${resource.resourceType}/${resource.id}`,
+            );
+          return `${resource.resourceType}/${resource.id}@${resource.meta.versionId}`;
+        });
+        if (new Set(references).size !== references.length)
+          throw new Error(`CANONICAL_RESOURCE_PAGE_DUPLICATE:${resourceType}`);
+        resources.push(...collected);
+      }
+      return {
+        resources,
+        fence: resources
+          .map(
+            (resource) =>
+              `${resource.resourceType}/${resource.id}@${resource.meta?.versionId}`,
+          )
+          .sort()
+          .join("\n"),
+      };
+    };
+    let previous = await readPass();
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const current = await readPass();
+      if (current.fence === previous.fence)
+        return fromFhirResourceSet(current.resources, {
+          requireServerVersion: true,
+        });
+      previous = current;
+    }
+    throw new Error("CANONICAL_RESOURCE_SNAPSHOT_UNSTABLE");
+  }
+
+  async loadManagedProjectionInventory(): Promise<Record<string, number>> {
+    await this.connect();
+    const scopedTenantTag = `${tenantTagSystem}|${tenantTag().code}`;
+    const scopedProjectionTag = `${managedProjectionTag.system}|${managedProjectionTag.code}`;
+    return Object.fromEntries(
+      await Promise.all(
+        managedClinicalResourceTypes.map(async (resourceType) => {
+          const filter = `_tag=${encodeURIComponent(scopedTenantTag)}&_tag=${encodeURIComponent(scopedProjectionTag)}`;
+          const count = await this.client.search(
+            resourceType,
+            `${filter}&_summary=count&_total=accurate`,
+          );
+          if (!Number.isInteger(count.total) || (count.total ?? -1) < 0)
+            throw new Error(
+              `MANAGED_PROJECTION_COUNT_UNPROVEN:${resourceType}`,
+            );
+          return [resourceType, count.total!] as const;
+        }),
+      ),
+    );
+  }
+
   private async readSourceReadSet(
     input: SourceReadSetV1,
     requireDraftMatch: boolean,
@@ -1028,7 +1134,7 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
       const encounterReference = `Encounter/${fhirResourceId("Encounter", selector.encounterId)}`;
       const sort =
         selector.order === "due-asc"
-          ? "period"
+          ? "_lastUpdated"
           : selector.order === "effective-desc"
             ? "-date"
             : "-sent";
@@ -1092,6 +1198,7 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
       });
       matching.sort((left, right) => {
         const leftRecord = left as Resource & {
+          restriction?: { period?: { end?: string } };
           executionPeriod?: { end?: string };
           effectiveDateTime?: string;
           sent?: string;
@@ -1099,13 +1206,17 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
         const rightRecord = right as typeof leftRecord;
         const leftValue =
           selector.order === "due-asc"
-            ? (leftRecord.executionPeriod?.end ?? "9999")
+            ? (leftRecord.restriction?.period?.end ??
+              leftRecord.executionPeriod?.end ??
+              "9999")
             : selector.order === "effective-desc"
               ? (leftRecord.effectiveDateTime ?? "")
               : (leftRecord.sent ?? "");
         const rightValue =
           selector.order === "due-asc"
-            ? (rightRecord.executionPeriod?.end ?? "9999")
+            ? (rightRecord.restriction?.period?.end ??
+              rightRecord.executionPeriod?.end ??
+              "9999")
             : selector.order === "effective-desc"
               ? (rightRecord.effectiveDateTime ?? "")
               : (rightRecord.sent ?? "");
@@ -1539,6 +1650,7 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
         "Observation",
         "Communication",
         "DocumentReference",
+        "QuestionnaireResponse",
         "CarePlan",
         "Goal",
       ] satisfies ResourceType[];

@@ -96,7 +96,7 @@ export class ClinicalProjectionWorker {
       }
       await this.workspace.synchronize(
         job.resources,
-        job.checkpoint,
+        undefined,
         job.removedReferences,
         undefined,
         job.expectedVersions,

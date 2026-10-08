@@ -3,7 +3,7 @@ import pg from "pg";
 import { describe, expect, it } from "vitest";
 import { AuditChain } from "../src/core/audit.js";
 import { users } from "../src/core/seed.js";
-import { PflegehelferService } from "../src/core/service.js";
+import { siteConfiguration } from "../src/core/site-config.js";
 import { PostgresOperationalStore } from "../src/infrastructure/operational-store.js";
 import { sourceReadSetFixture } from "./source-read-set-fixture.js";
 
@@ -102,7 +102,6 @@ describe.runIf(Boolean(databaseUrl))("atomic local command acceptance", () => {
         clinicalResources: [],
         removedReferences: [],
         clinicalExpectedVersions: {},
-        checkpoint: new PflegehelferService().checkpoint(),
         providerCommands: [
           {
             provider: "device-gateway" as const,
@@ -209,13 +208,22 @@ describe.runIf(Boolean(databaseUrl))("atomic local command acceptance", () => {
         audits: number;
         projections: number;
         providerJobs: number;
+        projectionSchema: number;
+        projectionContainsCheckpoint: boolean;
+        projectionSite: string;
       }>(
         `SELECT
            (SELECT count(*)::int FROM accepted_commands WHERE id=$1) accepted,
            (SELECT count(*)::int FROM command_receipts WHERE command_key=$2) receipts,
            (SELECT count(*)::int FROM audit_entries WHERE entry_hash=$3) audits,
            (SELECT count(*)::int FROM clinical_projection_outbox WHERE accepted_command_id=$1) projections,
-           (SELECT count(*)::int FROM provider_outbox WHERE accepted_command_id=$1) "providerJobs"`,
+           (SELECT count(*)::int FROM provider_outbox WHERE accepted_command_id=$1) "providerJobs",
+           (SELECT payload_schema_version::int FROM clinical_projection_outbox
+             WHERE accepted_command_id=$1) "projectionSchema",
+           (SELECT payload ? 'checkpoint' FROM clinical_projection_outbox
+             WHERE accepted_command_id=$1) "projectionContainsCheckpoint",
+           (SELECT site_id FROM clinical_projection_outbox
+             WHERE accepted_command_id=$1) "projectionSite"`,
         [accepted.id, commandKey, auditEntry.hash],
       );
       expect(counts.rows[0]).toEqual({
@@ -224,6 +232,9 @@ describe.runIf(Boolean(databaseUrl))("atomic local command acceptance", () => {
         audits: 1,
         projections: 1,
         providerJobs: 1,
+        projectionSchema: 2,
+        projectionContainsCheckpoint: false,
+        projectionSite: siteConfiguration.siteId,
       });
       await expect(
         store.claimProviderCommands({

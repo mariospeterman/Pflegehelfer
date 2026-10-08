@@ -13,24 +13,8 @@ const job: ClinicalProjectionJob = {
   resources: [{ resourceType: "Patient", id: "patient-1", active: true }],
   removedReferences: ["Task/task-1"],
   expectedVersions: { "Patient/patient-1": "7", "Task/task-1": "3" },
-  checkpoint: {
-    formatVersion: 1,
-    dataClass: "synthetic-demo",
-    state: {
-      users: [],
-      patients: [],
-      tasks: [],
-      observations: [],
-      notes: [],
-      communications: [],
-      intake: [],
-      roundActions: [],
-      providerHealth: [],
-      outbox: [],
-    },
-    audit: [],
-    commandReceipts: [],
-  },
+  payloadSchemaVersion: 2,
+  targetKeys: ["Patient/patient-1", "Task/task-1"],
   attempts: 1,
 };
 
@@ -83,7 +67,7 @@ describe("clinical projection worker", () => {
     });
     expect(synchronize).toHaveBeenCalledWith(
       job.resources,
-      job.checkpoint,
+      undefined,
       job.removedReferences,
       undefined,
       job.expectedVersions,

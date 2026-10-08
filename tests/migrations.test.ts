@@ -52,12 +52,23 @@ describe("immutable migration ledger", () => {
       { version: 25, name: "025_oidc_rp_initiated_logout.sql" },
       { version: 26, name: "026_oidc_principal_memberships.sql" },
       { version: 27, name: "027_provider_resource_ordering.sql" },
+      {
+        version: 28,
+        name: "028_resource_scoped_clinical_projection.sql",
+      },
+      { version: 29, name: "029_site_scoped_provider_delivery.sql" },
     ]);
     expect(
       migrations.every(({ checksum }) => /^[a-f0-9]{64}$/.test(checksum)),
     ).toBe(true);
     expect(migrations.find(({ version }) => version === 27)?.sql).toContain(
       "MIGRATION_ORDER_UNPROVEN",
+    );
+    expect(migrations.find(({ version }) => version === 28)?.sql).toContain(
+      "payload_schema_version",
+    );
+    expect(migrations.find(({ version }) => version === 29)?.sql).toContain(
+      "MIGRATION_SITE_UNPROVEN",
     );
   });
 

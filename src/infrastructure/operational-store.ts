@@ -13,7 +13,8 @@ import {
   archiveAssistantResponse,
   type AssistantResponse,
 } from "../core/assistant-service.js";
-import type { ServiceCheckpoint } from "../core/service.js";
+import type { WorkflowState } from "../core/service.js";
+import { scenarioRunContentDigest } from "../core/demo-scenario.js";
 import {
   providerIdSchema,
   providerOutboxPayloadSchema,
@@ -57,6 +58,12 @@ import type {
   VoiceTranscriptProvenance,
 } from "../core/voice-provenance.js";
 import {
+  assertCanonicalManagedResourceOwnership,
+  managedProjectionTag,
+  tenantTag,
+  tenantTagSystem,
+} from "../core/fhir-resource-set.js";
+import {
   workspaceAttachmentSchema,
   workspaceCommentSchema,
   workspaceProfileFieldSchema,
@@ -92,6 +99,87 @@ function canonicalJson(value: unknown): string {
     .sort()
     .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
     .join(",")}}`;
+}
+
+function clinicalProjectionTargetKeys(
+  resources: readonly Resource[],
+  removedReferences: readonly string[],
+  acceptedCommandId: string,
+): string[] {
+  const writtenReferences = resources.map((resource) => {
+    assertCanonicalManagedResourceOwnership(resource);
+    const tenantTags = (resource.meta?.tag ?? []).filter(
+      (tag) => tag.system === tenantTagSystem,
+    );
+    const projectionTags = (resource.meta?.tag ?? []).filter(
+      (tag) => tag.system === managedProjectionTag.system,
+    );
+    if (
+      tenantTags.length !== 1 ||
+      tenantTags[0]?.code !== tenantTag().code ||
+      projectionTags.length !== 1 ||
+      projectionTags[0]?.code !== managedProjectionTag.code
+    )
+      throw new Error("CLINICAL_PROJECTION_RESOURCE_SCOPE_INVALID");
+    if (!resource.id)
+      throw new Error("CLINICAL_PROJECTION_RESOURCE_ID_MISSING");
+    return `${resource.resourceType}/${resource.id}`;
+  });
+  if (new Set(writtenReferences).size !== writtenReferences.length)
+    throw new Error("CLINICAL_PROJECTION_DUPLICATE_WRITE_TARGET");
+  if (new Set(removedReferences).size !== removedReferences.length)
+    throw new Error("CLINICAL_PROJECTION_DUPLICATE_DELETE_TARGET");
+  const written = new Set(writtenReferences);
+  if (removedReferences.some((reference) => written.has(reference)))
+    throw new Error("CLINICAL_PROJECTION_WRITE_DELETE_CONFLICT");
+  const references = [...writtenReferences, ...removedReferences];
+  for (const reference of references)
+    if (!/^[A-Za-z][A-Za-z]+\/[A-Za-z0-9.-]{1,64}$/.test(reference))
+      throw new Error(`INVALID_CLINICAL_RESOURCE_REFERENCE:${reference}`);
+  const unique = [...new Set(references)].sort();
+  return unique.length > 0 ? unique : [`accepted-command:${acceptedCommandId}`];
+}
+
+function clinicalProjectionPayloadV2(input: {
+  acceptedCommandId: string;
+  resources: readonly Resource[];
+  removedReferences: readonly string[];
+  expectedVersions: Readonly<Record<string, string | null>>;
+}) {
+  const targetKeys = clinicalProjectionTargetKeys(
+    input.resources,
+    input.removedReferences,
+    input.acceptedCommandId,
+  );
+  const resourceTargets = targetKeys.filter(
+    (reference) => !reference.startsWith("accepted-command:"),
+  );
+  if (
+    Object.keys(input.expectedVersions).sort().join("\n") !==
+    [...resourceTargets].sort().join("\n")
+  )
+    throw new Error("CLINICAL_PROJECTION_EXPECTED_VERSION_SCOPE_MISMATCH");
+  if (
+    input.removedReferences.some(
+      (reference) =>
+        typeof input.expectedVersions[reference] !== "string" ||
+        input.expectedVersions[reference].length === 0,
+    )
+  )
+    throw new Error("CLINICAL_PROJECTION_DELETE_VERSION_REQUIRED");
+  const payload = {
+    schemaVersion: 2 as const,
+    acceptedCommandId: input.acceptedCommandId,
+    resources: structuredClone(input.resources),
+    removedReferences: [...input.removedReferences],
+    expectedVersions: structuredClone(input.expectedVersions),
+  };
+  return {
+    ...payload,
+    semanticDigest: createHash("sha256")
+      .update(canonicalJson(payload))
+      .digest("hex"),
+  };
 }
 
 function facilityDateKey(value = new Date()): string {
@@ -323,7 +411,8 @@ export interface LocalIntentAcceptance {
   clinicalResources: Resource[];
   removedReferences: string[];
   clinicalExpectedVersions: Record<string, string | null>;
-  checkpoint: ServiceCheckpoint;
+  demoScenarioState?: WorkflowState;
+  demoScenarioExpectedDigest?: string;
   episodeEvidence?: string;
   workdayCommand?: Extract<WorkdayCommand, { type: "interrupt-and-start" }>;
   providerCommands: Array<{
@@ -341,7 +430,8 @@ export interface ClinicalProjectionJob {
   resources: Resource[];
   removedReferences: string[];
   expectedVersions: Record<string, string | null>;
-  checkpoint: ServiceCheckpoint;
+  payloadSchemaVersion: 1 | 2;
+  targetKeys: string[];
   attempts: number;
 }
 
@@ -568,7 +658,6 @@ export interface OperationalStore {
   isAcceptedCommandReceiptCurrent(
     authorization: AcceptedCommandAuthorization,
   ): Promise<boolean>;
-  loadLatestAcceptedCheckpoint(): Promise<ServiceCheckpoint | null>;
   claimClinicalProjection(input: {
     workerId: string;
     leaseDurationMs: number;
@@ -1842,7 +1931,12 @@ export class InMemoryOperationalStore implements OperationalStore {
       resources: structuredClone(input.clinicalResources),
       removedReferences: [...input.removedReferences],
       expectedVersions: structuredClone(input.clinicalExpectedVersions),
-      checkpoint: structuredClone(input.checkpoint),
+      payloadSchemaVersion: 2,
+      targetKeys: clinicalProjectionTargetKeys(
+        input.clinicalResources,
+        input.removedReferences,
+        receipt.id,
+      ),
       attempts: 0,
       state: "pending",
       leaseOwner: null,
@@ -1884,10 +1978,6 @@ export class InMemoryOperationalStore implements OperationalStore {
       ),
     );
   }
-  loadLatestAcceptedCheckpoint(): Promise<ServiceCheckpoint | null> {
-    const latest = this.clinicalProjectionJobs.at(-1);
-    return Promise.resolve(latest ? structuredClone(latest.checkpoint) : null);
-  }
   claimClinicalProjection(input: {
     workerId: string;
     leaseDurationMs: number;
@@ -1896,13 +1986,21 @@ export class InMemoryOperationalStore implements OperationalStore {
     void input.leaseDurationMs;
     void input.now;
     const job = this.clinicalProjectionJobs.find(
-      (candidate) => candidate.state !== "delivered",
+      (candidate, index, jobs) =>
+        ["pending", "retry"].includes(candidate.state) &&
+        !jobs
+          .slice(0, index)
+          .some(
+            (earlier) =>
+              earlier.state !== "delivered" &&
+              earlier.targetKeys.some((key) =>
+                candidate.targetKeys.includes(key),
+              ),
+          ),
     );
-    // Checkpoints are whole-state recovery artifacts. Never project a newer
-    // checkpoint around an older retry/manual hold and later let the older
-    // checkpoint overwrite it.
-    if (!job || !["pending", "retry"].includes(job.state))
-      return Promise.resolve(null);
+    // Resource-scoped ordering preserves causality for the same target while
+    // allowing unrelated patients/resources to progress independently.
+    if (!job) return Promise.resolve(null);
     job.state = "leased";
     job.leaseOwner = input.workerId;
     job.lastErrorCode = null;
@@ -1953,10 +2051,9 @@ export class InMemoryOperationalStore implements OperationalStore {
   }
   manualClinicalProjectionHead(): Promise<ManualClinicalProjectionHold | null> {
     const head = this.clinicalProjectionJobs.find(
-      (candidate) => candidate.state !== "delivered",
+      (candidate) => candidate.state === "manual",
     );
-    if (head?.state !== "manual" || !head.lastErrorCode)
-      return Promise.resolve(null);
+    if (!head?.lastErrorCode) return Promise.resolve(null);
     return Promise.resolve({
       jobId: head.id,
       acceptedCommandId: head.acceptedCommandId,
@@ -2013,14 +2110,21 @@ export class InMemoryOperationalStore implements OperationalStore {
         replayed: true,
       });
     }
-    const head = this.clinicalProjectionJobs.find(
-      (candidate) => candidate.state !== "delivered",
+    const headIndex = this.clinicalProjectionJobs.findIndex(
+      (candidate) => candidate.id === input.jobId,
     );
+    const head = this.clinicalProjectionJobs[headIndex];
     if (
       !head ||
-      head.id !== input.jobId ||
       head.state !== "manual" ||
-      head.lastErrorCode !== input.expectedErrorCode
+      head.lastErrorCode !== input.expectedErrorCode ||
+      this.clinicalProjectionJobs
+        .slice(0, headIndex)
+        .some(
+          (earlier) =>
+            earlier.state !== "delivered" &&
+            earlier.targetKeys.some((key) => head.targetKeys.includes(key)),
+        )
     )
       return Promise.reject(
         new DomainError(
@@ -5314,23 +5418,69 @@ export class PostgresOperationalStore
           [organizationId, input.sessionId],
         );
       }
+      const clinicalPayload = clinicalProjectionPayloadV2({
+        acceptedCommandId,
+        resources: input.clinicalResources,
+        removedReferences: input.removedReferences,
+        expectedVersions: input.clinicalExpectedVersions,
+      });
+      const clinicalTargetKeys = clinicalProjectionTargetKeys(
+        input.clinicalResources,
+        input.removedReferences,
+        acceptedCommandId,
+      );
       await client.query(
         `INSERT INTO clinical_projection_outbox
-           (organization_id,id,accepted_command_id,idempotency_key,payload,state)
-         VALUES ($1,$2,$3,$4,$5,'pending')`,
+           (organization_id,site_id,id,accepted_command_id,idempotency_key,
+            payload,payload_schema_version,target_keys,state)
+         VALUES ($1,$2,$3,$4,$5,$6,2,$7,'pending')`,
         [
           organizationId,
+          siteConfiguration.siteId,
           randomUUID(),
           acceptedCommandId,
           `clinical:${acceptedCommandId}`,
-          JSON.stringify({
-            resources: input.clinicalResources,
-            removedReferences: input.removedReferences,
-            expectedVersions: input.clinicalExpectedVersions,
-            checkpoint: input.checkpoint,
-          }),
+          JSON.stringify(clinicalPayload),
+          clinicalTargetKeys,
         ],
       );
+      if (input.demoScenarioState) {
+        if (!/^[a-f0-9]{64}$/.test(input.demoScenarioExpectedDigest ?? ""))
+          throw new Error("DEMO_SCENARIO_EXPECTED_DIGEST_REQUIRED");
+        const scenario = await client.query<{
+          run_id: string;
+          workspace: DemoWorkspaceSnapshot;
+          state_digest: string;
+        }>(
+          `SELECT run_id::text,workspace,state_digest FROM demo_scenario_runs
+           WHERE organization_id=$1 AND active=true FOR UPDATE`,
+          [organizationId],
+        );
+        const active = scenario.rows[0];
+        if (!active) throw new Error("DEMO_SCENARIO_ACTIVE_RUN_MISSING");
+        if (active.state_digest !== input.demoScenarioExpectedDigest)
+          throw new DomainError(
+            "VERSION_CONFLICT",
+            "Der aktive Demo-Szenariostand wurde parallel geändert.",
+            409,
+          );
+        const state = structuredClone({
+          ...input.demoScenarioState,
+          outbox: [],
+        });
+        const stateDigest = scenarioRunContentDigest({
+          state,
+          workspace: active.workspace,
+        });
+        const updated = await client.query(
+          `UPDATE demo_scenario_runs
+           SET state=$3,state_digest=$4,updated_at=now()
+           WHERE organization_id=$1 AND run_id=$2 AND active=true`,
+          [organizationId, active.run_id, state, stateDigest],
+        );
+        if (updated.rowCount !== 1)
+          throw new Error("DEMO_SCENARIO_ACTIVE_RUN_CHANGED");
+      }
       for (const pending of input.providerCommands) {
         const payload = providerOutboxPayloadSchema.parse({
           schemaVersion: 1,
@@ -5340,13 +5490,14 @@ export class PostgresOperationalStore
         const outboxId = randomUUID();
         const inserted = await client.query(
           `INSERT INTO provider_outbox
-             (organization_id,id,provider_id,profile_id,operation,idempotency_key,
+             (organization_id,site_id,id,provider_id,profile_id,operation,idempotency_key,
               payload,state,accepted_command_id,authority_envelope,target_key)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,'pending',$8,$9,$10)
-           ON CONFLICT (organization_id,provider_id,profile_id,idempotency_key)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending',$9,$10,$11)
+           ON CONFLICT (organization_id,site_id,provider_id,profile_id,idempotency_key)
            DO NOTHING RETURNING id`,
           [
             organizationId,
+            siteConfiguration.siteId,
             outboxId,
             pending.provider,
             pending.profile,
@@ -5361,13 +5512,15 @@ export class PostgresOperationalStore
         if (!inserted.rowCount) {
           const existing = await client.query<{ payload: unknown }>(
             `SELECT payload FROM provider_outbox
-             WHERE organization_id=$1 AND provider_id=$2 AND profile_id=$3
+             WHERE organization_id=$1 AND site_id=$5
+               AND provider_id=$2 AND profile_id=$3
                AND idempotency_key=$4`,
             [
               organizationId,
               pending.provider,
               pending.profile,
               pending.command.idempotencyKey,
+              siteConfiguration.siteId,
             ],
           );
           if (
@@ -5551,22 +5704,6 @@ export class PostgresOperationalStore
     );
     return result.rowCount === 1;
   }
-  async loadLatestAcceptedCheckpoint(): Promise<ServiceCheckpoint | null> {
-    const result = await this.pool.query<{
-      payload: { checkpoint?: unknown };
-    }>(
-      `SELECT c.payload
-       FROM clinical_projection_outbox c
-       JOIN accepted_commands a
-         ON a.organization_id=c.organization_id AND a.id=c.accepted_command_id
-       WHERE c.organization_id=$1
-       ORDER BY a.accepted_at DESC,a.id DESC LIMIT 1`,
-      [organizationId],
-    );
-    const checkpoint = result.rows[0]?.payload.checkpoint;
-    if (!checkpoint) return null;
-    return structuredClone(checkpoint) as ServiceCheckpoint;
-  }
   async claimClinicalProjection(input: {
     workerId: string;
     leaseDurationMs: number;
@@ -5582,37 +5719,48 @@ export class PostgresOperationalStore
       id: string;
       accepted_command_id: string;
       idempotency_key: string;
+      payload_schema_version: number;
+      target_keys: string[];
       payload: {
+        schemaVersion?: number;
+        acceptedCommandId?: string;
         resources: Resource[];
         removedReferences: string[];
         expectedVersions: Record<string, string | null>;
-        checkpoint: ServiceCheckpoint;
+        semanticDigest?: string;
       };
       attempts: number;
     }>(
       `WITH candidate AS (
          SELECT o.organization_id,o.id FROM clinical_projection_outbox o
-         WHERE o.organization_id=$1 AND (
+         WHERE o.organization_id=$1 AND o.site_id=$2 AND (
            (o.state IN ('pending','retry') AND o.next_attempt_at <= clock_timestamp())
            OR (o.state='leased' AND o.lease_expires_at <= clock_timestamp())
          ) AND NOT EXISTS (
            SELECT 1 FROM clinical_projection_outbox earlier
            WHERE earlier.organization_id=o.organization_id
+             AND earlier.site_id=o.site_id
              AND earlier.state <> 'delivered'
-             AND (earlier.created_at < o.created_at OR
-               (earlier.created_at=o.created_at AND earlier.id::text < o.id::text))
+             AND earlier.target_keys && o.target_keys
+             AND earlier.enqueue_sequence < o.enqueue_sequence
          )
-         ORDER BY o.created_at,o.id FOR UPDATE SKIP LOCKED LIMIT 1
+         ORDER BY o.next_attempt_at,o.enqueue_sequence
+         FOR UPDATE SKIP LOCKED LIMIT 1
        )
        UPDATE clinical_projection_outbox o
-       SET state='leased',attempts=o.attempts+1,lease_owner=$2,
-           lease_expires_at=clock_timestamp()+($3::integer * interval '1 millisecond'),
+       SET state='leased',attempts=o.attempts+1,lease_owner=$3,
+           lease_expires_at=clock_timestamp()+($4::integer * interval '1 millisecond'),
            last_error_class=NULL
        FROM candidate c
        WHERE o.organization_id=c.organization_id AND o.id=c.id
        RETURNING o.id::text,o.accepted_command_id::text,o.idempotency_key,
-                 o.payload,o.attempts`,
-      [organizationId, input.workerId, input.leaseDurationMs],
+                 o.payload_schema_version,o.target_keys,o.payload,o.attempts`,
+      [
+        organizationId,
+        siteConfiguration.siteId,
+        input.workerId,
+        input.leaseDurationMs,
+      ],
     );
     const row = result.rows[0];
     if (!row) return null;
@@ -5627,17 +5775,55 @@ export class PostgresOperationalStore
         ? payload.removedReferences
         : []),
     ];
+    const payloadWithoutDigest = {
+      schemaVersion: payload?.schemaVersion,
+      acceptedCommandId: payload?.acceptedCommandId,
+      resources: payload?.resources,
+      removedReferences: payload?.removedReferences,
+      expectedVersions: payload?.expectedVersions,
+    };
+    const expectedDigest = createHash("sha256")
+      .update(canonicalJson(payloadWithoutDigest))
+      .digest("hex");
+    let targetKeys: string[] | null = null;
+    try {
+      if (
+        Array.isArray(payload?.resources) &&
+        Array.isArray(payload?.removedReferences)
+      )
+        targetKeys = clinicalProjectionTargetKeys(
+          payload.resources,
+          payload.removedReferences,
+          row.accepted_command_id,
+        );
+    } catch {
+      targetKeys = null;
+    }
+    const schemaEnvelopeValid =
+      (row.payload_schema_version === 2 &&
+        payload?.schemaVersion === 2 &&
+        payload.acceptedCommandId === row.accepted_command_id &&
+        payload.semanticDigest === expectedDigest) ||
+      (row.payload_schema_version === 1 &&
+        payload?.schemaVersion === undefined);
     const validPayload =
+      schemaEnvelopeValid &&
+      targetKeys !== null &&
+      canonicalJson(row.target_keys) === canonicalJson(targetKeys) &&
       Array.isArray(payload?.resources) &&
       Array.isArray(payload?.removedReferences) &&
       payload.expectedVersions !== null &&
       typeof payload.expectedVersions === "object" &&
-      payload.checkpoint?.formatVersion === 1 &&
       references.every(
         (reference) =>
           Object.hasOwn(payload.expectedVersions, reference) &&
           (payload.expectedVersions[reference] === null ||
             typeof payload.expectedVersions[reference] === "string"),
+      ) &&
+      payload.removedReferences.every(
+        (reference) =>
+          typeof payload.expectedVersions[reference] === "string" &&
+          payload.expectedVersions[reference].length > 0,
       );
     if (!validPayload) {
       await this.failClinicalProjection({
@@ -5655,7 +5841,8 @@ export class PostgresOperationalStore
       resources: structuredClone(payload.resources),
       removedReferences: [...payload.removedReferences],
       expectedVersions: structuredClone(payload.expectedVersions),
-      checkpoint: structuredClone(payload.checkpoint),
+      payloadSchemaVersion: row.payload_schema_version === 1 ? 1 : 2,
+      targetKeys: [...targetKeys!],
       attempts: Number(row.attempts),
     };
   }
@@ -5667,8 +5854,11 @@ export class PostgresOperationalStore
       `WITH projected AS (
          UPDATE clinical_projection_outbox
          SET state='delivered',lease_owner=NULL,lease_expires_at=NULL,
-             delivered_at=now(),last_error_class=NULL
+             delivered_at=now(),last_error_class=NULL,
+             payload=CASE WHEN payload_schema_version=1
+                          THEN payload-'checkpoint' ELSE payload END
          WHERE organization_id=$1 AND id=$2 AND state='leased' AND lease_owner=$3
+           AND site_id=$4
            AND lease_expires_at > clock_timestamp()
          RETURNING accepted_command_id
        )
@@ -5676,21 +5866,25 @@ export class PostgresOperationalStore
          WHEN a.state='manual-review' OR EXISTS (
            SELECT 1 FROM clinical_projection_outbox c
            WHERE c.organization_id=a.organization_id
+             AND c.site_id=$4
              AND c.accepted_command_id=a.id AND c.state='manual'
          ) OR EXISTS (
            SELECT 1 FROM provider_outbox p
            WHERE p.organization_id=a.organization_id
+             AND p.site_id=a.site_id
              AND p.accepted_command_id=a.id AND p.state='manual'
          ) THEN 'manual-review'
          WHEN EXISTS (
            SELECT 1 FROM provider_outbox p
            WHERE p.organization_id=a.organization_id
+             AND p.site_id=a.site_id
              AND p.accepted_command_id=a.id AND p.state<>'delivered'
          ) THEN 'delivery-pending' ELSE 'delivered' END
        FROM projected
-       WHERE a.organization_id=$1 AND a.id=projected.accepted_command_id
+       WHERE a.organization_id=$1 AND a.site_id=$4
+         AND a.id=projected.accepted_command_id
        RETURNING a.id`,
-      [organizationId, input.jobId, input.workerId],
+      [organizationId, input.jobId, input.workerId, siteConfiguration.siteId],
     );
     if (!result.rowCount) throw new Error("CLINICAL_PROJECTION_LEASE_LOST");
   }
@@ -5706,12 +5900,14 @@ export class PostgresOperationalStore
          SET state=$4,next_attempt_at=COALESCE($5,next_attempt_at),
              lease_owner=NULL,lease_expires_at=NULL,last_error_class=$6
          WHERE organization_id=$1 AND id=$2 AND state='leased' AND lease_owner=$3
+           AND site_id=$7
            AND lease_expires_at > clock_timestamp()
          RETURNING accepted_command_id
        ), marked AS (
          UPDATE accepted_commands a SET state='manual-review'
          FROM failed
          WHERE $4='manual' AND a.organization_id=$1
+           AND a.site_id=$7
            AND a.id=failed.accepted_command_id
          RETURNING a.id
        )
@@ -5723,6 +5919,7 @@ export class PostgresOperationalStore
         input.retryAt ? "retry" : "manual",
         input.retryAt,
         input.errorCode,
+        siteConfiguration.siteId,
       ],
     );
     if (result.rowCount !== 1)
@@ -5743,9 +5940,16 @@ export class PostgresOperationalStore
       `UPDATE clinical_projection_outbox
        SET lease_expires_at=clock_timestamp()+($4::integer * interval '1 millisecond')
        WHERE organization_id=$1 AND id=$2 AND state='leased' AND lease_owner=$3
+         AND site_id=$5
          AND lease_expires_at > clock_timestamp()
        RETURNING id`,
-      [organizationId, input.jobId, input.workerId, input.leaseDurationMs],
+      [
+        organizationId,
+        input.jobId,
+        input.workerId,
+        input.leaseDurationMs,
+        siteConfiguration.siteId,
+      ],
     );
     return result.rowCount === 1;
   }
@@ -5759,16 +5963,16 @@ export class PostgresOperationalStore
     }>(
       `SELECT id::text,accepted_command_id::text,last_error_class,attempts,created_at
        FROM clinical_projection_outbox
-       WHERE organization_id=$1 AND state <> 'delivered'
-       ORDER BY created_at,id LIMIT 1`,
-      [organizationId],
+       WHERE organization_id=$1 AND site_id=$2 AND state='manual'
+       ORDER BY enqueue_sequence LIMIT 1`,
+      [organizationId, siteConfiguration.siteId],
     );
     const row = result.rows[0];
     if (!row || !row.last_error_class) return null;
     const state = await this.pool.query<{ state: string }>(
       `SELECT state FROM clinical_projection_outbox
-       WHERE organization_id=$1 AND id=$2`,
-      [organizationId, row.id],
+       WHERE organization_id=$1 AND site_id=$2 AND id=$3`,
+      [organizationId, siteConfiguration.siteId, row.id],
     );
     if (state.rows[0]?.state !== "manual") return null;
     return {
@@ -5854,10 +6058,19 @@ export class PostgresOperationalStore
         last_error_class: string | null;
       }>(
         `SELECT id::text,accepted_command_id::text,state,last_error_class
-         FROM clinical_projection_outbox
-         WHERE organization_id=$1 AND state <> 'delivered'
-         ORDER BY created_at,id LIMIT 1 FOR UPDATE`,
-        [organizationId],
+         FROM clinical_projection_outbox current_job
+         WHERE organization_id=$1 AND site_id=$2 AND id=$3
+           AND state='manual'
+           AND NOT EXISTS (
+             SELECT 1 FROM clinical_projection_outbox earlier
+             WHERE earlier.organization_id=current_job.organization_id
+               AND earlier.site_id=current_job.site_id
+               AND earlier.state <> 'delivered'
+               AND earlier.target_keys && current_job.target_keys
+               AND earlier.enqueue_sequence < current_job.enqueue_sequence
+           )
+         FOR UPDATE`,
+        [organizationId, siteConfiguration.siteId, input.jobId],
       );
       const row = head.rows[0];
       if (
@@ -5875,23 +6088,30 @@ export class PostgresOperationalStore
         `UPDATE clinical_projection_outbox
          SET state='retry',next_attempt_at=now(),lease_owner=NULL,
              lease_expires_at=NULL
-         WHERE organization_id=$1 AND id=$2 AND state='manual'
-           AND last_error_class=$3`,
-        [organizationId, input.jobId, input.expectedErrorCode],
+         WHERE organization_id=$1 AND site_id=$2 AND id=$3 AND state='manual'
+           AND last_error_class=$4`,
+        [
+          organizationId,
+          siteConfiguration.siteId,
+          input.jobId,
+          input.expectedErrorCode,
+        ],
       );
       await client.query(
         `UPDATE accepted_commands a SET state=CASE
            WHEN EXISTS (
              SELECT 1 FROM clinical_projection_outbox c
              WHERE c.organization_id=a.organization_id
+               AND c.site_id=$3
                AND c.accepted_command_id=a.id AND c.state='manual'
            ) OR EXISTS (
              SELECT 1 FROM provider_outbox p
              WHERE p.organization_id=a.organization_id
+               AND p.site_id=a.site_id
                AND p.accepted_command_id=a.id AND p.state='manual'
            ) THEN 'manual-review' ELSE 'delivery-pending' END
-         WHERE a.organization_id=$1 AND a.id=$2`,
-        [organizationId, row.accepted_command_id],
+         WHERE a.organization_id=$1 AND a.site_id=$3 AND a.id=$2`,
+        [organizationId, row.accepted_command_id, siteConfiguration.siteId],
       );
       const receipt: ClinicalProjectionRecoveryReceipt = {
         jobId: row.id,
@@ -5963,10 +6183,10 @@ export class PostgresOperationalStore
     const references = patientIds.map((id) => `Patient/${id}`);
     const result = await this.pool.query<{ state: string; count: number }>(
       `SELECT state,count(*)::int count FROM provider_outbox
-       WHERE organization_id=$1
+       WHERE organization_id=$1 AND site_id=$3
          AND payload->'command'->>'patientReference'=ANY($2::text[])
        GROUP BY state`,
-      [organizationId, references],
+      [organizationId, references, siteConfiguration.siteId],
     );
     if (result.rows.length === 0) return "external-gated";
     if (
@@ -5992,9 +6212,9 @@ export class PostgresOperationalStore
          count(*) FILTER (WHERE state <> 'delivered')::int unresolved,
          count(*) FILTER (WHERE state = 'manual')::int conflicts
        FROM provider_outbox
-       WHERE organization_id=$1
+       WHERE organization_id=$1 AND site_id=$3
          AND payload->'command'->>'patientReference'=ANY($2::text[])`,
-      [organizationId, references],
+      [organizationId, references, siteConfiguration.siteId],
     );
     return {
       unresolved: Number(result.rows[0]?.unresolved ?? 0),
@@ -6008,14 +6228,14 @@ export class PostgresOperationalStore
       count: number;
     }>(
       `SELECT 'accepted' queue,state,count(*)::int count
-       FROM accepted_commands WHERE organization_id=$1 GROUP BY state
+       FROM accepted_commands WHERE organization_id=$1 AND site_id=$2 GROUP BY state
        UNION ALL
        SELECT 'clinical' queue,state,count(*)::int count
-       FROM clinical_projection_outbox WHERE organization_id=$1 GROUP BY state
+       FROM clinical_projection_outbox WHERE organization_id=$1 AND site_id=$2 GROUP BY state
        UNION ALL
        SELECT 'provider' queue,state,count(*)::int count
-       FROM provider_outbox WHERE organization_id=$1 GROUP BY state`,
-      [organizationId],
+       FROM provider_outbox WHERE organization_id=$1 AND site_id=$2 GROUP BY state`,
+      [organizationId, siteConfiguration.siteId],
     );
     const diagnostics: DeliveryDiagnostics = {
       acceptedCommands: {},
@@ -6705,13 +6925,14 @@ export class PostgresOperationalStore
     const targetKey = `${provider}:${profile}:${payload.command.resource.resourceType}/${payload.command.resource.id}`;
     const inserted = await this.pool.query<{ id: string }>(
       `INSERT INTO provider_outbox
-         (organization_id,id,provider_id,profile_id,operation,idempotency_key,payload,state,target_key)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,'pending',$8)
-       ON CONFLICT (organization_id,provider_id,profile_id,idempotency_key)
+         (organization_id,site_id,id,provider_id,profile_id,operation,idempotency_key,payload,state,target_key)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending',$9)
+       ON CONFLICT (organization_id,site_id,provider_id,profile_id,idempotency_key)
        DO NOTHING
        RETURNING id::text`,
       [
         organizationId,
+        siteConfiguration.siteId,
         id,
         provider,
         profile,
@@ -6724,9 +6945,15 @@ export class PostgresOperationalStore
     if (inserted.rows[0]) return { id: inserted.rows[0].id, inserted: true };
     const existing = await this.pool.query<{ id: string; payload: unknown }>(
       `SELECT id::text,payload FROM provider_outbox
-       WHERE organization_id=$1 AND provider_id=$2 AND profile_id=$3
+       WHERE organization_id=$1 AND site_id=$5 AND provider_id=$2 AND profile_id=$3
          AND idempotency_key=$4`,
-      [organizationId, provider, profile, payload.command.idempotencyKey],
+      [
+        organizationId,
+        provider,
+        profile,
+        payload.command.idempotencyKey,
+        siteConfiguration.siteId,
+      ],
     );
     const row = existing.rows[0];
     if (!row) throw new Error("PROVIDER_OUTBOX_CONCURRENT_INSERT_LOST");
@@ -6772,11 +6999,12 @@ export class PostgresOperationalStore
         `WITH candidates AS (
            SELECT organization_id,id,state AS prior_state
            FROM provider_outbox
-           WHERE organization_id=$1 AND profile_id=$2
+           WHERE organization_id=$1 AND site_id=$6 AND profile_id=$2
              AND (
                accepted_command_id IS NULL OR EXISTS (
                  SELECT 1 FROM clinical_projection_outbox clinical
                  WHERE clinical.organization_id=provider_outbox.organization_id
+                   AND clinical.site_id=provider_outbox.site_id
                    AND clinical.accepted_command_id=provider_outbox.accepted_command_id
                    AND clinical.state='delivered'
                )
@@ -6788,6 +7016,7 @@ export class PostgresOperationalStore
              AND NOT EXISTS (
                SELECT 1 FROM provider_outbox earlier
                WHERE earlier.organization_id=provider_outbox.organization_id
+                 AND earlier.site_id=provider_outbox.site_id
                  AND earlier.target_key=provider_outbox.target_key
                  AND earlier.state <> 'delivered'
                  AND earlier.enqueue_sequence < provider_outbox.enqueue_sequence
@@ -6795,6 +7024,7 @@ export class PostgresOperationalStore
              AND NOT EXISTS (
                SELECT 1 FROM provider_outbox dependency
                WHERE dependency.organization_id=provider_outbox.organization_id
+                 AND dependency.site_id=provider_outbox.site_id
                  AND dependency.payload->'command'->>'commandId'=
                      provider_outbox.payload->'command'->>'causationId'
                  AND dependency.state <> 'delivered'
@@ -6823,7 +7053,14 @@ export class PostgresOperationalStore
            ORDER BY r.created_at DESC,r.id DESC LIMIT 1
          ) receipt ON true
          ORDER BY c.next_attempt_at,c.id`,
-        [organizationId, profile, input.limit, workerId, input.leaseDurationMs],
+        [
+          organizationId,
+          profile,
+          input.limit,
+          workerId,
+          input.leaseDurationMs,
+          siteConfiguration.siteId,
+        ],
       );
       const jobs: ProviderOutboxJob[] = [];
       for (const row of claimed.rows) {
@@ -6842,14 +7079,18 @@ export class PostgresOperationalStore
              SET state='manual',lease_owner=NULL,lease_expires_at=NULL,
                  last_error_class='OUTBOX_PAYLOAD_INVALID'
              WHERE organization_id=$1 AND id=$2 AND state='leased'
-               AND lease_owner=$3`,
-            [organizationId, row.id, workerId],
+               AND site_id=$4 AND lease_owner=$3`,
+            [organizationId, row.id, workerId, siteConfiguration.siteId],
           );
           if (row.accepted_command_id)
             await client.query(
               `UPDATE accepted_commands SET state='manual-review'
-               WHERE organization_id=$1 AND id=$2`,
-              [organizationId, row.accepted_command_id],
+               WHERE organization_id=$1 AND id=$2 AND site_id=$3`,
+              [
+                organizationId,
+                row.accepted_command_id,
+                siteConfiguration.siteId,
+              ],
             );
           await client.query(
             `INSERT INTO domain_events
@@ -6902,9 +7143,15 @@ export class PostgresOperationalStore
       `UPDATE provider_outbox
        SET lease_expires_at=clock_timestamp()+($4::integer * interval '1 millisecond')
        WHERE organization_id=$1 AND id=$2 AND state='leased' AND lease_owner=$3
-         AND lease_expires_at > clock_timestamp()
+         AND site_id=$5 AND lease_expires_at > clock_timestamp()
        RETURNING id`,
-      [organizationId, input.jobId, input.workerId, input.leaseDurationMs],
+      [
+        organizationId,
+        input.jobId,
+        input.workerId,
+        input.leaseDurationMs,
+        siteConfiguration.siteId,
+      ],
     );
     return result.rowCount === 1;
   }
@@ -6956,7 +7203,7 @@ export class PostgresOperationalStore
          SET state=$4,next_attempt_at=$5,lease_owner=NULL,lease_expires_at=NULL,
              last_error_class=$6
          WHERE organization_id=$1 AND id=$2 AND state='leased' AND lease_owner=$3
-           AND lease_expires_at > clock_timestamp()
+           AND site_id=$7 AND lease_expires_at > clock_timestamp()
          RETURNING provider_id,idempotency_key,accepted_command_id::text`,
         [
           organizationId,
@@ -6965,6 +7212,7 @@ export class PostgresOperationalStore
           nextState,
           nextState === "retry" ? input.retryAt : new Date(),
           lastError,
+          siteConfiguration.siteId,
         ],
       );
       if (!updated.rows[0]) throw new Error("PROVIDER_OUTBOX_LEASE_LOST");
@@ -7020,23 +7268,31 @@ export class PostgresOperationalStore
              WHEN a.state='manual-review' OR EXISTS (
                SELECT 1 FROM clinical_projection_outbox c
                WHERE c.organization_id=a.organization_id
+                 AND c.site_id=a.site_id
                  AND c.accepted_command_id=a.id AND c.state='manual'
              ) OR EXISTS (
                SELECT 1 FROM provider_outbox p
                WHERE p.organization_id=a.organization_id
+                 AND p.site_id=a.site_id
                  AND p.accepted_command_id=a.id AND p.state='manual'
              ) THEN 'manual-review'
              WHEN EXISTS (
                SELECT 1 FROM clinical_projection_outbox c
                WHERE c.organization_id=a.organization_id
+                 AND c.site_id=a.site_id
                  AND c.accepted_command_id=a.id AND c.state<>'delivered'
              ) OR EXISTS (
                SELECT 1 FROM provider_outbox p
                WHERE p.organization_id=a.organization_id
+                 AND p.site_id=a.site_id
                  AND p.accepted_command_id=a.id AND p.state<>'delivered'
              ) THEN 'delivery-pending' ELSE 'delivered' END
-           WHERE a.organization_id=$1 AND a.id=$2`,
-          [organizationId, updated.rows[0].accepted_command_id],
+           WHERE a.organization_id=$1 AND a.id=$2 AND a.site_id=$3`,
+          [
+            organizationId,
+            updated.rows[0].accepted_command_id,
+            siteConfiguration.siteId,
+          ],
         );
       await client.query("COMMIT");
     } catch (error) {
@@ -7062,7 +7318,7 @@ export class PostgresOperationalStore
          SET state=$4,next_attempt_at=COALESCE($5,next_attempt_at),
              lease_owner=NULL,lease_expires_at=NULL,last_error_class=$6
          WHERE organization_id=$1 AND id=$2 AND state='leased' AND lease_owner=$3
-           AND lease_expires_at > clock_timestamp()
+           AND site_id=$7 AND lease_expires_at > clock_timestamp()
          RETURNING accepted_command_id::text`,
         [
           organizationId,
@@ -7071,14 +7327,19 @@ export class PostgresOperationalStore
           state,
           input.retryAt,
           `${input.errorClassification}:${input.errorCode}`,
+          siteConfiguration.siteId,
         ],
       );
       if (!result.rows[0]) throw new Error("PROVIDER_OUTBOX_LEASE_LOST");
       if (state === "manual" && result.rows[0].accepted_command_id)
         await client.query(
           `UPDATE accepted_commands SET state='manual-review'
-           WHERE organization_id=$1 AND id=$2`,
-          [organizationId, result.rows[0].accepted_command_id],
+           WHERE organization_id=$1 AND id=$2 AND site_id=$3`,
+          [
+            organizationId,
+            result.rows[0].accepted_command_id,
+            siteConfiguration.siteId,
+          ],
         );
       await client.query("COMMIT");
     } catch (error) {

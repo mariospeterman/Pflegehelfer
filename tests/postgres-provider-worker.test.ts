@@ -320,8 +320,8 @@ describe.runIf(Boolean(databaseUrl))(
         ids.push(valid.id);
         await inspection.query(
           `INSERT INTO provider_outbox
-             (organization_id,id,provider_id,profile_id,operation,idempotency_key,payload,state,next_attempt_at,target_key)
-           SELECT organization_id,$2,'device-gateway','synthetic-simulator',
+             (organization_id,site_id,id,provider_id,profile_id,operation,idempotency_key,payload,state,next_attempt_at,target_key)
+           SELECT organization_id,site_id,$2,'device-gateway','synthetic-simulator',
                   'Observation.write',$3,$4,'pending',$5,$6
            FROM provider_outbox WHERE id=$1`,
           [

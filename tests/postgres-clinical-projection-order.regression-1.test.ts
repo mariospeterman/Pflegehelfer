@@ -3,6 +3,7 @@ import pg from "pg";
 import { describe, expect, it } from "vitest";
 import { AuditChain } from "../src/core/audit.js";
 import { PflegehelferService } from "../src/core/service.js";
+import { fhirResourceId } from "../src/core/fhir-resource-set.js";
 import { PostgresOperationalStore } from "../src/infrastructure/operational-store.js";
 import { sourceReadSetFixture } from "./source-read-set-fixture.js";
 
@@ -12,6 +13,7 @@ const { Pool } = pg;
 async function acceptSyntheticCommand(
   store: PostgresOperationalStore,
   sequence: number,
+  targetId = "p-luca",
 ) {
   const token = randomUUID();
   const clientContextId = randomUUID();
@@ -75,10 +77,17 @@ async function acceptSyntheticCommand(
     policyVersion: "test-policy-v1",
     sourceReadSet,
     auditEntries: [],
-    clinicalResources: [],
+    clinicalResources: new PflegehelferService()
+      .fhirResources()
+      .filter(
+        (resource) =>
+          resource.resourceType === "Patient" &&
+          resource.id === fhirResourceId("Patient", targetId),
+      ),
     removedReferences: [],
-    clinicalExpectedVersions: {},
-    checkpoint: new PflegehelferService().checkpoint(),
+    clinicalExpectedVersions: {
+      [`Patient/${fhirResourceId("Patient", targetId)}`]: null,
+    },
     providerCommands: [],
   });
 }
@@ -86,7 +95,7 @@ async function acceptSyntheticCommand(
 describe.runIf(Boolean(databaseUrl))(
   "PostgreSQL clinical projection order",
   () => {
-    it("does not lease a newer whole-state checkpoint past an unresolved older job", async () => {
+    it("does not lease a newer same-target delta past an unresolved older job", async () => {
       const store = new PostgresOperationalStore(databaseUrl!);
       const inspection = new Pool({
         connectionString: databaseUrl,
@@ -206,6 +215,45 @@ describe.runIf(Boolean(databaseUrl))(
           [commandKey, audit.hash, older!.id],
         );
         expect(evidence.rows[0]).toEqual({ receipts: 1, audits: 1, events: 1 });
+      } finally {
+        await store.resetDemoState();
+        await Promise.all([store.close(), inspection.end()]);
+      }
+    });
+
+    it("leases an unrelated resource delta past a manual hold", async () => {
+      const store = new PostgresOperationalStore(databaseUrl!);
+      const inspection = new Pool({
+        connectionString: databaseUrl,
+        options: "-c pfh.organization_id=org-demo",
+      });
+      try {
+        await store.initialize();
+        await store.resetDemoState();
+        const first = await acceptSyntheticCommand(store, 1, "p-luca");
+        const second = await acceptSyntheticCommand(store, 2, "p-anna");
+        const held = await store.claimClinicalProjection({
+          workerId: "patient-a-worker",
+          leaseDurationMs: 30_000,
+        });
+        expect(held?.acceptedCommandId).toBe(first.id);
+        await store.failClinicalProjection({
+          jobId: held!.id,
+          workerId: "patient-a-worker",
+          errorCode: "SYNTHETIC_MANUAL_HOLD",
+          retryAt: null,
+        });
+
+        await expect(
+          store.claimClinicalProjection({
+            workerId: "patient-b-worker",
+            leaseDurationMs: 30_000,
+          }),
+        ).resolves.toMatchObject({
+          acceptedCommandId: second.id,
+          targetKeys: [`Patient/${fhirResourceId("Patient", "p-anna")}`],
+          payloadSchemaVersion: 2,
+        });
       } finally {
         await store.resetDemoState();
         await Promise.all([store.close(), inspection.end()]);

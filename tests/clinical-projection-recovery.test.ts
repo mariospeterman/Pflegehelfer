@@ -72,7 +72,6 @@ async function queueSyntheticProjection(store: InMemoryOperationalStore) {
     clinicalResources: [],
     removedReferences: [],
     clinicalExpectedVersions: {},
-    checkpoint: new PflegehelferService().checkpoint(),
     providerCommands: [],
   });
 }

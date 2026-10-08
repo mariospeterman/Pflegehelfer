@@ -63,7 +63,11 @@ import {
   type VoiceTranscriptProvenance,
 } from "./voice-provenance.js";
 import { DomainError } from "./types.js";
-import { auditEventToFhirR4, toFhirResourceSet } from "./fhir-resource-set.js";
+import {
+  auditEventToFhirR4,
+  fhirResourceId,
+  toFhirResourceSet,
+} from "./fhir-resource-set.js";
 import { siteConfiguration } from "./site-config.js";
 
 export interface WorkflowState {
@@ -179,9 +183,13 @@ function idempotency(
   aggregateId: string,
   version: number,
 ): string {
-  return createHash("sha256")
+  const contentKey = createHash("sha256")
     .update(`${aggregateType}:${aggregateId}:${version}`)
     .digest("hex");
+  // Provider idempotency is a wire-level contract. Local identifiers can be
+  // repeated by different institutions/sites, so the provider-facing key must
+  // carry the same tenant boundary as the relational queue uniqueness rule.
+  return `pfh2:${siteConfiguration.institutionId}:${siteConfiguration.siteId}:${contentKey}`;
 }
 
 const labels: Record<Observation["code"], string> = {
@@ -2006,6 +2014,10 @@ export class PflegehelferService {
     const resourceBody = clone(resource) as unknown as Record<string, unknown>;
     delete resourceBody.id;
     delete resourceBody.resourceType;
+    const scopedPatientId = fhirResourceId("Patient", item.patientId);
+    const scopedEncounterId = fhirResourceId("Encounter", resource.encounterId);
+    resourceBody.patientId = scopedPatientId;
+    resourceBody.encounterId = scopedEncounterId;
     return {
       commandId: item.id,
       operation:
@@ -2016,8 +2028,8 @@ export class PflegehelferService {
             : item.aggregateType === "task"
               ? "Task.write"
               : "Communication.write",
-      patientReference: `Patient/${item.patientId}`,
-      encounterReference: `Encounter/${resource.encounterId}`,
+      patientReference: `Patient/${scopedPatientId}`,
+      encounterReference: `Encounter/${scopedEncounterId}`,
       resource: {
         resourceType:
           item.aggregateType === "observation"
@@ -2027,7 +2039,16 @@ export class PflegehelferService {
               : item.aggregateType === "task"
                 ? "Task"
                 : "Communication",
-        id: item.aggregateId,
+        id: fhirResourceId(
+          item.aggregateType === "note"
+            ? "DocumentReference"
+            : item.aggregateType === "communication"
+              ? "Communication"
+              : item.aggregateType === "observation"
+                ? "Observation"
+                : "Task",
+          item.aggregateId,
+        ),
         body: resourceBody,
       },
       expectedProviderVersion: item.expectedProviderVersion,

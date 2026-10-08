@@ -1255,8 +1255,23 @@ export function buildApp(
         await assertCommandReceiptReadable(request, committed);
         return JSON.parse(committed.payload) as T;
       }
+      const scenarioBefore =
+        runtime.profile === "integrated-demo"
+          ? await scenarioStore.active()
+          : null;
       const before = service.checkpoint();
+      if (
+        scenarioBefore &&
+        scenarioDigest({ ...before.state, outbox: [] }) !==
+          scenarioDigest(scenarioBefore.state)
+      )
+        throw new DomainError(
+          "VERSION_CONFLICT",
+          "Der lokale Demo-Szenariostand ist nicht mehr aktuell. Bitte neu laden.",
+          409,
+        );
       let writeAttempted = false;
+      let scenarioCommitted = scenarioBefore === null;
       try {
         const result = await operation();
         const payload = JSON.stringify(result);
@@ -1317,6 +1332,13 @@ export function buildApp(
           removedReferences,
           stagedReceipt,
         );
+        if (scenarioBefore)
+          await scenarioStore.updateActiveState(
+            nextCheckpoint.state,
+            await operationalStore.exportDemoWorkspace(),
+            scenarioRunContentDigest(scenarioBefore),
+          );
+        scenarioCommitted = true;
         committedCommandKeys.clear();
         for (const key of service.commandReceiptKeys())
           committedCommandKeys.add(key);
@@ -1353,7 +1375,7 @@ export function buildApp(
             // unavailable. Readiness exposes the outage and the write failed.
           }
         }
-        if (command) {
+        if (command && scenarioCommitted) {
           const recovered =
             service.commandReceipt(command.key) ??
             (await workspace.loadCommandReceipt(command.key));
@@ -4939,6 +4961,16 @@ export function buildApp(
               400,
             );
           const beforeCheckpoint = service.checkpoint();
+          const activeScenario = await scenarioStore.active();
+          if (
+            scenarioDigest({ ...beforeCheckpoint.state, outbox: [] }) !==
+            scenarioDigest(activeScenario.state)
+          )
+            throw new DomainError(
+              "VERSION_CONFLICT",
+              "Der lokale Demo-Szenariostand ist nicht mehr aktuell. Bitte neu laden.",
+              409,
+            );
           const beforeResources = service.fhirResources();
           const beforeAuditLength = service.audit.length;
           const priorProviderKeys = new Set(
@@ -4990,16 +5022,14 @@ export function buildApp(
                 (pending) =>
                   !priorProviderKeys.has(pending.command.idempotencyKey),
               );
-            const acceptedCheckpoint = service.checkpoint();
-            acceptedCheckpoint.state.outbox =
-              acceptedCheckpoint.state.outbox.filter(
-                (pending) =>
-                  !providerCommands.some(
-                    (accepted) =>
-                      accepted.command.idempotencyKey ===
-                      pending.idempotencyKey,
-                  ),
-              );
+            const acceptedState = service.checkpoint().state;
+            acceptedState.outbox = acceptedState.outbox.filter(
+              (pending) =>
+                !providerCommands.some(
+                  (accepted) =>
+                    accepted.command.idempotencyKey === pending.idempotencyKey,
+                ),
+            );
             const acceptedAuditEntries = service.audit.slice(beforeAuditLength);
             const receipt = await operationalStore.acceptIntentCommand({
               tokenHash,
@@ -5026,7 +5056,9 @@ export function buildApp(
               clinicalResources: changedResources,
               removedReferences,
               clinicalExpectedVersions,
-              checkpoint: acceptedCheckpoint,
+              demoScenarioState: acceptedState,
+              demoScenarioExpectedDigest:
+                scenarioRunContentDigest(activeScenario),
               ...(result &&
               typeof result === "object" &&
               "episodeEvidence" in result &&
