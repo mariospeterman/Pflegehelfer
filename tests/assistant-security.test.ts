@@ -447,6 +447,10 @@ describe("assistant action gateway", () => {
 
   it.each([
     "Interpretier diesen Blutdruck.",
+    "Interpretieren Sie diesen Blutdruck.",
+    "Interpret this blood pressure.",
+    "Was sollte sie jetzt tun?",
+    "Sie sollte im Bett bleiben.",
     "Wer ist am meisten gefährdet?",
     "Welche Behandlung sollten wir wählen?",
     "Ändere die Dosis.",

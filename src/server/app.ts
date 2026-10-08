@@ -674,6 +674,33 @@ export function buildApp(
       context,
     };
   };
+  const startAssistantRequestLease = (
+    identity: AssistantRequestIdentity,
+    holderId: string,
+    controller: AbortController,
+  ) => {
+    let stopped = false;
+    let renewal = Promise.resolve();
+    const timer = setInterval(() => {
+      renewal = renewal
+        .then(async () => {
+          if (stopped) return;
+          if (
+            !(await operationalStore.renewAssistantRequest(identity, holderId))
+          )
+            controller.abort("assistant-request-lease-lost");
+        })
+        .catch(() =>
+          controller.abort("assistant-request-lease-renewal-failed"),
+        );
+    }, 10_000);
+    timer.unref();
+    return async () => {
+      stopped = true;
+      clearInterval(timer);
+      await renewal;
+    };
+  };
   const committedCommandKeys = new Set(service.commandReceiptKeys());
   const persist = <T>(
     operation: () => T | Promise<T>,
@@ -3386,6 +3413,13 @@ export function buildApp(
         409,
       );
     if (claim.state === "completed" && claim.response) return claim.response;
+    const holderId = claim.holderId;
+    if (!holderId) throw new Error("ASSISTANT_REQUEST_HOLDER_MISSING");
+    const stopLease = startAssistantRequestLease(
+      requestIdentity,
+      holderId,
+      inferenceController,
+    );
     let requestCommitted = false;
     try {
       const voiceTranscriptProvenance = await consumeValidatedVoiceReceipt(
@@ -3461,7 +3495,11 @@ export function buildApp(
           originContextRevision: context.contextRevision,
         },
         context,
-        { ...requestIdentity, response },
+        {
+          ...requestIdentity,
+          holderId,
+          response: archiveAssistantResponse(response),
+        },
       );
       requestCommitted = true;
       if (inferenceController.signal.aborted || transportDisconnected()) {
@@ -3476,8 +3514,13 @@ export function buildApp(
     } catch (error) {
       await revokeAuthorities();
       if (!requestCommitted)
-        await operationalStore.releaseAssistantRequest(requestIdentity);
+        await operationalStore.releaseAssistantRequest(
+          requestIdentity,
+          holderId,
+        );
       throw error;
+    } finally {
+      await stopLease();
     }
   });
 
@@ -3558,6 +3601,16 @@ export function buildApp(
       );
     const replayedResponse = claim.response ?? null;
     let requestCommitted = claim.state === "completed";
+    const holderId = claim.holderId ?? null;
+    if (!replayedResponse && !holderId)
+      throw new Error("ASSISTANT_REQUEST_HOLDER_MISSING");
+    const stopLease = holderId
+      ? startAssistantRequestLease(
+          requestIdentity,
+          holderId,
+          inferenceController,
+        )
+      : async () => undefined;
     let voiceTranscriptProvenance: VoiceTranscriptProvenance | null = null;
     let workingContext: Awaited<
       ReturnType<typeof assistantWorkingContext>
@@ -3586,7 +3639,11 @@ export function buildApp(
       }
     } catch (error) {
       if (!requestCommitted)
-        await operationalStore.releaseAssistantRequest(requestIdentity);
+        await operationalStore.releaseAssistantRequest(
+          requestIdentity,
+          holderId!,
+        );
+      await stopLease();
       throw error;
     }
     const uiStream = createUIMessageStream({
@@ -3651,7 +3708,10 @@ export function buildApp(
           if (inferenceController.signal.aborted || transportDisconnected()) {
             await revokeAfterDisconnect();
             if (!requestCommitted)
-              await operationalStore.releaseAssistantRequest(requestIdentity);
+              await operationalStore.releaseAssistantRequest(
+                requestIdentity,
+                holderId!,
+              );
             return;
           }
           if (!replayedResponse)
@@ -3674,7 +3734,10 @@ export function buildApp(
           if (inferenceController.signal.aborted || transportDisconnected()) {
             await revokeAfterDisconnect();
             if (!requestCommitted)
-              await operationalStore.releaseAssistantRequest(requestIdentity);
+              await operationalStore.releaseAssistantRequest(
+                requestIdentity,
+                holderId!,
+              );
             return;
           }
           if (!replayedResponse)
@@ -3696,7 +3759,11 @@ export function buildApp(
                 originContextRevision: context.contextRevision,
               },
               context,
-              { ...requestIdentity, response },
+              {
+                ...requestIdentity,
+                holderId: holderId!,
+                response: archiveAssistantResponse(response),
+              },
             );
           requestCommitted = true;
           if (inferenceController.signal.aborted || transportDisconnected()) {
@@ -3710,8 +3777,13 @@ export function buildApp(
         } catch (error) {
           if (!replayedResponse) await revokeAuthorities();
           if (!requestCommitted)
-            await operationalStore.releaseAssistantRequest(requestIdentity);
+            await operationalStore.releaseAssistantRequest(
+              requestIdentity,
+              holderId!,
+            );
           throw error;
+        } finally {
+          await stopLease();
         }
       },
       onError: () =>

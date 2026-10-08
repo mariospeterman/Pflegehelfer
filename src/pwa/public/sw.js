@@ -33,7 +33,11 @@ self.addEventListener("activate", (event) => {
       .keys()
       .then((keys) =>
         Promise.all(
-          keys.filter((key) => key !== SHELL).map((key) => caches.delete(key)),
+          keys
+            .filter(
+              (key) => key.startsWith("pflegehelfer-shell-") && key !== SHELL,
+            )
+            .map((key) => caches.delete(key)),
         ),
       ),
   );
@@ -42,26 +46,16 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
-  if (
-    url.pathname.startsWith("/api/") ||
-    url.pathname === "/health" ||
-    url.pathname === "/ready" ||
-    event.request.method !== "GET"
-  )
-    return;
+  const explicitShellAsset =
+    url.origin === self.location.origin &&
+    (ASSETS.includes(url.pathname) ||
+      /^\/assets\/[a-zA-Z0-9._-]+\.(?:css|js|woff2?|png|svg)$/.test(
+        url.pathname,
+      ));
+  if (event.request.method !== "GET" || !explicitShellAsset) return;
   event.respondWith(
-    fetch(event.request)
-      .then((response) => {
-        if (response.ok && url.origin === self.location.origin) {
-          const copy = response.clone();
-          caches.open(SHELL).then((cache) => cache.put(event.request, copy));
-        }
-        return response;
-      })
-      .catch(() =>
-        caches
-          .match(event.request)
-          .then((cached) => cached ?? caches.match("/")),
-      ),
+    fetch(event.request).catch(() =>
+      caches.open(SHELL).then((cache) => cache.match(event.request)),
+    ),
   );
 });

@@ -94,6 +94,10 @@ export function ClinicalAssistantMessage({
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioUrlRef = useRef<string | null>(null);
+  const speechRequestRef = useRef<{
+    generation: number;
+    abort: AbortController;
+  } | null>(null);
   if (!actions) throw new Error("ConversationActionsProvider fehlt.");
   const source = message.content ?? "";
   const proposalStatus = message.name?.match(
@@ -116,6 +120,8 @@ export function ClinicalAssistantMessage({
 
   useEffect(
     () => () => {
+      speechRequestRef.current?.abort.abort();
+      speechRequestRef.current = null;
       audioRef.current?.pause();
       if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
       window.speechSynthesis?.cancel();
@@ -124,6 +130,8 @@ export function ClinicalAssistantMessage({
   );
 
   const stopSpeaking = () => {
+    speechRequestRef.current?.abort.abort();
+    speechRequestRef.current = null;
     audioRef.current?.pause();
     audioRef.current = null;
     if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
@@ -145,8 +153,16 @@ export function ClinicalAssistantMessage({
     if (!text) return;
     actions.onError(null);
     setSpeaking(true);
+    const generation = (speechRequestRef.current?.generation ?? 0) + 1;
+    speechRequestRef.current?.abort.abort();
+    const abort = new AbortController();
+    speechRequestRef.current = { generation, abort };
+    const current = () =>
+      speechRequestRef.current?.generation === generation &&
+      !abort.signal.aborted;
     try {
       const statusResponse = await fetch("/api/v1/ai/status", {
+        signal: abort.signal,
         headers: {
           "x-demo-user": actions.userId,
           ...assistantClientContextHeaders(),
@@ -156,6 +172,7 @@ export function ClinicalAssistantMessage({
         tts?: { mode?: string; ready?: boolean; acceptance?: string };
         message?: string;
       };
+      if (!current()) return;
       if (!statusResponse.ok)
         throw new Error(status.message ?? "Sprachausgabe nicht verfügbar.");
       if (
@@ -165,6 +182,7 @@ export function ClinicalAssistantMessage({
       ) {
         const response = await fetch("/api/v1/assistant/speech", {
           method: "POST",
+          signal: abort.signal,
           headers: {
             "content-type": "application/json",
             "x-demo-user": actions.userId,
@@ -177,7 +195,9 @@ export function ClinicalAssistantMessage({
           const failure = (await response.json()) as { message?: string };
           throw new Error(failure.message ?? "Sprachausgabe fehlgeschlagen.");
         }
-        const url = URL.createObjectURL(await response.blob());
+        const blob = await response.blob();
+        if (!current()) return;
+        const url = URL.createObjectURL(blob);
         const audio = new Audio(url);
         audioRef.current = audio;
         audioUrlRef.current = url;
@@ -198,6 +218,7 @@ export function ClinicalAssistantMessage({
         return;
       }
       if (status.tts?.mode === "browser-demo" && "speechSynthesis" in window) {
+        if (!current()) return;
         const utterance = new SpeechSynthesisUtterance(text);
         utterance.lang = "de-CH";
         utterance.onend = () => setSpeaking(false);
@@ -211,6 +232,7 @@ export function ClinicalAssistantMessage({
       }
       throw new Error("Sprachausgabe ist in diesem Modus nicht freigegeben.");
     } catch (error) {
+      if (abort.signal.aborted) return;
       setSpeaking(false);
       actions.onError(
         error instanceof Error

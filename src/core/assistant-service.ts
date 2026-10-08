@@ -1008,22 +1008,31 @@ function prohibitedAssistanceRequest(
 ): ProhibitedAssistanceRequest | null {
   const text = input.toLocaleLowerCase("de-CH");
   const clinicalSubject =
-    /\b(?:blutdruck|puls|temperatur|sauerstoff|spo2|messwert|symptom|schwindel|schmerz|wunde|patient|bewohner|diagnos|therapie|behandlung|medikament|dosis|intervention|verschlechter)\p{L}*\b/iu.test(
+    /\b(?:blutdruck|blood\s+pressure|puls|pulse|temperatur|temperature|sauerstoff|oxygen|spo2|messwert|reading|symptom|schwindel|dizz\p{L}*|schmerz|pain|wunde|wound|patient|bewohner|resident|diagnos|therapie|therapy|behandlung|treatment|medikament|medication|dosis|dose|intervention|verschlechter|deteriorat)\p{L}*\b/iu.test(
       text,
     );
   const clinicalDecision =
-    /\b(?:interpretier|deute|bewerte|beurteile|analysiere|diagnostizier|prognostizier|empfiehl|empfehlung|welche\s+(?:therapie|behandlung|medikation)|behandlung\s+wählen|therapie\s+wählen|dosis\s+(?:ändern|anpassen|erhöhen|senken)|wer\s+(?:ist|hat)\s+(?:am\s+meisten\s+)?(?:gefährdet|risiko)|priorisier\p{L}*\s+patient|nach\s+verschlechterung\s+(?:sortier|priorisier)|dringende?\s+intervention)\b/iu.test(
+    /\b(?:interpretier|interpret|deute|bewerte|evaluate|assess|beurteile|analysiere|analy[sz]e|diagnostizier|diagnos\p{L}*|prognostizier|prognos\p{L}*|empfiehl|recommend\p{L}*|empfehlung|welche\s+(?:therapie|behandlung|medikation)|which\s+(?:therapy|treatment|medication)|behandlung\s+wählen|choose\s+treatment|therapie\s+wählen|dosis\s+(?:ändern|anpassen|erhöhen|senken)|(?:change|adjust|increase|decrease)\s+(?:the\s+)?dose|wer\s+(?:ist|hat)\s+(?:am\s+meisten\s+)?(?:gefährdet|risiko)|who\s+is\s+(?:most\s+)?at\s+risk|priorisier\p{L}*\s+patient|prioriti[sz]e\s+(?:the\s+)?patient|nach\s+verschlechterung\s+(?:sortier|priorisier)|dringende?\s+intervention|urgent\s+intervention)\b/iu.test(
       text,
     ) ||
     /\bwer\s+ist\s+(?:am\s+meisten\s+)?gefährdet\b/iu.test(text) ||
     /\bpriorisier\p{L}*\b[^.!?]{0,80}\bpatient\p{L}*\b|\bpatient\p{L}*\b[^.!?]{0,80}\bnach\s+verschlechterung\b/iu.test(
       text,
     ) ||
-    (/\b(?:sollte|muss|am\s+besten|ich\s+empfehle)\b/iu.test(text) &&
-      /\b(?:hinsetzen|trinken|behandeln|therapieren|verabreichen|geben|absetzen|überwachen|kontrollieren)\b/iu.test(
+    (/\b(?:sollte|muss|am\s+besten|ich\s+empfehle|should|must|needs?\s+to|i\s+recommend)\b/iu.test(
+      text,
+    ) &&
+      /\b(?:hinsetzen|im\s+bett\s+bleiben|trinken|behandeln|therapieren|verabreichen|geben|absetzen|überwachen|kontrollieren|sit|stay\s+in\s+bed|drink|treat|administer|give|stop|monitor|check)\b/iu.test(
         text,
-      ));
-  if (clinicalDecision && (clinicalSubject || /\bgefährdet\b/iu.test(text)))
+      )) ||
+    /\b(?:was\s+sollte|what\s+should)\s+(?:sie|er|die\s+person|she|he|they)\b/iu.test(
+      text,
+    );
+  if (
+    clinicalDecision &&
+    (clinicalSubject ||
+      /\b(?:gefährdet|at\s+risk|sie|er|she|he|they)\b/iu.test(text))
+  )
     return "clinical-decision";
 
   const employmentSubject =

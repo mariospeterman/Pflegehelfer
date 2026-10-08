@@ -374,6 +374,7 @@ export interface PendingIntentReview {
 
 export interface AssistantRequestClaim {
   state: "claimed" | "in-progress" | "completed";
+  holderId?: string;
   response?: AssistantResponse;
 }
 
@@ -386,6 +387,7 @@ export interface AssistantRequestIdentity {
 }
 
 export interface AssistantRequestCompletion extends AssistantRequestIdentity {
+  holderId: string;
   response: AssistantResponse;
 }
 
@@ -447,7 +449,14 @@ export interface OperationalStore {
   claimAssistantRequest(
     input: AssistantRequestIdentity,
   ): Promise<AssistantRequestClaim>;
-  releaseAssistantRequest(input: AssistantRequestIdentity): Promise<void>;
+  renewAssistantRequest(
+    input: AssistantRequestIdentity,
+    holderId: string,
+  ): Promise<boolean>;
+  releaseAssistantRequest(
+    input: AssistantRequestIdentity,
+    holderId: string,
+  ): Promise<void>;
   clearConversation(
     actorId: string,
     role: Role,
@@ -684,6 +693,8 @@ export class InMemoryOperationalStore implements OperationalStore {
     string,
     AssistantRequestIdentity & {
       state: "in-progress" | "completed";
+      holderId: string;
+      leaseExpiresAt: number;
       response?: AssistantResponse;
     }
   >();
@@ -1010,6 +1021,8 @@ export class InMemoryOperationalStore implements OperationalStore {
       if (
         !request ||
         request.state !== "in-progress" ||
+        request.holderId !== requestCompletion.holderId ||
+        request.leaseExpiresAt <= Date.now() ||
         request.requestHash !== requestCompletion.requestHash ||
         request.context.threadId !== requestCompletion.context.threadId ||
         request.context.contextRevision !==
@@ -1024,6 +1037,7 @@ export class InMemoryOperationalStore implements OperationalStore {
       this.assistantRequests.set(key, {
         ...requestCompletion,
         state: "completed",
+        leaseExpiresAt: Date.now(),
         response: structuredClone(requestCompletion.response),
       });
     }
@@ -1045,6 +1059,19 @@ export class InMemoryOperationalStore implements OperationalStore {
           "Befehls-ID wurde bereits für eine andere Assistenzanfrage verwendet.",
           409,
         );
+      if (
+        existing.state === "in-progress" &&
+        existing.leaseExpiresAt <= Date.now()
+      ) {
+        const holderId = randomUUID();
+        this.assistantRequests.set(key, {
+          ...structuredClone(input),
+          state: "in-progress",
+          holderId,
+          leaseExpiresAt: Date.now() + 30_000,
+        });
+        return Promise.resolve({ state: "claimed", holderId });
+      }
       return Promise.resolve({
         state: existing.state,
         ...(existing.response
@@ -1052,20 +1079,44 @@ export class InMemoryOperationalStore implements OperationalStore {
           : {}),
       });
     }
+    const holderId = randomUUID();
     this.assistantRequests.set(key, {
       ...structuredClone(input),
       state: "in-progress",
+      holderId,
+      leaseExpiresAt: Date.now() + 30_000,
     });
-    return Promise.resolve({ state: "claimed" });
+    return Promise.resolve({ state: "claimed", holderId });
   }
-  releaseAssistantRequest(input: AssistantRequestIdentity): Promise<void> {
+  renewAssistantRequest(
+    input: AssistantRequestIdentity,
+    holderId: string,
+  ): Promise<boolean> {
     const key = `${input.actorId}:${input.commandId}`;
     const existing = this.assistantRequests.get(key);
     if (
       existing?.state === "in-progress" &&
-      existing.requestHash === input.requestHash
+      existing.requestHash === input.requestHash &&
+      existing.holderId === holderId &&
+      existing.leaseExpiresAt > Date.now()
+    ) {
+      existing.leaseExpiresAt = Date.now() + 30_000;
+      return Promise.resolve(true);
+    }
+    return Promise.resolve(false);
+  }
+  releaseAssistantRequest(
+    input: AssistantRequestIdentity,
+    holderId: string,
+  ): Promise<void> {
+    const key = `${input.actorId}:${input.commandId}`;
+    const existing = this.assistantRequests.get(key);
+    if (
+      existing?.state === "in-progress" &&
+      existing.requestHash === input.requestHash &&
+      existing.holderId === holderId
     )
-      this.assistantRequests.delete(key);
+      existing.leaseExpiresAt = 0;
     return Promise.resolve();
   }
   async listConversations(
@@ -3152,10 +3203,12 @@ export class PostgresOperationalStore
       if (requestCompletion) {
         const completed = await client.query(
           `UPDATE assistant_request_claims
-           SET state='completed',response=$1,updated_at=now(),expires_at=now()+interval '24 hours'
+           SET state='completed',response=$1,updated_at=now(),
+               expires_at=now()+interval '24 hours',lease_expires_at=now()
            WHERE organization_id=$2 AND site_id=$3 AND actor_id=$4
              AND command_id=$5 AND request_hash=$6 AND state='in-progress'
-             AND thread_id=$7 AND context_revision=$8`,
+             AND thread_id=$7 AND context_revision=$8 AND holder_id=$9
+             AND lease_expires_at > now()`,
           [
             requestCompletion.response,
             organizationId,
@@ -3165,6 +3218,7 @@ export class PostgresOperationalStore
             requestCompletion.requestHash,
             requestCompletion.context.threadId,
             requestCompletion.context.contextRevision,
+            requestCompletion.holderId,
           ],
         );
         if (completed.rowCount !== 1)
@@ -3181,87 +3235,150 @@ export class PostgresOperationalStore
   async claimAssistantRequest(
     input: AssistantRequestIdentity,
   ): Promise<AssistantRequestClaim> {
-    await this.pool.query(
-      `DELETE FROM assistant_request_claims
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+        [
+          `${organizationId}:${siteConfiguration.siteId}:${input.actorId}:assistant-request:${input.commandId}`,
+        ],
+      );
+      const result = await client.query<{
+        effective_role: Role;
+        request_hash: string;
+        session_id: string;
+        thread_id: string;
+        context_revision: number;
+        client_context_id: string;
+        state: "in-progress" | "completed";
+        response: AssistantResponse | null;
+        lease_expires_at: Date;
+      }>(
+        `SELECT effective_role,request_hash,session_id,thread_id,context_revision,
+                client_context_id,state,response,lease_expires_at
+         FROM assistant_request_claims
+         WHERE organization_id=$1 AND site_id=$2 AND actor_id=$3 AND command_id=$4
+         FOR UPDATE`,
+        [
+          organizationId,
+          siteConfiguration.siteId,
+          input.actorId,
+          input.commandId,
+        ],
+      );
+      const existing = result.rows[0];
+      if (existing) {
+        if (
+          existing.effective_role !== input.role ||
+          existing.request_hash !== input.requestHash ||
+          existing.session_id !== input.context.sessionId ||
+          existing.thread_id !== input.context.threadId ||
+          Number(existing.context_revision) !== input.context.contextRevision ||
+          existing.client_context_id !== input.context.clientContextId
+        )
+          throw new DomainError(
+            "INVALID_STATE",
+            "Befehls-ID wurde bereits für eine andere Assistenzanfrage verwendet.",
+            409,
+          );
+        if (existing.state === "completed") {
+          await client.query("COMMIT");
+          return {
+            state: "completed",
+            ...(existing.response ? { response: existing.response } : {}),
+          };
+        }
+        if (existing.lease_expires_at.getTime() > Date.now()) {
+          await client.query("COMMIT");
+          return { state: "in-progress" };
+        }
+        const holderId = randomUUID();
+        await client.query(
+          `UPDATE assistant_request_claims
+           SET holder_id=$1,lease_expires_at=now()+interval '30 seconds',
+               expires_at=now()+interval '24 hours',updated_at=now()
+           WHERE organization_id=$2 AND site_id=$3 AND actor_id=$4 AND command_id=$5`,
+          [
+            holderId,
+            organizationId,
+            siteConfiguration.siteId,
+            input.actorId,
+            input.commandId,
+          ],
+        );
+        await client.query("COMMIT");
+        return { state: "claimed", holderId };
+      }
+      const holderId = randomUUID();
+      await client.query(
+        `INSERT INTO assistant_request_claims
+           (organization_id,site_id,actor_id,effective_role,command_id,request_hash,
+            session_id,thread_id,context_revision,client_context_id,state,
+            holder_id,lease_expires_at,expires_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'in-progress',$11,
+                 now()+interval '30 seconds',now()+interval '24 hours')`,
+        [
+          organizationId,
+          siteConfiguration.siteId,
+          input.actorId,
+          input.role,
+          input.commandId,
+          input.requestHash,
+          input.context.sessionId,
+          input.context.threadId,
+          input.context.contextRevision,
+          input.context.clientContextId,
+          holderId,
+        ],
+      );
+      await client.query("COMMIT");
+      return { state: "claimed", holderId };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+  async renewAssistantRequest(
+    input: AssistantRequestIdentity,
+    holderId: string,
+  ): Promise<boolean> {
+    const renewed = await this.pool.query(
+      `UPDATE assistant_request_claims
+       SET lease_expires_at=now()+interval '30 seconds',updated_at=now()
        WHERE organization_id=$1 AND site_id=$2 AND actor_id=$3
-         AND expires_at <= now()`,
-      [organizationId, siteConfiguration.siteId, input.actorId],
-    );
-    const inserted = await this.pool.query(
-      `INSERT INTO assistant_request_claims
-         (organization_id,site_id,actor_id,effective_role,command_id,request_hash,
-          session_id,thread_id,context_revision,client_context_id,state,expires_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'in-progress',now()+interval '5 minutes')
-       ON CONFLICT (organization_id,site_id,actor_id,command_id) DO NOTHING
-       RETURNING command_id`,
+         AND command_id=$4 AND request_hash=$5 AND state='in-progress'
+         AND holder_id=$6 AND lease_expires_at > now()`,
       [
         organizationId,
         siteConfiguration.siteId,
         input.actorId,
-        input.role,
         input.commandId,
         input.requestHash,
-        input.context.sessionId,
-        input.context.threadId,
-        input.context.contextRevision,
-        input.context.clientContextId,
+        holderId,
       ],
     );
-    if (inserted.rowCount === 1) return { state: "claimed" };
-    const result = await this.pool.query<{
-      effective_role: Role;
-      request_hash: string;
-      session_id: string;
-      thread_id: string;
-      context_revision: number;
-      client_context_id: string;
-      state: "in-progress" | "completed";
-      response: AssistantResponse | null;
-    }>(
-      `SELECT effective_role,request_hash,session_id,thread_id,context_revision,
-              client_context_id,state,response
-       FROM assistant_request_claims
-       WHERE organization_id=$1 AND site_id=$2 AND actor_id=$3 AND command_id=$4`,
-      [
-        organizationId,
-        siteConfiguration.siteId,
-        input.actorId,
-        input.commandId,
-      ],
-    );
-    const existing = result.rows[0];
-    if (
-      !existing ||
-      existing.effective_role !== input.role ||
-      existing.request_hash !== input.requestHash ||
-      existing.session_id !== input.context.sessionId ||
-      existing.thread_id !== input.context.threadId ||
-      Number(existing.context_revision) !== input.context.contextRevision ||
-      existing.client_context_id !== input.context.clientContextId
-    )
-      throw new DomainError(
-        "INVALID_STATE",
-        "Befehls-ID wurde bereits für eine andere Assistenzanfrage verwendet.",
-        409,
-      );
-    return {
-      state: existing.state,
-      ...(existing.response ? { response: existing.response } : {}),
-    };
+    return renewed.rowCount === 1;
   }
   async releaseAssistantRequest(
     input: AssistantRequestIdentity,
+    holderId: string,
   ): Promise<void> {
     await this.pool.query(
-      `DELETE FROM assistant_request_claims
+      `UPDATE assistant_request_claims
+       SET lease_expires_at=now(),updated_at=now()
        WHERE organization_id=$1 AND site_id=$2 AND actor_id=$3
-         AND command_id=$4 AND request_hash=$5 AND state='in-progress'`,
+         AND command_id=$4 AND request_hash=$5 AND state='in-progress'
+         AND holder_id=$6`,
       [
         organizationId,
         siteConfiguration.siteId,
         input.actorId,
         input.commandId,
         input.requestHash,
+        holderId,
       ],
     );
   }

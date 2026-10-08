@@ -28,6 +28,7 @@ describe("immutable migration ledger", () => {
       { version: 13, name: "013_demo_scenario_runs.sql" },
       { version: 14, name: "014_demo_scenario_ledger_repair.sql" },
       { version: 15, name: "015_assistant_request_claims.sql" },
+      { version: 16, name: "016_fenced_assistant_request_claims.sql" },
     ]);
     expect(
       migrations.every(({ checksum }) => /^[a-f0-9]{64}$/.test(checksum)),

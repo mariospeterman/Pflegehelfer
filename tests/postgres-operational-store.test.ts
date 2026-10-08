@@ -39,6 +39,70 @@ async function acknowledgeHandover(
 }
 
 describe.runIf(Boolean(databaseUrl))("PostgreSQL operational store", () => {
+  it("fences an expired assistant request holder from its replacement", async () => {
+    const store = new PostgresOperationalStore(databaseUrl!);
+    const inspectionPool = new Pool({ connectionString: databaseUrl });
+    const actorId = "u-nurse";
+    const role = "registered-nurse" as const;
+    try {
+      await store.initialize();
+      await store.resetDemoState();
+      await store.getOrStartSession(actorId, role);
+      const context = await store.bindAssistantContext(
+        actorId,
+        role,
+        crypto.randomUUID(),
+        "p-anna",
+        "enc-anna-2026",
+      );
+      const identity = {
+        commandId: crypto.randomUUID(),
+        requestHash: "d".repeat(64),
+        actorId,
+        role,
+        context,
+      };
+      const first = await store.claimAssistantRequest(identity);
+      await inspectionPool.query(
+        `UPDATE assistant_request_claims SET lease_expires_at=now()-interval '1 second'
+         WHERE organization_id=$1 AND site_id=$2 AND actor_id=$3 AND command_id=$4`,
+        ["org-demo", "rehab-2", actorId, identity.commandId],
+      );
+      const replacement = await store.claimAssistantRequest(identity);
+      expect(replacement.holderId).not.toBe(first.holderId);
+      await store.releaseAssistantRequest(identity, first.holderId!);
+      expect(
+        await store.renewAssistantRequest(identity, replacement.holderId!),
+      ).toBe(true);
+
+      const turn = {
+        id: crypto.randomUUID(),
+        prompt: "Synthetischer Fence-Test",
+        response: { components: [], openUi: "" },
+        createdAt: new Date().toISOString(),
+        inputModality: "typed" as const,
+        originPatientId: context.patientId,
+        originEncounterId: context.encounterId,
+        originThreadId: context.threadId,
+        originContextRevision: context.contextRevision,
+      };
+      await expect(
+        store.appendConversationTurn(actorId, role, turn, context, {
+          ...identity,
+          holderId: first.holderId!,
+          response: turn.response as never,
+        }),
+      ).rejects.toThrow("ASSISTANT_REQUEST_CLAIM_STALE");
+      await store.appendConversationTurn(actorId, role, turn, context, {
+        ...identity,
+        holderId: replacement.holderId!,
+        response: turn.response as never,
+      });
+    } finally {
+      await Promise.all([store.close(), inspectionPool.end()]);
+    }
+  });
+
   it("durably replays only events addressed to the requesting actor", async () => {
     const store = new PostgresOperationalStore(databaseUrl!);
     try {

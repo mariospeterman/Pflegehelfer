@@ -40,6 +40,10 @@ export function WorkdayPanel({
   const [readoutError, setReadoutError] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioUrlRef = useRef<string | null>(null);
+  const readoutRequestRef = useRef<{
+    generation: number;
+    abort: AbortController;
+  } | null>(null);
   const [reviewEvidence, setReviewEvidence] = useState<string | null>(null);
   const [additionalOpen, setAdditionalOpen] = useState(false);
   const [additionalPatientId, setAdditionalPatientId] = useState(
@@ -108,6 +112,8 @@ export function WorkdayPanel({
 
   useEffect(
     () => () => {
+      readoutRequestRef.current?.abort.abort();
+      readoutRequestRef.current = null;
       audioRef.current?.pause();
       if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
       window.speechSynthesis?.cancel();
@@ -125,6 +131,8 @@ export function WorkdayPanel({
   };
 
   const stopReadout = () => {
+    readoutRequestRef.current?.abort.abort();
+    readoutRequestRef.current = null;
     audioRef.current?.pause();
     audioRef.current = null;
     if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
@@ -156,8 +164,16 @@ export function WorkdayPanel({
     audioRef.current?.pause();
     reset();
     window.speechSynthesis?.cancel();
+    const generation = (readoutRequestRef.current?.generation ?? 0) + 1;
+    readoutRequestRef.current?.abort.abort();
+    const abort = new AbortController();
+    readoutRequestRef.current = { generation, abort };
+    const current = () =>
+      readoutRequestRef.current?.generation === generation &&
+      !abort.signal.aborted;
     try {
       const statusResponse = await fetch("/api/v1/ai/status", {
+        signal: abort.signal,
         headers: {
           "x-demo-user": userId,
           ...assistantClientContextHeaders(),
@@ -167,6 +183,7 @@ export function WorkdayPanel({
         tts?: { mode?: string; ready?: boolean; acceptance?: string };
         message?: string;
       };
+      if (!current()) return;
       if (!statusResponse.ok)
         throw new Error(status.message ?? "Sprachausgabe nicht verfügbar.");
       const text = readoutText(patientId);
@@ -177,6 +194,7 @@ export function WorkdayPanel({
       ) {
         const response = await fetch("/api/v1/assistant/speech", {
           method: "POST",
+          signal: abort.signal,
           headers: {
             "content-type": "application/json",
             "x-demo-user": userId,
@@ -189,7 +207,9 @@ export function WorkdayPanel({
           const failure = (await response.json()) as { message?: string };
           throw new Error(failure.message ?? "Sprachausgabe fehlgeschlagen.");
         }
-        const url = URL.createObjectURL(await response.blob());
+        const blob = await response.blob();
+        if (!current()) return;
+        const url = URL.createObjectURL(blob);
         const audio = new Audio(url);
         audioRef.current = audio;
         audioUrlRef.current = url;
@@ -203,6 +223,7 @@ export function WorkdayPanel({
         return;
       }
       if (status.tts?.mode === "browser-demo" && "speechSynthesis" in window) {
+        if (!current()) return;
         const utterance = new SpeechSynthesisUtterance(text);
         utterance.lang = "de-CH";
         const voice = window.speechSynthesis
@@ -220,6 +241,7 @@ export function WorkdayPanel({
       }
       throw new Error("Sprachausgabe ist in diesem Modus nicht freigegeben.");
     } catch (error) {
+      if (abort.signal.aborted) return;
       reset();
       setReadoutError(
         error instanceof Error
