@@ -33,6 +33,9 @@ describe("service worker safety", () => {
     const worker = read("src/pwa/public/sw.js");
     expect(registration).toContain("/sw.js?build=");
     expect(worker).toContain('searchParams.get("build")');
-    expect(worker).toContain('url.pathname === "/ready"');
+    expect(worker).toContain("explicitShellAsset");
+    expect(worker).toContain('key.startsWith("pflegehelfer-shell-")');
+    expect(worker).not.toContain("cache.put(event.request");
+    expect(worker).not.toContain('caches.match("/")');
   });
 });

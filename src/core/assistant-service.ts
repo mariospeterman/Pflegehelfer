@@ -1012,7 +1012,7 @@ function prohibitedAssistanceRequest(
       text,
     );
   const clinicalDecision =
-    /\b(?:interpretier|interpret|deute|bewerte|evaluate|assess|beurteile|analysiere|analy[sz]e|diagnostizier|diagnos\p{L}*|prognostizier|prognos\p{L}*|empfiehl|recommend\p{L}*|empfehlung|welche\s+(?:therapie|behandlung|medikation)|which\s+(?:therapy|treatment|medication)|behandlung\s+wählen|choose\s+treatment|therapie\s+wählen|dosis\s+(?:ändern|anpassen|erhöhen|senken)|(?:change|adjust|increase|decrease)\s+(?:the\s+)?dose|wer\s+(?:ist|hat)\s+(?:am\s+meisten\s+)?(?:gefährdet|risiko)|who\s+is\s+(?:most\s+)?at\s+risk|priorisier\p{L}*\s+patient|prioriti[sz]e\s+(?:the\s+)?patient|nach\s+verschlechterung\s+(?:sortier|priorisier)|dringende?\s+intervention|urgent\s+intervention)\b/iu.test(
+    /\b(?:interpretier\p{L}*|interpret\p{L}*|deute|bewerte|evaluate|assess|beurteile|analysiere|analy[sz]e|diagnostizier|diagnos\p{L}*|prognostizier|prognos\p{L}*|empfiehl|recommend\p{L}*|empfehlung|welche\s+(?:therapie|behandlung|medikation)|which\s+(?:therapy|treatment|medication)|behandlung\s+wählen|choose\s+treatment|therapie\s+wählen|dosis\s+(?:ändern|anpassen|erhöhen|senken)|(?:change|adjust|increase|decrease)\s+(?:the\s+)?dose|wer\s+(?:ist|hat)\s+(?:am\s+meisten\s+)?(?:gefährdet|risiko)|who\s+is\s+(?:most\s+)?at\s+risk|priorisier\p{L}*\s+patient|prioriti[sz]e\s+(?:the\s+)?patient|nach\s+verschlechterung\s+(?:sortier|priorisier)|dringende?\s+intervention|urgent\s+intervention)\b/iu.test(
       text,
     ) ||
     /\bwer\s+ist\s+(?:am\s+meisten\s+)?gefährdet\b/iu.test(text) ||
