@@ -38,7 +38,9 @@ async function login(page: Page): Promise<void> {
   await expect(page.getByLabel("Pflegehelfer Gespräch")).toBeVisible();
 }
 
-async function chooseAnna(page: Page): Promise<void> {
+async function chooseAnna(
+  page: Page,
+): Promise<{ patientId: string; encounterId: string }> {
   const drawer = page.locator("aside.context-panel");
   if (!(await drawer.isVisible()))
     await page
@@ -51,6 +53,26 @@ async function chooseAnna(page: Page): Promise<void> {
   await expect(page.getByLabel("Aktiver Patientenkontext")).toContainText(
     "Anna Beispiel",
   );
+  return page.evaluate(async () => {
+    const response = await fetch("/api/v1/snapshot");
+    if (!response.ok)
+      throw new Error("Selected patient context could not be verified.");
+    const snapshot = (await response.json()) as {
+      patients?: Array<{
+        id: string;
+        encounterId: string;
+        displayName: string;
+      }>;
+    };
+    const patient = snapshot.patients?.find(
+      (candidate) => candidate.displayName === "Anna Beispiel",
+    );
+    if (!patient)
+      throw new Error(
+        "Selected synthetic patient is absent from the snapshot.",
+      );
+    return { patientId: patient.id, encounterId: patient.encounterId };
+  });
 }
 
 test("recovers one durable write after the acceptance response is lost and the API restarts", async ({
@@ -87,7 +109,7 @@ test("recovers one durable write after the acceptance response is lost and the A
   });
   try {
     await login(page);
-    await chooseAnna(page);
+    const selectedPatient = await chooseAnna(page);
     const composer = page.getByLabel("Nachricht an Pflegehelfer");
     await composer.fill(
       "Notiz: Mobilisation mit Rollator sicher durchgeführt.",
@@ -134,8 +156,8 @@ test("recovers one durable write after the acceptance response is lost and the A
       );
       return result.rows[0] ?? null;
     });
-    expect(accepted.patient_id).toBe("p-anna");
-    expect(accepted.encounter_id).toBe("enc-anna");
+    expect(accepted.patient_id).toBe(selectedPatient.patientId);
+    expect(accepted.encounter_id).toBe(selectedPatient.encounterId);
     expect(accepted.source_read_set).toMatchObject({ schemaVersion: 1 });
 
     const delivered = await eventually(async () => {
