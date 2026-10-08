@@ -41,6 +41,19 @@ describe("production deployment guards", () => {
     expect(workflow).toContain("info.matchingSource !== true");
   });
 
+  it("keeps public synthetic OIDC endpoints separate from demo backchannel traffic", () => {
+    const compose = read("compose.yaml");
+    expect(compose).toContain(
+      "PFH_OIDC_ISSUER: http://127.0.0.1:${PFH_APP_HOST_PORT:-4173}/synthetic-idp",
+    );
+    expect(compose).toContain(
+      "PFH_OIDC_BACKCHANNEL_BASE_URL: http://test-idp:9000",
+    );
+    expect(compose).toContain(
+      "PFH_TEST_IDP_PROXY_BASE_URL: http://test-idp:9000",
+    );
+  });
+
   it("keeps real-stack Playwright detached from the protected showcase", () => {
     const configuration = read("playwright.real-stack.config.ts");
     const workflow = read(".github/workflows/ci.yml");

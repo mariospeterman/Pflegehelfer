@@ -271,6 +271,9 @@ services:
       PFH_OIDC_POST_LOGOUT_REDIRECT_URI: http://127.0.0.1:${PFH_APP_HOST_PORT:-4173}/api/v1/auth/logout/callback
       PFH_PUBLIC_ORIGIN: http://127.0.0.1:${PFH_APP_HOST_PORT:-4173}
       PFH_OIDC_ALLOW_INSECURE_HTTP: "true"
+      # Browser-facing OIDC URLs remain bound to the public issuer above.
+      # Only BFF discovery/JWKS/token traffic uses this demo-only network route.
+      PFH_OIDC_BACKCHANNEL_BASE_URL: http://test-idp:9000
       PFH_SESSION_ENCRYPTION_SECRET: ${PFH_SESSION_ENCRYPTION_SECRET:?Run pnpm demo:env first}
       PFH_TEST_IDP_PROXY_BASE_URL: http://test-idp:9000
       PFH_FHIR_BASE_URL: http://medplum-server:8103/

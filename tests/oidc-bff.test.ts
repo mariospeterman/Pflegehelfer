@@ -97,6 +97,50 @@ describe("OIDC BFF boundary", () => {
         PFH_SESSION_ENCRYPTION_SECRET: "s".repeat(32),
       }),
     ).toThrow(/HTTPS/);
+    expect(() =>
+      oidcConfigurationFromEnvironment({
+        PFH_OIDC_ISSUER: "https://idp.example/tenant",
+        PFH_OIDC_BACKCHANNEL_BASE_URL: "https://idp.internal",
+        PFH_OIDC_CLIENT_ID: "pflegehelfer",
+        PFH_OIDC_REDIRECT_URI: "https://pflege.example/api/v1/auth/callback",
+        PFH_PUBLIC_ORIGIN: "https://pflege.example",
+        PFH_OPERATIONAL_DATABASE_URL: "postgresql://example",
+        PFH_SESSION_ENCRYPTION_SECRET: "s".repeat(32),
+      }),
+    ).toThrow(/explicit demo profile/);
+  });
+
+  it("accepts a credential-free OIDC backchannel only in explicit demo mode", () => {
+    expect(
+      oidcConfigurationFromEnvironment({
+        PFH_DEMO_MODE: "true",
+        PFH_OIDC_ISSUER: "http://127.0.0.1:4173/synthetic-idp",
+        PFH_OIDC_BACKCHANNEL_BASE_URL: "http://test-idp:9000",
+        PFH_OIDC_CLIENT_ID: "pflegehelfer",
+        PFH_OIDC_REDIRECT_URI: "http://127.0.0.1:4173/api/v1/auth/callback",
+        PFH_PUBLIC_ORIGIN: "http://127.0.0.1:4173",
+        PFH_OPERATIONAL_DATABASE_URL: "postgresql://example",
+        PFH_SESSION_ENCRYPTION_SECRET: "s".repeat(32),
+        PFH_OIDC_ALLOW_INSECURE_HTTP: "true",
+      }),
+    ).toMatchObject({
+      issuer: "http://127.0.0.1:4173/synthetic-idp",
+      backchannelBaseUrl: "http://test-idp:9000",
+    });
+    expect(() =>
+      oidcConfigurationFromEnvironment({
+        PFH_DEMO_MODE: "true",
+        PFH_OIDC_ISSUER: "http://127.0.0.1:4173/synthetic-idp",
+        PFH_OIDC_BACKCHANNEL_BASE_URL:
+          "http://user:secret@test-idp:9000?leak=true",
+        PFH_OIDC_CLIENT_ID: "pflegehelfer",
+        PFH_OIDC_REDIRECT_URI: "http://127.0.0.1:4173/api/v1/auth/callback",
+        PFH_PUBLIC_ORIGIN: "http://127.0.0.1:4173",
+        PFH_OPERATIONAL_DATABASE_URL: "postgresql://example",
+        PFH_SESSION_ENCRYPTION_SECRET: "s".repeat(32),
+        PFH_OIDC_ALLOW_INSECURE_HTTP: "true",
+      }),
+    ).toThrow(/must not contain credentials/);
   });
 
   it("ignores demo headers when an authenticated BFF identity is active", async () => {

@@ -97,6 +97,7 @@ export interface IdentityAdapter {
 
 export interface OidcBffConfiguration {
   issuer: string;
+  backchannelBaseUrl?: string | undefined;
   clientId: string;
   clientSecret?: string | undefined;
   redirectUri: string;
@@ -112,6 +113,7 @@ export interface OidcBffConfiguration {
 const configurationSchema = z
   .object({
     issuer: z.url(),
+    backchannelBaseUrl: z.url().optional(),
     clientId: z.string().min(3).max(240),
     clientSecret: z.string().min(16).max(1_000).optional(),
     redirectUri: z.url(),
@@ -208,6 +210,9 @@ export function oidcConfigurationFromEnvironment(
     );
   const parsed = configurationSchema.parse({
     issuer: env.PFH_OIDC_ISSUER,
+    ...(env.PFH_OIDC_BACKCHANNEL_BASE_URL
+      ? { backchannelBaseUrl: env.PFH_OIDC_BACKCHANNEL_BASE_URL }
+      : {}),
     clientId: env.PFH_OIDC_CLIENT_ID,
     ...(env.PFH_OIDC_CLIENT_SECRET
       ? { clientSecret: env.PFH_OIDC_CLIENT_SECRET }
@@ -227,6 +232,9 @@ export function oidcConfigurationFromEnvironment(
     allowInsecureHttp: env.PFH_OIDC_ALLOW_INSECURE_HTTP === "true",
   });
   const issuer = new URL(parsed.issuer);
+  const backchannel = parsed.backchannelBaseUrl
+    ? new URL(parsed.backchannelBaseUrl)
+    : null;
   const redirect = new URL(parsed.redirectUri);
   const logoutRedirect = parsed.logoutRedirectUri
     ? new URL(parsed.logoutRedirectUri)
@@ -236,6 +244,7 @@ export function oidcConfigurationFromEnvironment(
     !parsed.allowInsecureHttp &&
     [
       issuer,
+      ...(backchannel ? [backchannel] : []),
       redirect,
       publicOrigin,
       ...(logoutRedirect ? [logoutRedirect] : []),
@@ -243,6 +252,20 @@ export function oidcConfigurationFromEnvironment(
   )
     throw new Error(
       "OIDC issuer, redirect URI and public origin require HTTPS.",
+    );
+  if (backchannel && env.PFH_DEMO_MODE !== "true")
+    throw new Error(
+      "OIDC backchannel override is restricted to the explicit demo profile.",
+    );
+  if (
+    backchannel &&
+    (backchannel.username !== "" ||
+      backchannel.password !== "" ||
+      backchannel.search !== "" ||
+      backchannel.hash !== "")
+  )
+    throw new Error(
+      "OIDC backchannel base URL must not contain credentials, query or fragment.",
     );
   if (redirect.origin !== publicOrigin.origin)
     throw new Error("OIDC redirect URI must use the configured public origin.");
@@ -289,9 +312,32 @@ export class PostgresOidcBff implements IdentityAdapter {
     });
   }
 
+  private backchannelUrl(publicUrl: string): URL {
+    const target = new URL(publicUrl);
+    if (!this.config.backchannelBaseUrl) return target;
+
+    const issuer = new URL(`${normalizedIssuer(this.config.issuer)}/`);
+    if (
+      target.origin !== issuer.origin ||
+      !target.pathname.startsWith(issuer.pathname)
+    )
+      throw new Error("OIDC_BACKCHANNEL_TARGET_OUTSIDE_ISSUER");
+
+    const relativePath = target.pathname.slice(issuer.pathname.length);
+    const backchannel = new URL(
+      `${normalizedIssuer(this.config.backchannelBaseUrl)}/`,
+    );
+    const translated = new URL(relativePath, backchannel);
+    translated.search = target.search;
+    return translated;
+  }
+
   async initialize(): Promise<void> {
     const issuer = normalizedIssuer(this.config.issuer);
-    const response = await fetch(`${issuer}/.well-known/openid-configuration`, {
+    const discoveryUrl = this.backchannelUrl(
+      `${issuer}/.well-known/openid-configuration`,
+    );
+    const response = await fetch(discoveryUrl, {
       headers: { accept: "application/json" },
       redirect: "error",
       signal: AbortSignal.timeout(8_000),
@@ -316,7 +362,7 @@ export class PostgresOidcBff implements IdentityAdapter {
         throw new Error("OIDC_DISCOVERY_ENDPOINT_ORIGIN_MISMATCH");
     }
     this.discovery = discovery;
-    this.jwks = createRemoteJWKSet(new URL(discovery.jwks_uri), {
+    this.jwks = createRemoteJWKSet(this.backchannelUrl(discovery.jwks_uri), {
       timeoutDuration: 8_000,
       cooldownDuration: 30_000,
     });
@@ -453,16 +499,19 @@ export class PostgresOidcBff implements IdentityAdapter {
     });
     if (this.config.clientSecret)
       form.set("client_secret", this.config.clientSecret);
-    const tokenResponse = await fetch(this.discovery.token_endpoint, {
-      method: "POST",
-      headers: {
-        accept: "application/json",
-        "content-type": "application/x-www-form-urlencoded",
+    const tokenResponse = await fetch(
+      this.backchannelUrl(this.discovery.token_endpoint),
+      {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        body: form,
+        redirect: "error",
+        signal: AbortSignal.timeout(8_000),
       },
-      body: form,
-      redirect: "error",
-      signal: AbortSignal.timeout(8_000),
-    });
+    );
     if (!tokenResponse.ok)
       throw new Error(`OIDC_TOKEN_HTTP_${tokenResponse.status}`);
     const tokens = tokenResponseSchema.parse(await tokenResponse.json());
