@@ -3610,7 +3610,7 @@ export function buildApp(
           holderId,
           inferenceController,
         )
-      : async () => undefined;
+      : () => Promise.resolve();
     let voiceTranscriptProvenance: VoiceTranscriptProvenance | null = null;
     let workingContext: Awaited<
       ReturnType<typeof assistantWorkingContext>
