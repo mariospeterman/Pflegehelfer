@@ -6,6 +6,7 @@ import {
   type Thread,
 } from "@openuidev/react-headless";
 import { assistantClientContextHeaders } from "../assistant-context";
+import { authenticatedFetch, requestIntegrityHeaders } from "../auth";
 import {
   completedOpenUi,
   supersededOpenUi,
@@ -54,7 +55,17 @@ export interface VoiceSubmission {
 }
 
 export interface SubmissionChannel {
-  take(prompt: string): VoiceSubmission | null;
+  take(prompt: string, operationId: string): VoiceSubmission | null;
+}
+
+async function deterministicOperationId(envelope: string): Promise<string> {
+  const digest = new Uint8Array(
+    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(envelope)),
+  ).slice(0, 16);
+  digest[6] = (digest[6]! & 0x0f) | 0x50;
+  digest[8] = (digest[8]! & 0x3f) | 0x80;
+  const hex = [...digest].map((byte) => byte.toString(16).padStart(2, "0"));
+  return `${hex.slice(0, 4).join("")}-${hex.slice(4, 6).join("")}-${hex.slice(6, 8).join("")}-${hex.slice(8, 10).join("")}-${hex.slice(10).join("")}`;
 }
 
 function requestHeaders(
@@ -66,11 +77,12 @@ function requestHeaders(
     "x-demo-user": userId,
     ...assistantClientContextHeaders(),
     ...(write ? { "x-command-id": commandId ?? crypto.randomUUID() } : {}),
+    ...requestIntegrityHeaders(write ? "POST" : "GET"),
   };
 }
 
 async function readConversation(userId: string): Promise<ConversationResponse> {
-  const response = await fetch("/api/v1/assistant/conversation", {
+  const response = await authenticatedFetch("/api/v1/assistant/conversation", {
     headers: requestHeaders(userId),
   });
   const body = (await response.json()) as ConversationResponse & {
@@ -119,7 +131,7 @@ export function createConversationStorage(userId: string): ChatStorage {
           throw new Error("Das Gespräch gehört nicht zum aktiven Kontext.");
         let pending: PendingReviewResponse["pending"] = null;
         if (body.context.patientId && body.context.encounterId) {
-          const pendingResponse = await fetch(
+          const pendingResponse = await authenticatedFetch(
             "/api/v1/assistant/pending-review",
             {
               method: "POST",
@@ -212,7 +224,6 @@ export function createConversationLlm(input: {
   purpose: string;
   submissionChannel: SubmissionChannel;
 }): ChatLLM {
-  const commandIds = new Map<string, string>();
   return {
     streamProtocol: vercelAIAdapter(),
     async send({ messages, signal }) {
@@ -221,17 +232,17 @@ export function createConversationLlm(input: {
       );
       if (prompt.length < 2)
         throw new Error("Bitte gib mindestens zwei Zeichen ein.");
-      const voice = input.submissionChannel.take(prompt);
       const userMessage = messages.findLast((item) => item.role === "user");
-      const requestIdentity = `${userMessage?.id ?? "missing"}:${prompt}`;
-      let commandId = commandIds.get(requestIdentity);
-      if (!commandId) {
-        commandId = crypto.randomUUID();
-        commandIds.set(requestIdentity, commandId);
-        if (commandIds.size > 100)
-          commandIds.delete(commandIds.keys().next().value!);
-      }
-      return fetch("/api/v1/assistant/query/stream", {
+      const operationEnvelope = [
+        input.userId,
+        input.patientId ?? "no-patient",
+        input.purpose,
+        userMessage?.id ?? "missing",
+        prompt,
+      ].join("\u001f");
+      const commandId = await deterministicOperationId(operationEnvelope);
+      const voice = input.submissionChannel.take(prompt, commandId);
+      return authenticatedFetch("/api/v1/assistant/query/stream", {
         method: "POST",
         headers: {
           "content-type": "application/json",

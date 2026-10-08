@@ -4,10 +4,15 @@ import { resolve } from "node:path";
 import type { Writable } from "node:stream";
 import fastifyStatic from "@fastify/static";
 import fastifyMultipart from "@fastify/multipart";
-import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
+import Fastify, {
+  type FastifyInstance,
+  type FastifyReply,
+  type FastifyRequest,
+} from "fastify";
 import { createUIMessageStream, pipeUIMessageStreamToResponse } from "ai";
 import { z } from "zod";
 import {
+  archiveAssistantResponse,
   AssistantService,
   toOpenUi,
   type AssistantResponse,
@@ -63,6 +68,7 @@ import {
   type AssistantContextBinding,
   type AssistantRequestIdentity,
   type DurableVoiceAuthority,
+  type IntentAuthorityWrite,
   type OperationalStore,
 } from "../infrastructure/operational-store.js";
 import { seedSyntheticDemoWorkspace } from "../infrastructure/demo-workspace.js";
@@ -103,6 +109,12 @@ import {
   type WorkspaceProfileProposal,
   type WorkspaceProject,
 } from "../core/workspace.js";
+import {
+  oidcConfigurationFromEnvironment,
+  PostgresOidcBff,
+  type AuthenticatedIdentity,
+  type IdentityAdapter,
+} from "./oidc-bff.js";
 
 const roleSchema = z.enum([
   "care-assistant",
@@ -283,29 +295,6 @@ const assistantIntentBody = z
   })
   .strict();
 
-function archiveAssistantResponse(
-  response: AssistantResponse,
-): AssistantResponse {
-  const hadAction = response.components.some(
-    (component) => component.type === "DraftAction",
-  );
-  const components = response.components.filter(
-    (component) => component.type !== "DraftAction",
-  );
-  if (hadAction)
-    components.push({
-      type: "SafetyAlert",
-      severity: "info",
-      message:
-        "Diese frühere offene Änderung ist nicht mehr ausführbar. Bitte neu formulieren, damit Kontext und Version erneut geprüft werden.",
-    });
-  return {
-    ...response,
-    components,
-    openUi: toOpenUi(components),
-  };
-}
-
 export function buildApp(
   providedService?: PflegehelferService,
   options: {
@@ -319,6 +308,7 @@ export function buildApp(
     runtime?: RuntimeProfileConfiguration;
     loggerStream?: Writable;
     loggerLevel?: string;
+    identity?: IdentityAdapter;
   } = {},
 ): FastifyInstance {
   const demoMode = options.demoMode ?? process.env.PFH_DEMO_MODE === "true";
@@ -347,6 +337,25 @@ export function buildApp(
       persistenceMode: operationalStore.mode,
       providerMode: demoMode ? "in-process-simulator" : "production",
     } satisfies RuntimeProfileConfiguration);
+  const oidcConfiguration = options.identity
+    ? null
+    : oidcConfigurationFromEnvironment(
+        process.env,
+        siteConfiguration.institutionId,
+      );
+  const identity =
+    options.identity ??
+    (oidcConfiguration ? new PostgresOidcBff(oidcConfiguration) : null);
+  let identityInitialization: Promise<void> | null = null;
+  const ensureIdentityReady = () => {
+    if (!identity) return Promise.resolve();
+    identityInitialization ??= identity.initialize();
+    return identityInitialization;
+  };
+  const authenticatedIdentities = new WeakMap<
+    FastifyRequest,
+    AuthenticatedIdentity
+  >();
   const service =
     providedService ??
     new PflegehelferService(
@@ -558,10 +567,11 @@ export function buildApp(
   };
   const authorityHash = (token: string) =>
     createHash("sha256").update(token).digest("hex");
-  const persistResponseAuthorities = async (
+  const collectResponseAuthorities = (
     response: AssistantResponse,
     context: AssistantContextBinding,
-  ) => {
+  ): IntentAuthorityWrite[] => {
+    const authorities: IntentAuthorityWrite[] = [];
     for (const component of response.components) {
       if (component.type !== "DraftAction") continue;
       const record = assistant.durableIntentRecord(component.intentToken);
@@ -571,7 +581,7 @@ export function buildApp(
           "Die geprüfte Aktion konnte nicht dauerhaft gebunden werden.",
           503,
         );
-      await operationalStore.storeIntentAuthority({
+      authorities.push({
         tokenHash: authorityHash(component.intentToken),
         record,
         sessionId: context.sessionId,
@@ -582,18 +592,22 @@ export function buildApp(
         clientContextId: context.clientContextId,
       });
     }
+    return authorities;
   };
   const consumeValidatedVoiceReceipt = async (
     actorId: string,
     body: AssistantQueryBody,
     context: AssistantContextBinding,
-  ): Promise<VoiceTranscriptProvenance | null> => {
+    commandId: string,
+  ): Promise<{
+    provenance: VoiceTranscriptProvenance;
+    receiptId: string;
+    tokenHash: string;
+  } | null> => {
     if (body.inputModality !== "voice") return null;
     const receiptId = body.voiceReceiptId ?? "";
     const tokenHash = authorityHash(receiptId);
-    const receipt =
-      voiceReceipts.get(receiptId) ??
-      (await operationalStore.loadVoiceAuthority(tokenHash));
+    const receipt = await operationalStore.loadVoiceAuthority(tokenHash);
     const purpose = body.purpose ?? "direct-care";
     const confirmed = [...(body.voiceConfirmedEntityIds ?? [])].sort();
     const original = voiceTranscriptOriginalSchema.safeParse(receipt?.original);
@@ -619,17 +633,20 @@ export function buildApp(
         "Sprachtranskript ist abgelaufen, verändert oder nicht an diesen Kontext gebunden.",
         403,
       );
-    if (!(await operationalStore.consumeVoiceAuthority(tokenHash)))
+    if (!(await operationalStore.claimVoiceAuthority(tokenHash, commandId)))
       throw new DomainError(
         "AUTH_DENIED",
-        "Sprachtranskript wurde bereits verwendet.",
+        "Sprachtranskript ist bereits an eine andere Anfrage gebunden oder abgelaufen.",
         403,
       );
-    voiceReceipts.delete(receiptId);
-    return createVoiceTranscriptProvenance({
-      original: original.data,
-      reviewedTranscript: body.prompt,
-    });
+    return {
+      provenance: createVoiceTranscriptProvenance({
+        original: original.data,
+        reviewedTranscript: body.prompt,
+      }),
+      receiptId,
+      tokenHash,
+    };
   };
   const eventSubscribers = new Set<(revision: number) => void>();
   const contextTransitions = new Map<string, Promise<unknown>>();
@@ -879,6 +896,12 @@ export function buildApp(
     return pending;
   };
   const userId = (request: FastifyRequest): string => {
+    if (identity) {
+      const authenticated = authenticatedIdentities.get(request);
+      if (!authenticated)
+        throw new DomainError("AUTH_DENIED", "Anmeldung erforderlich.", 401);
+      return authenticated.actorId;
+    }
     if (!demoMode)
       throw new DomainError(
         "AUTH_DENIED",
@@ -1048,6 +1071,28 @@ export function buildApp(
     requestIdHeader: "x-request-id",
     genReqId: () => crypto.randomUUID(),
   });
+  const syntheticIdpProxyBase =
+    demoMode && process.env.PFH_TEST_IDP_PROXY_BASE_URL
+      ? z
+          .url()
+          .parse(process.env.PFH_TEST_IDP_PROXY_BASE_URL)
+          .replace(/\/+$/u, "")
+      : null;
+  if (syntheticIdpProxyBase)
+    app.addContentTypeParser(
+      "application/x-www-form-urlencoded",
+      { parseAs: "string" },
+      (_request, body, done) => {
+        done(
+          null,
+          Object.fromEntries(
+            new URLSearchParams(
+              typeof body === "string" ? body : body.toString("utf8"),
+            ),
+          ),
+        );
+      },
+    );
   void app.register(fastifyMultipart, {
     limits: { files: 1, fields: 0, fileSize: 8 * 1024 * 1024 },
   });
@@ -1276,10 +1321,59 @@ export function buildApp(
     });
   });
 
+  app.addHook("preHandler", async (request) => {
+    if (!identity) return;
+    const route = request.routeOptions.url;
+    // The immutable PWA shell and synthetic IdP proxy are public bootstrap
+    // surfaces. Patient/workflow data remains exclusively below /api/v1/.
+    if (!request.url.startsWith("/api/v1/")) return;
+    if (
+      route === "/health" ||
+      route === "/ready" ||
+      route === "/api/v1/build-info" ||
+      route === "/api/v1/auth/login" ||
+      route === "/api/v1/auth/callback"
+    )
+      return;
+    await ensureIdentityReady();
+    const authenticated = await identity.authenticate(request.headers.cookie);
+    if (!authenticated)
+      throw new DomainError("AUTH_DENIED", "Anmeldung erforderlich.", 401);
+    if (authenticated.organizationId !== siteConfiguration.institutionId)
+      throw new DomainError(
+        "AUTH_DENIED",
+        "Die Anmeldung gehört nicht zu dieser Institution.",
+        403,
+      );
+    try {
+      service.user(authenticated.actorId);
+      identity.assertRequestIntegrity({
+        identity: authenticated,
+        method: request.method,
+        origin:
+          typeof request.headers.origin === "string"
+            ? request.headers.origin
+            : undefined,
+        csrfHeader:
+          typeof request.headers["x-csrf-token"] === "string"
+            ? request.headers["x-csrf-token"]
+            : undefined,
+      });
+    } catch {
+      throw new DomainError(
+        "AUTH_DENIED",
+        "Anmeldung oder Anfrageschutz ist ungültig.",
+        403,
+      );
+    }
+    authenticatedIdentities.set(request, authenticated);
+  });
+
   app.addHook("preHandler", async (request, reply) => {
     const route = request.routeOptions.url;
     if (request.method !== "POST" || !route?.startsWith("/api/v1/")) return;
     if (
+      route.startsWith("/api/v1/auth/") ||
       route === "/api/v1/assistant/transcribe" ||
       route === "/api/v1/assistant/query" ||
       route === "/api/v1/analytics/organizational-value/report"
@@ -1341,9 +1435,112 @@ export function buildApp(
     service: "pflegehelfer-api",
     time: new Date().toISOString(),
   }));
+  if (syntheticIdpProxyBase) {
+    const proxySyntheticIdp = async (
+      request: FastifyRequest,
+      reply: FastifyReply,
+    ) => {
+      const incoming = new URL(request.url, "http://pflegehelfer.invalid");
+      const relative = incoming.pathname.replace(/^\/synthetic-idp/u, "");
+      if (
+        ![
+          "/.well-known/openid-configuration",
+          "/authorize",
+          "/token",
+          "/jwks",
+          "/logout",
+        ].includes(relative)
+      )
+        return reply.code(404).send({ error: "NOT_FOUND" });
+      const target = new URL(`${syntheticIdpProxyBase}${relative}`);
+      target.search = incoming.search;
+      const upstream = await fetch(target, {
+        method: request.method,
+        ...(request.method === "POST"
+          ? {
+              headers: { "content-type": "application/x-www-form-urlencoded" },
+              body: new URLSearchParams(request.body as Record<string, string>),
+            }
+          : {}),
+        redirect: "manual",
+        signal: AbortSignal.timeout(8_000),
+      });
+      const location = upstream.headers.get("location");
+      if (location) void reply.header("location", location);
+      void reply
+        .code(upstream.status)
+        .type(
+          upstream.headers.get("content-type") ?? "application/octet-stream",
+        );
+      return reply.send(Buffer.from(await upstream.arrayBuffer()));
+    };
+    app.route({
+      method: ["GET", "POST"],
+      url: "/synthetic-idp/*",
+      handler: proxySyntheticIdp,
+    });
+  }
   app.get("/api/v1/build-info", () => runtimeBuildInfo());
+  app.get("/api/v1/auth/login", async (request, reply) => {
+    if (!identity)
+      throw new DomainError(
+        "AUTH_DENIED",
+        "OIDC-Anmeldung ist nicht konfiguriert.",
+        503,
+      );
+    await ensureIdentityReady();
+    const query = z
+      .object({ returnTo: z.string().max(500).optional() })
+      .strict()
+      .parse(request.query);
+    const result = await identity.beginLogin(query.returnTo);
+    return reply
+      .header("set-cookie", result.cookies)
+      .redirect(result.redirectTo, 302);
+  });
+  app.get("/api/v1/auth/callback", async (request, reply) => {
+    if (!identity)
+      throw new DomainError(
+        "AUTH_DENIED",
+        "OIDC-Anmeldung ist nicht konfiguriert.",
+        503,
+      );
+    await ensureIdentityReady();
+    const query = z
+      .object({
+        code: z.string().min(1).max(4_000),
+        state: z.string().min(32).max(240),
+      })
+      .strict()
+      .parse(request.query);
+    const result = await identity.completeLogin(
+      query.code,
+      query.state,
+      request.headers.cookie,
+    );
+    return reply
+      .header("set-cookie", result.cookies)
+      .redirect(result.redirectTo, 303);
+  });
+  app.get("/api/v1/auth/session", (request) => {
+    const actor = service.user(userId(request));
+    return { authenticated: true, actorId: actor.id, role: actor.role };
+  });
+  app.post("/api/v1/auth/logout", async (request, reply) => {
+    if (!identity) return reply.code(204).send();
+    const result = await identity.logout(request.headers.cookie);
+    return reply
+      .header("set-cookie", result.cookies)
+      .header("location", result.redirectTo)
+      .code(204)
+      .send();
+  });
   app.get("/ready", async (_request, reply) => {
-    await Promise.all([persistenceQueue, assistantAuditQueue]);
+    await Promise.all([
+      persistenceQueue,
+      assistantAuditQueue,
+      ensureIdentityReady(),
+    ]);
     const auditValid = service.audit.verify();
     const [workspaceStatus, operationalReady, providers] = await Promise.all([
       workspace.status(),
@@ -1359,7 +1556,7 @@ export function buildApp(
         reason: "runtime-profile-mismatch",
         profile: runtime.profile,
       });
-    if (!demoMode)
+    if (!demoMode && !identity)
       return reply.code(503).send({
         status: "not-ready",
         reason: "production-identity-adapter-not-configured",
@@ -2472,11 +2669,20 @@ export function buildApp(
       if (!reply.raw.destroyed) reply.raw.write(": heartbeat\n\n");
     }, 20_000);
     heartbeat.unref();
-    request.raw.on("close", () => {
+    // Force a fresh authenticated HTTP request before a BFF session can
+    // remain visually trusted indefinitely after server-side revocation.
+    const maximumStreamAge = setTimeout(() => {
+      if (!reply.raw.destroyed) reply.raw.end();
+    }, 55_000);
+    maximumStreamAge.unref();
+    const cleanup = () => {
       clearInterval(heartbeat);
       clearInterval(replayPoll);
+      clearTimeout(maximumStreamAge);
       eventSubscribers.delete(send);
-    });
+    };
+    request.raw.on("close", cleanup);
+    reply.raw.on("close", cleanup);
   });
 
   app.get("/api/v1/fhir/status", async (request) => {
@@ -2581,6 +2787,21 @@ export function buildApp(
       context.threadId,
     );
     if (!pending) return { pending: null };
+    // A durable proposal is not an executable authority. Resolve its archived
+    // source turn through the currently authorized conversation before issuing
+    // a fresh, short-lived capability for the review UI.
+    const sourceTurn = (
+      await operationalStore.loadConversation(
+        actorId,
+        actor.role,
+        patient.id,
+        context,
+      )
+    ).find((turn) => turn.id === pending.responseId);
+    const archived = sourceTurn?.response
+      ? archiveAssistantResponse(sourceTurn.response)
+      : null;
+    if (!archived) return { pending: null };
     const intentToken = assistant.reissueDurableIntent(actorId, pending.record);
     const freshRecord = assistant.durableIntentRecord(intentToken)!;
     const reviewItems = z
@@ -2662,16 +2883,6 @@ export function buildApp(
       reviewItems,
       clientContextId: context.clientContextId,
     });
-    const sourceTurn = (
-      await operationalStore.loadConversation(
-        actorId,
-        actor.role,
-        patient.id,
-        context,
-      )
-    ).find((turn) => turn.id === pending.responseId);
-    const archived = sourceTurn?.response as AssistantResponse | undefined;
-    if (!archived) return { pending: null };
     const components = [
       ...archived.components.filter(
         (item) =>
@@ -3341,7 +3552,7 @@ export function buildApp(
     let disconnected = false;
     let generatedResponse: AssistantResponse | null = null;
     let revocation = Promise.resolve();
-    let authorityPersistence = Promise.resolve();
+    let requestCommitted = false;
     const transportDisconnected = () =>
       request.raw.aborted ||
       reply.raw.destroyed ||
@@ -3350,17 +3561,16 @@ export function buildApp(
       if (generatedResponse) assistant.revokeResponseIntents(generatedResponse);
       const responseId = generatedResponse?.id;
       if (responseId)
-        revocation = revocation
-          .then(() => authorityPersistence.catch(() => undefined))
-          .then(() =>
-            operationalStore.revokeResponseAuthorities(actorId, responseId),
-          );
+        revocation = revocation.then(() =>
+          operationalStore.revokeResponseAuthorities(actorId, responseId),
+        );
       return revocation;
     };
     const revokeAfterDisconnect = () => {
       if (completed && !disconnected) return revocation;
       disconnected = true;
       inferenceController.abort("client-disconnected");
+      if (requestCommitted) return revocation;
       return revokeAuthorities();
     };
     const abortInference = () => void revokeAfterDisconnect();
@@ -3420,13 +3630,14 @@ export function buildApp(
       holderId,
       inferenceController,
     );
-    let requestCommitted = false;
     try {
-      const voiceTranscriptProvenance = await consumeValidatedVoiceReceipt(
+      const voiceAuthorization = await consumeValidatedVoiceReceipt(
         actorId,
         body,
         context,
+        requestIdentity.commandId,
       );
+      const voiceTranscriptProvenance = voiceAuthorization?.provenance ?? null;
       const previousCarePlan =
         context.patientId && context.encounterId
           ? await operationalStore.loadPendingCarePlan(
@@ -3462,13 +3673,7 @@ export function buildApp(
           499,
         );
       }
-      // Assign the lifecycle promise before persistence starts. A store adapter
-      // may synchronously surface a socket close before returning its promise;
-      // revocation must still wait for that insert to settle before deleting it.
-      authorityPersistence = Promise.resolve().then(() =>
-        persistResponseAuthorities(response, context),
-      );
-      await authorityPersistence;
+      const authorities = collectResponseAuthorities(response, context);
       if (inferenceController.signal.aborted || transportDisconnected()) {
         await revokeAfterDisconnect();
         throw new DomainError(
@@ -3499,9 +3704,15 @@ export function buildApp(
           ...requestIdentity,
           holderId,
           response: archiveAssistantResponse(response),
+          authorities,
+          ...(voiceAuthorization
+            ? { voiceTokenHash: voiceAuthorization.tokenHash }
+            : {}),
         },
       );
       requestCommitted = true;
+      if (voiceAuthorization)
+        voiceReceipts.delete(voiceAuthorization.receiptId);
       if (inferenceController.signal.aborted || transportDisconnected()) {
         await revokeAfterDisconnect();
         throw new DomainError(
@@ -3512,12 +3723,13 @@ export function buildApp(
       }
       return response;
     } catch (error) {
-      await revokeAuthorities();
-      if (!requestCommitted)
+      if (!requestCommitted) {
+        await revokeAuthorities();
         await operationalStore.releaseAssistantRequest(
           requestIdentity,
           holderId,
         );
+      }
       throw error;
     } finally {
       await stopLease();
@@ -3532,7 +3744,7 @@ export function buildApp(
     let disconnected = false;
     let streamedResponse: AssistantResponse | null = null;
     let revocation = Promise.resolve();
-    let authorityPersistence = Promise.resolve();
+    let requestCommitted = false;
     const transportDisconnected = () =>
       request.raw.aborted ||
       reply.raw.destroyed ||
@@ -3541,17 +3753,16 @@ export function buildApp(
       if (streamedResponse) assistant.revokeResponseIntents(streamedResponse);
       const responseId = streamedResponse?.id;
       if (responseId)
-        revocation = revocation
-          .then(() => authorityPersistence.catch(() => undefined))
-          .then(() =>
-            operationalStore.revokeResponseAuthorities(actorId, responseId),
-          );
+        revocation = revocation.then(() =>
+          operationalStore.revokeResponseAuthorities(actorId, responseId),
+        );
       return revocation;
     };
     const revokeAfterDisconnect = () => {
       if (completed && !disconnected) return revocation;
       disconnected = true;
       inferenceController.abort("client-disconnected");
+      if (requestCommitted) return revocation;
       return revokeAuthorities();
     };
     const abortInference = () => void revokeAfterDisconnect();
@@ -3600,7 +3811,7 @@ export function buildApp(
         409,
       );
     const replayedResponse = claim.response ?? null;
-    let requestCommitted = claim.state === "completed";
+    requestCommitted = claim.state === "completed";
     const holderId = claim.holderId ?? null;
     if (!replayedResponse && !holderId)
       throw new Error("ASSISTANT_REQUEST_HOLDER_MISSING");
@@ -3611,17 +3822,24 @@ export function buildApp(
           inferenceController,
         )
       : () => Promise.resolve();
+    let voiceAuthorization: {
+      provenance: VoiceTranscriptProvenance;
+      receiptId: string;
+      tokenHash: string;
+    } | null = null;
     let voiceTranscriptProvenance: VoiceTranscriptProvenance | null = null;
     let workingContext: Awaited<
       ReturnType<typeof assistantWorkingContext>
     > | null = null;
     try {
       if (!replayedResponse) {
-        voiceTranscriptProvenance = await consumeValidatedVoiceReceipt(
+        voiceAuthorization = await consumeValidatedVoiceReceipt(
           actorId,
           body,
           context,
+          requestIdentity.commandId,
         );
+        voiceTranscriptProvenance = voiceAuthorization?.provenance ?? null;
         const previousCarePlan =
           context.patientId && context.encounterId
             ? await operationalStore.loadPendingCarePlan(
@@ -3722,15 +3940,9 @@ export function buildApp(
                 ? "Die Prüfung ist abgeschlossen; ich sichere den neuesten Entwurf …"
                 : "Die Prüfung ist abgeschlossen; ich sichere die Antwort …",
             );
-          // Defer persistence by one microtask so the lifecycle promise is
-          // visible to the close handler before any store callback can abort
-          // the transport synchronously.
-          if (!replayedResponse) {
-            authorityPersistence = Promise.resolve().then(() =>
-              persistResponseAuthorities(response, context),
-            );
-            await authorityPersistence;
-          }
+          const authorities = replayedResponse
+            ? []
+            : collectResponseAuthorities(response, context);
           if (inferenceController.signal.aborted || transportDisconnected()) {
             await revokeAfterDisconnect();
             if (!requestCommitted)
@@ -3763,9 +3975,15 @@ export function buildApp(
                 ...requestIdentity,
                 holderId: holderId!,
                 response: archiveAssistantResponse(response),
+                authorities,
+                ...(voiceAuthorization
+                  ? { voiceTokenHash: voiceAuthorization.tokenHash }
+                  : {}),
               },
             );
           requestCommitted = true;
+          if (voiceAuthorization)
+            voiceReceipts.delete(voiceAuthorization.receiptId);
           if (inferenceController.signal.aborted || transportDisconnected()) {
             await revokeAfterDisconnect();
             return;
@@ -3775,12 +3993,13 @@ export function buildApp(
           emitMessage(`openui-${response.id}`, response.openUi);
           writer.write({ type: "finish", finishReason: "stop" });
         } catch (error) {
-          if (!replayedResponse) await revokeAuthorities();
-          if (!requestCommitted)
+          if (!requestCommitted) {
+            if (!replayedResponse) await revokeAuthorities();
             await operationalStore.releaseAssistantRequest(
               requestIdentity,
               holderId!,
             );
+          }
           throw error;
         } finally {
           await stopLease();
@@ -3971,6 +4190,24 @@ export function buildApp(
               .pendingProviderCommands()
               .map((pending) => pending.command.idempotencyKey),
           );
+          if (!workspace.loadResourceVersions)
+            throw new Error("CLINICAL_VERSION_READ_NOT_AVAILABLE");
+          const sourceReferences = [
+            `Patient/${fhirResourceId("Patient", execution.patientId)}`,
+            `Encounter/${fhirResourceId("Encounter", execution.encounterId)}`,
+          ];
+          // Capture the immutable source read set before local execution. The
+          // later conditional projection check is a second fence, not a
+          // substitute for recording what the reviewer actually saw.
+          const sourceReadVersions =
+            await workspace.loadResourceVersions(sourceReferences);
+          if (
+            workspace.mode === "medplum" &&
+            sourceReferences.some(
+              (reference) => sourceReadVersions[reference] === null,
+            )
+          )
+            throw new Error("CLINICAL_SOURCE_VERSION_NOT_AVAILABLE");
           try {
             const result = await executeAuthorizedIntent();
             const nextResources = service.fhirResources();
@@ -3996,29 +4233,18 @@ export function buildApp(
                 !reference.startsWith("Provenance/") &&
                 !nextReferences.has(reference),
             );
-            if (!workspace.loadResourceVersions)
-              throw new Error("CLINICAL_VERSION_READ_NOT_AVAILABLE");
-            const sourceReferences = [
-              `Patient/${fhirResourceId("Patient", execution.patientId)}`,
-              `Encounter/${fhirResourceId("Encounter", execution.encounterId)}`,
-            ];
             const clinicalReferences = [
               ...changedResources.map(
                 (resource) => `${resource.resourceType}/${resource.id}`,
               ),
               ...removedReferences,
             ];
-            const clinicalExpectedVersions =
-              await workspace.loadResourceVersions([
-                ...new Set([...sourceReferences, ...clinicalReferences]),
-              ]);
-            if (
-              workspace.mode === "medplum" &&
-              sourceReferences.some(
-                (reference) => clinicalExpectedVersions[reference] === null,
-              )
-            )
-              throw new Error("CLINICAL_SOURCE_VERSION_NOT_AVAILABLE");
+            const changedResourceVersions =
+              await workspace.loadResourceVersions(clinicalReferences);
+            const clinicalExpectedVersions = {
+              ...changedResourceVersions,
+              ...sourceReadVersions,
+            };
             const providerCommands = service
               .pendingProviderCommands()
               .filter(
@@ -5078,6 +5304,7 @@ export function buildApp(
       operationalStore.close(),
       commercialStore.close(),
       scenarioStore.close(),
+      identity?.close?.() ?? Promise.resolve(),
     ]);
   });
 

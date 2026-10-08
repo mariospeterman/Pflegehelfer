@@ -140,7 +140,7 @@ describe("assistant request cancellation", () => {
   });
 
   it.each(["/api/v1/assistant/query", "/api/v1/assistant/query/stream"])(
-    "revokes authority when the client disconnects during durable insertion at %s",
+    "keeps the atomically committed pending review when the response is lost at %s",
     async (url) => {
       const operationalStore = new InMemoryOperationalStore();
       const app = buildApp(undefined, {
@@ -224,7 +224,7 @@ describe("assistant request cancellation", () => {
             patientId: authority.record.patientId,
             encounterId: authority.record.encounterId,
           }),
-        ).resolves.toBeNull();
+        ).resolves.toMatchObject({ command: "care-update:draft" });
       });
     },
   );
@@ -252,28 +252,19 @@ describe("assistant request cancellation", () => {
         payload: { patientId: "p-anna" },
       });
 
-      let stored:
-        | Parameters<InMemoryOperationalStore["storeIntentAuthority"]>[0]
-        | undefined;
-      const originalStore =
-        operationalStore.storeIntentAuthority.bind(operationalStore);
-      vi.spyOn(operationalStore, "storeIntentAuthority").mockImplementation(
-        async (input) => {
-          stored = input;
-          await originalStore(input);
-        },
-      );
+      const storeAuthority = vi.spyOn(operationalStore, "storeIntentAuthority");
       vi.spyOn(
         operationalStore,
         "appendConversationTurn",
       ).mockRejectedValueOnce(new Error("synthetic-thread-write-failure"));
 
+      const commandId = crypto.randomUUID();
       const response = await app.inject({
         method: "POST",
         url,
         headers: {
           "x-demo-user": "u-nurse",
-          "x-command-id": crypto.randomUUID(),
+          "x-command-id": commandId,
         },
         payload: {
           patientId: "p-anna",
@@ -287,19 +278,23 @@ describe("assistant request cancellation", () => {
         expect(response.body).toContain(
           "Die Assistenzantwort konnte nicht sicher übertragen werden.",
         );
-      expect(stored).toBeDefined();
-      const authority = stored!;
-      await expect(
-        operationalStore.loadIntentAuthority({
-          tokenHash: authority.tokenHash,
-          actorId: authority.record.actorId,
-          sessionId: authority.sessionId,
-          threadId: authority.threadId,
-          contextRevision: authority.contextRevision,
-          patientId: authority.record.patientId,
-          encounterId: authority.record.encounterId,
-        }),
-      ).resolves.toBeNull();
+      expect(storeAuthority).not.toHaveBeenCalled();
+
+      const retry = await app.inject({
+        method: "POST",
+        url,
+        headers: {
+          "x-demo-user": "u-nurse",
+          "x-command-id": commandId,
+        },
+        payload: {
+          patientId: "p-anna",
+          prompt: "Mobilisiert, Puls 82.",
+          inputModality: "typed",
+        },
+      });
+      expect(retry.statusCode).toBe(200);
+      expect(storeAuthority).toHaveBeenCalledTimes(1);
     },
   );
 });

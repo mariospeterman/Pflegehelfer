@@ -42,7 +42,10 @@ describe.runIf(Boolean(databaseUrl))(
   () => {
     it("leases one job to only one worker and rejects an idempotency collision", async () => {
       const store = new PostgresOperationalStore(databaseUrl!);
-      const inspection = new Pool({ connectionString: databaseUrl });
+      const inspection = new Pool({
+        connectionString: databaseUrl,
+        options: "-c pfh.organization_id=org-demo",
+      });
       const registry = createSyntheticProviderRegistry();
       const key = `provider-worker-${randomUUID()}`;
       const firstCommand = command(key);
@@ -130,7 +133,10 @@ describe.runIf(Boolean(databaseUrl))(
 
     it("recovers an expired idempotent lease but quarantines an uncertain one", async () => {
       const store = new PostgresOperationalStore(databaseUrl!);
-      const inspection = new Pool({ connectionString: databaseUrl });
+      const inspection = new Pool({
+        connectionString: databaseUrl,
+        options: "-c pfh.organization_id=org-demo",
+      });
       const registry = createSyntheticProviderRegistry();
       const base = new Date(Date.now() + 10_000);
       const ids: string[] = [];
@@ -193,7 +199,10 @@ describe.runIf(Boolean(databaseUrl))(
 
     it("polls a durable pending receipt and quarantines poison without blocking valid work", async () => {
       const store = new PostgresOperationalStore(databaseUrl!);
-      const inspection = new Pool({ connectionString: databaseUrl });
+      const inspection = new Pool({
+        connectionString: databaseUrl,
+        options: "-c pfh.organization_id=org-demo",
+      });
       const registry = createSyntheticProviderRegistry();
       const key = `pending-receipt-${randomUUID()}`;
       const poisonId = randomUUID();

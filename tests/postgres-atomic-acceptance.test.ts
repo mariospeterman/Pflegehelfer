@@ -12,7 +12,10 @@ const { Pool } = pg;
 describe.runIf(Boolean(databaseUrl))("atomic local command acceptance", () => {
   it("consumes authority, stores receipt/audit/projection and replays once", async () => {
     const store = new PostgresOperationalStore(databaseUrl!);
-    const inspection = new Pool({ connectionString: databaseUrl });
+    const inspection = new Pool({
+      connectionString: databaseUrl,
+      options: "-c pfh.organization_id=org-demo",
+    });
     try {
       await store.initialize();
       await store.resetDemoState();

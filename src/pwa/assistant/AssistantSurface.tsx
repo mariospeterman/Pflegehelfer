@@ -35,16 +35,23 @@ export interface ConversationOpening {
 }
 
 function createSubmissionChannel(): MutableSubmissionChannel {
-  const pending = new Map<string, VoiceSubmission>();
+  let pending: {
+    prompt: string;
+    voice: VoiceSubmission;
+    operationId: string | null;
+  } | null = null;
   return {
     set(prompt, voice) {
-      pending.clear();
-      pending.set(prompt, voice);
+      pending = { prompt, voice, operationId: null };
     },
-    take(prompt) {
-      const voice = pending.get(prompt) ?? null;
-      pending.delete(prompt);
-      return voice;
+    take(prompt, operationId) {
+      if (!pending || pending.prompt !== prompt) return null;
+      if (pending.operationId && pending.operationId !== operationId) {
+        pending = null;
+        return null;
+      }
+      pending.operationId = operationId;
+      return pending.voice;
     },
   };
 }

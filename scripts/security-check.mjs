@@ -21,6 +21,13 @@ async function walk(directory) {
     if (entry.isDirectory()) await walk(path);
     else {
       const content = await readFile(path, "utf8").catch(() => "");
+      // psql's :'name' form is an escaped runtime variable, not a literal.
+      // Normalize it before scanning assignments so secure role bootstrap SQL
+      // does not need to interpolate a credential into tracked source.
+      const credentialScanContent = content.replace(
+        /:'[A-Za-z_][A-Za-z0-9_]*'/g,
+        ":__runtime_parameter__",
+      );
       const checks = [
         [/-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/, "private key"],
         [
@@ -30,7 +37,11 @@ async function walk(directory) {
         [/\bsk-[A-Za-z0-9_-]{20,}\b/, "API token"],
       ];
       for (const [pattern, label] of checks)
-        if (pattern.test(content))
+        if (
+          pattern.test(
+            label === "hard-coded credential" ? credentialScanContent : content,
+          )
+        )
           findings.push(`${relative(root, path)}: ${label}`);
     }
   }

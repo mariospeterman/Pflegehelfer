@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import type { Patient } from "../../core/types";
 import type { WorkdayCommand, WorkdayView } from "../../core/workday";
 import { assistantClientContextHeaders } from "../assistant-context";
+import { authenticatedFetch, requestIntegrityHeaders } from "../auth";
+import { claimPlayback } from "./playback-owner";
 
 export function WorkdayPanel({
   workday,
@@ -35,7 +37,7 @@ export function WorkdayPanel({
   });
   const [readout, setReadout] = useState<{
     patientId: string | null;
-    state: "idle" | "playing" | "paused";
+    state: "idle" | "preparing" | "playing" | "paused";
   }>({ patientId: null, state: "idle" });
   const [readoutError, setReadoutError] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -44,6 +46,8 @@ export function WorkdayPanel({
     generation: number;
     abort: AbortController;
   } | null>(null);
+  const readoutGenerationRef = useRef(0);
+  const releasePlaybackRef = useRef<(() => void) | null>(null);
   const [reviewEvidence, setReviewEvidence] = useState<string | null>(null);
   const [additionalOpen, setAdditionalOpen] = useState(false);
   const [additionalPatientId, setAdditionalPatientId] = useState(
@@ -51,6 +55,16 @@ export function WorkdayPanel({
   );
   const [additionalTitle, setAdditionalTitle] = useState("");
   const [actionBusy, setActionBusy] = useState(false);
+  const readoutContentRevision = JSON.stringify({
+    handoverVersion: workday.handover.version,
+    items: workday.handover.items,
+    plan: workday.plan,
+    patients: patients.map(({ id, displayName, room }) => ({
+      id,
+      displayName,
+      room,
+    })),
+  });
   const blocked = busy || actionBusy;
   const patientFor = (id: string) =>
     patients.find((patient) => patient.id === id) ?? null;
@@ -117,6 +131,7 @@ export function WorkdayPanel({
       audioRef.current?.pause();
       if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
       window.speechSynthesis?.cancel();
+      releasePlaybackRef.current?.();
     },
     [],
   );
@@ -138,8 +153,16 @@ export function WorkdayPanel({
     if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
     audioUrlRef.current = null;
     window.speechSynthesis?.cancel();
+    releasePlaybackRef.current?.();
+    releasePlaybackRef.current = null;
     setReadout({ patientId: null, state: "idle" });
   };
+
+  useEffect(() => {
+    if (readout.patientId && readout.patientId !== expanded) stopReadout();
+  }, [expanded, readout.patientId]);
+
+  useEffect(() => stopReadout, [readoutContentRevision, userId]);
 
   const toggleReadout = async (patientId: string) => {
     setReadoutError(null);
@@ -155,24 +178,31 @@ export function WorkdayPanel({
       setReadout({ patientId, state: "playing" });
       return;
     }
-    const reset = () => {
+    const reset = (generation: number, audio?: HTMLAudioElement) => {
+      if (
+        readoutRequestRef.current?.generation !== generation ||
+        (audio && audioRef.current !== audio)
+      )
+        return;
+      readoutRequestRef.current = null;
       audioRef.current = null;
       if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
       audioUrlRef.current = null;
+      releasePlaybackRef.current?.();
+      releasePlaybackRef.current = null;
       setReadout({ patientId: null, state: "idle" });
     };
-    audioRef.current?.pause();
-    reset();
-    window.speechSynthesis?.cancel();
-    const generation = (readoutRequestRef.current?.generation ?? 0) + 1;
-    readoutRequestRef.current?.abort.abort();
+    stopReadout();
+    const generation = ++readoutGenerationRef.current;
     const abort = new AbortController();
     readoutRequestRef.current = { generation, abort };
+    releasePlaybackRef.current = claimPlayback(stopReadout);
+    setReadout({ patientId, state: "preparing" });
     const current = () =>
       readoutRequestRef.current?.generation === generation &&
       !abort.signal.aborted;
     try {
-      const statusResponse = await fetch("/api/v1/ai/status", {
+      const statusResponse = await authenticatedFetch("/api/v1/ai/status", {
         signal: abort.signal,
         headers: {
           "x-demo-user": userId,
@@ -192,7 +222,7 @@ export function WorkdayPanel({
         status.tts.acceptance === "accepted" &&
         status.tts.mode !== "browser-demo"
       ) {
-        const response = await fetch("/api/v1/assistant/speech", {
+        const response = await authenticatedFetch("/api/v1/assistant/speech", {
           method: "POST",
           signal: abort.signal,
           headers: {
@@ -200,6 +230,7 @@ export function WorkdayPanel({
             "x-demo-user": userId,
             ...assistantClientContextHeaders(),
             "x-command-id": crypto.randomUUID(),
+            ...requestIntegrityHeaders("POST"),
           },
           body: JSON.stringify({ text }),
         });
@@ -213,10 +244,12 @@ export function WorkdayPanel({
         const audio = new Audio(url);
         audioRef.current = audio;
         audioUrlRef.current = url;
-        audio.onended = reset;
+        audio.onended = () => reset(generation, audio);
         audio.onerror = () => {
-          reset();
-          setReadoutError("Die Audiodatei konnte nicht abgespielt werden.");
+          if (current()) {
+            reset(generation, audio);
+            setReadoutError("Die Audiodatei konnte nicht abgespielt werden.");
+          }
         };
         setReadout({ patientId, state: "playing" });
         await audio.play();
@@ -230,10 +263,12 @@ export function WorkdayPanel({
           .getVoices()
           .find((candidate) => /^de(-CH|-DE)?$/i.test(candidate.lang));
         if (voice) utterance.voice = voice;
-        utterance.onend = reset;
+        utterance.onend = () => reset(generation);
         utterance.onerror = () => {
-          reset();
-          setReadoutError("Browser-Vorlesen wurde abgebrochen.");
+          if (current()) {
+            reset(generation);
+            setReadoutError("Browser-Vorlesen wurde abgebrochen.");
+          }
         };
         window.speechSynthesis.speak(utterance);
         setReadout({ patientId, state: "playing" });
@@ -242,7 +277,7 @@ export function WorkdayPanel({
       throw new Error("Sprachausgabe ist in diesem Modus nicht freigegeben.");
     } catch (error) {
       if (abort.signal.aborted) return;
-      reset();
+      reset(generation);
       setReadoutError(
         error instanceof Error
           ? error.message

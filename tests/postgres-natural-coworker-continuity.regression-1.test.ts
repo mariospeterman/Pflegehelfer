@@ -192,7 +192,10 @@ describe.runIf(Boolean(databaseUrl))(
     it("accepts an assistant-requested interruption atomically with the one-use receipt", async () => {
       const clientContextId = crypto.randomUUID();
       const store = new PostgresOperationalStore(databaseUrl!);
-      const inspection = new Pool({ connectionString: databaseUrl });
+      const inspection = new Pool({
+        connectionString: process.env.PFH_MIGRATION_DATABASE_URL ?? databaseUrl,
+        options: "-c pfh.organization_id=org-demo",
+      });
       const triggerSuffix = crypto.randomUUID().replaceAll("-", "");
       const triggerName = `pfh_test_rebind_${triggerSuffix}`;
       const functionName = `${triggerName}_fn`;

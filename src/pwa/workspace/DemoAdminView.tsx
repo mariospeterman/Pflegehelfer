@@ -1,4 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
+import {
+  authenticatedFetch,
+  requestIntegrityHeaders,
+  requireAuthenticatedResponse,
+} from "../auth";
 
 type Inventory = {
   users: number;
@@ -35,17 +40,20 @@ async function adminRequest<T>(
   userId: string,
   init?: RequestInit,
 ): Promise<T> {
-  const response = await fetch(path, {
-    ...init,
-    headers: {
-      ...(init?.body ? { "content-type": "application/json" } : {}),
-      "x-demo-user": userId,
-      ...(init?.method === "POST"
-        ? { "x-command-id": crypto.randomUUID() }
-        : {}),
-      ...init?.headers,
-    },
-  });
+  const response = requireAuthenticatedResponse(
+    await authenticatedFetch(path, {
+      ...init,
+      headers: {
+        ...(init?.body ? { "content-type": "application/json" } : {}),
+        "x-demo-user": userId,
+        ...(init?.method === "POST"
+          ? { "x-command-id": crypto.randomUUID() }
+          : {}),
+        ...requestIntegrityHeaders(init?.method),
+        ...init?.headers,
+      },
+    }),
+  );
   const body = (await response.json()) as T & { message?: string };
   if (!response.ok)
     throw new Error(
@@ -139,7 +147,7 @@ export function DemoAdminView({
           disabled={busy}
           onClick={() => {
             setBusy(true);
-            void fetch("/api/v1/admin/demo/export", {
+            void authenticatedFetch("/api/v1/admin/demo/export", {
               headers: { "x-demo-user": userId },
             })
               .then(async (response) => {

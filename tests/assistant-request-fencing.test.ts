@@ -1,9 +1,37 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { archiveAssistantResponse } from "../src/core/assistant-service.js";
 import { InMemoryOperationalStore } from "../src/infrastructure/operational-store.js";
 
 describe("assistant request ownership fencing", () => {
   afterEach(() => vi.useRealTimers());
+
+  it("fails closed for malformed legacy archives and nested capabilities", () => {
+    const archived = archiveAssistantResponse({
+      id: randomUUID(),
+      classification: { intent: "draft-note" },
+      runtime: { route: "assistant", label: "legacy", degraded: false },
+      patientContext: null,
+      components: [
+        {
+          type: "AssistantText",
+          message: "Historischer Inhalt",
+          metadata: { intentToken: randomUUID() },
+        },
+      ],
+      evidence: [],
+      warnings: [],
+      openUi: `DraftActionCard("${randomUUID()}")`,
+      legacy: { intentToken: randomUUID() },
+    });
+    expect(JSON.stringify(archived)).not.toMatch(/intentToken|DraftActionCard/);
+    expect(archived.components).toEqual([
+      expect.objectContaining({ type: "SafetyAlert" }),
+    ]);
+    expect(() =>
+      archiveAssistantResponse({ id: "malformed", openUi: "token" }),
+    ).not.toThrow();
+  });
 
   it("prevents an expired holder from completing or releasing its replacement", async () => {
     vi.useFakeTimers();
@@ -64,7 +92,10 @@ describe("assistant request ownership fencing", () => {
     });
     expect(await store.claimAssistantRequest(identity)).toMatchObject({
       state: "completed",
-      response: turn.response,
+      response: {
+        ...turn.response,
+        openUi: "root = ClinicalStack([])",
+      },
     });
   });
 

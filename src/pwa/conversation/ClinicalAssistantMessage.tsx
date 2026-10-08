@@ -15,10 +15,12 @@ import { useThread, type AssistantMessage } from "@openuidev/react-headless";
 import type { Patient } from "../../core/types";
 import { clinicalAssistantLibrary } from "../assistant/clinical-library";
 import { assistantClientContextHeaders } from "../assistant-context";
+import { authenticatedFetch, requestIntegrityHeaders } from "../auth";
 import {
   completedOpenUi,
   supersededOpenUi,
 } from "./conversation-presentations";
+import { claimPlayback } from "./playback-owner";
 
 export interface AssistantHandoff {
   kind: "task" | "communication";
@@ -64,13 +66,14 @@ async function post<T>(
   userId: string,
   body: unknown,
 ): Promise<T> {
-  const response = await fetch(path, {
+  const response = await authenticatedFetch(path, {
     method: "POST",
     headers: {
       "content-type": "application/json",
       "x-demo-user": userId,
       ...assistantClientContextHeaders(),
       "x-command-id": crypto.randomUUID(),
+      ...requestIntegrityHeaders("POST"),
     },
     body: JSON.stringify(body),
   });
@@ -98,6 +101,8 @@ export function ClinicalAssistantMessage({
     generation: number;
     abort: AbortController;
   } | null>(null);
+  const speechGenerationRef = useRef(0);
+  const releasePlaybackRef = useRef<(() => void) | null>(null);
   if (!actions) throw new Error("ConversationActionsProvider fehlt.");
   const source = message.content ?? "";
   const proposalStatus = message.name?.match(
@@ -125,6 +130,7 @@ export function ClinicalAssistantMessage({
       audioRef.current?.pause();
       if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
       window.speechSynthesis?.cancel();
+      releasePlaybackRef.current?.();
     },
     [],
   );
@@ -137,8 +143,12 @@ export function ClinicalAssistantMessage({
     if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
     audioUrlRef.current = null;
     window.speechSynthesis?.cancel();
+    releasePlaybackRef.current?.();
+    releasePlaybackRef.current = null;
     setSpeaking(false);
   };
+
+  useEffect(() => stopSpeaking, [actions.userId, renderedSource]);
 
   const readAloud = async () => {
     if (speaking) {
@@ -153,15 +163,17 @@ export function ClinicalAssistantMessage({
     if (!text) return;
     actions.onError(null);
     setSpeaking(true);
-    const generation = (speechRequestRef.current?.generation ?? 0) + 1;
-    speechRequestRef.current?.abort.abort();
+    stopSpeaking();
+    const generation = ++speechGenerationRef.current;
     const abort = new AbortController();
     speechRequestRef.current = { generation, abort };
+    releasePlaybackRef.current = claimPlayback(stopSpeaking);
+    setSpeaking(true);
     const current = () =>
       speechRequestRef.current?.generation === generation &&
       !abort.signal.aborted;
     try {
-      const statusResponse = await fetch("/api/v1/ai/status", {
+      const statusResponse = await authenticatedFetch("/api/v1/ai/status", {
         signal: abort.signal,
         headers: {
           "x-demo-user": actions.userId,
@@ -180,7 +192,7 @@ export function ClinicalAssistantMessage({
         status.tts.acceptance === "accepted" &&
         status.tts.mode !== "browser-demo"
       ) {
-        const response = await fetch("/api/v1/assistant/speech", {
+        const response = await authenticatedFetch("/api/v1/assistant/speech", {
           method: "POST",
           signal: abort.signal,
           headers: {
@@ -188,6 +200,7 @@ export function ClinicalAssistantMessage({
             "x-demo-user": actions.userId,
             ...assistantClientContextHeaders(),
             "x-command-id": crypto.randomUUID(),
+            ...requestIntegrityHeaders("POST"),
           },
           body: JSON.stringify({ text }),
         });
@@ -202,15 +215,23 @@ export function ClinicalAssistantMessage({
         audioRef.current = audio;
         audioUrlRef.current = url;
         audio.onended = () => {
+          if (!current() || audioRef.current !== audio) return;
+          speechRequestRef.current = null;
           URL.revokeObjectURL(url);
           audioRef.current = null;
           audioUrlRef.current = null;
+          releasePlaybackRef.current?.();
+          releasePlaybackRef.current = null;
           setSpeaking(false);
         };
         audio.onerror = () => {
+          if (!current() || audioRef.current !== audio) return;
+          speechRequestRef.current = null;
           URL.revokeObjectURL(url);
           audioRef.current = null;
           audioUrlRef.current = null;
+          releasePlaybackRef.current?.();
+          releasePlaybackRef.current = null;
           setSpeaking(false);
           actions.onError("Die Audiodatei konnte nicht abgespielt werden.");
         };
@@ -221,8 +242,18 @@ export function ClinicalAssistantMessage({
         if (!current()) return;
         const utterance = new SpeechSynthesisUtterance(text);
         utterance.lang = "de-CH";
-        utterance.onend = () => setSpeaking(false);
+        utterance.onend = () => {
+          if (!current()) return;
+          speechRequestRef.current = null;
+          releasePlaybackRef.current?.();
+          releasePlaybackRef.current = null;
+          setSpeaking(false);
+        };
         utterance.onerror = () => {
+          if (!current()) return;
+          speechRequestRef.current = null;
+          releasePlaybackRef.current?.();
+          releasePlaybackRef.current = null;
           setSpeaking(false);
           actions.onError("Browser-Vorlesen wurde abgebrochen.");
         };
@@ -233,7 +264,7 @@ export function ClinicalAssistantMessage({
       throw new Error("Sprachausgabe ist in diesem Modus nicht freigegeben.");
     } catch (error) {
       if (abort.signal.aborted) return;
-      setSpeaking(false);
+      stopSpeaking();
       actions.onError(
         error instanceof Error
           ? error.message

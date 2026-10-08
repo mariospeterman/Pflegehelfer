@@ -38,7 +38,10 @@ describe.runIf(Boolean(databaseUrl))(
   () => {
     it("counts only visible relational deliveries and exposes manual outcomes as conflicts", async () => {
       const store = new PostgresOperationalStore(databaseUrl!);
-      const inspection = new Pool({ connectionString: databaseUrl });
+      const inspection = new Pool({
+        connectionString: databaseUrl,
+        options: "-c pfh.organization_id=org-demo",
+      });
       const ids: string[] = [];
       try {
         await store.initialize();

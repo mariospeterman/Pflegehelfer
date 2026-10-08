@@ -9,6 +9,11 @@ import type {
 } from "../../core/workspace";
 import type { WorkdayCommand, WorkdayView } from "../../core/workday";
 import { assistantClientContextHeaders } from "../assistant-context";
+import {
+  authenticatedFetch,
+  requestIntegrityHeaders,
+  requireAuthenticatedResponse,
+} from "../auth";
 import { WorkdayPanel } from "../conversation/WorkdayPanel";
 import { DemoAdminView } from "./DemoAdminView";
 
@@ -78,20 +83,23 @@ async function request<T>(
   userId: string,
   init?: RequestInit,
 ): Promise<T> {
-  const response = await fetch(path, {
-    ...init,
-    headers: {
-      ...(init?.body && !(init.body instanceof FormData)
-        ? { "content-type": "application/json" }
-        : {}),
-      "x-demo-user": userId,
-      ...assistantClientContextHeaders(),
-      ...(init?.method === "POST"
-        ? { "x-command-id": crypto.randomUUID() }
-        : {}),
-      ...init?.headers,
-    },
-  });
+  const response = requireAuthenticatedResponse(
+    await authenticatedFetch(path, {
+      ...init,
+      headers: {
+        ...(init?.body && !(init.body instanceof FormData)
+          ? { "content-type": "application/json" }
+          : {}),
+        "x-demo-user": userId,
+        ...assistantClientContextHeaders(),
+        ...(init?.method === "POST"
+          ? { "x-command-id": crypto.randomUUID() }
+          : {}),
+        ...requestIntegrityHeaders(init?.method),
+        ...init?.headers,
+      },
+    }),
+  );
   const contentType = response.headers.get("content-type") ?? "";
   const body = contentType.includes("application/json")
     ? ((await response.json()) as T & { message?: string })
@@ -657,7 +665,7 @@ function LibraryView({
     );
   }, [load, onError]);
   const openAttachment = async (item: WorkspaceAttachment) => {
-    const response = await fetch(
+    const response = await authenticatedFetch(
       `/api/v1/workspace/attachments/${item.id}/content`,
       {
         headers: {

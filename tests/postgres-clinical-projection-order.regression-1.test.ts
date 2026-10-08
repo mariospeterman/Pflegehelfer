@@ -80,7 +80,10 @@ describe.runIf(Boolean(databaseUrl))(
   () => {
     it("does not lease a newer whole-state checkpoint past an unresolved older job", async () => {
       const store = new PostgresOperationalStore(databaseUrl!);
-      const inspection = new Pool({ connectionString: databaseUrl });
+      const inspection = new Pool({
+        connectionString: databaseUrl,
+        options: "-c pfh.organization_id=org-demo",
+      });
       try {
         await store.initialize();
         await store.resetDemoState();

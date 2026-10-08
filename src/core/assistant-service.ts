@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
   ModelGateway,
+  assistantIntentSchema,
   type AuthorizedModelContext,
   type ClinicalPlanResult,
   type IntentClassification,
@@ -9,6 +10,7 @@ import {
 import { ApprovedKnowledgeService } from "../ai/approved-knowledge.js";
 import {
   OpaqueIntentBroker,
+  assistantComponentSchema,
   validateAssistantComponents,
   type AssistantComponent,
   type DurableIntentRecord,
@@ -241,6 +243,160 @@ export function toOpenUi(components: AssistantComponent[]): string {
   ].join("\n");
 }
 
+/**
+ * Request receipts are durable history, not executable capability storage.
+ * Rebuild OpenUI from the retained, non-executable components so a legacy
+ * serialized token can never be replayed from either representation.
+ */
+export function archiveAssistantResponse(response: unknown): AssistantResponse {
+  const source =
+    response && typeof response === "object"
+      ? (response as Record<string, unknown>)
+      : {};
+  const rawComponents = Array.isArray(source.components)
+    ? source.components
+    : [];
+  const components = rawComponents.flatMap((candidate) => {
+    const parsed = assistantComponentSchema.safeParse(candidate);
+    return parsed.success && parsed.data.type !== "DraftAction"
+      ? [parsed.data]
+      : [];
+  });
+  const removedOrMalformed =
+    !Array.isArray(source.components) ||
+    components.length !== rawComponents.length;
+  if (removedOrMalformed)
+    components.push({
+      type: "SafetyAlert",
+      severity: "info",
+      message:
+        "Diese frühere Änderung ist nicht direkt ausführbar. Öffne den zugehörigen Entwurf erneut, damit Berechtigung, Kontext und Version aktuell geprüft werden.",
+    });
+  const classification = assistantIntentSchema.safeParse(source.classification);
+  const runtime = z
+    .object({
+      route: z.enum(["assistant", "safe-fallback"]),
+      label: z.string().trim().min(1).max(200),
+      degraded: z.boolean(),
+      failure: z
+        .enum([
+          "not-configured",
+          "timeout",
+          "rate-limited",
+          "refusal",
+          "incomplete",
+          "http-error",
+          "invalid-output",
+        ])
+        .optional(),
+    })
+    .strip()
+    .safeParse(source.runtime);
+  const patientContext = z
+    .object({
+      patientId: z.string().max(200),
+      encounterId: z.string().max(200),
+      resourceVersion: z.number().int().nonnegative(),
+      displayName: z.string().max(200),
+      birthDate: z.string().max(40),
+      mrn: z.string().max(120),
+    })
+    .strict()
+    .nullable()
+    .safeParse(source.patientContext);
+  const evidence = z
+    .array(
+      z
+        .object({
+          resourceId: z.string().max(240),
+          version: z.number().int().nonnegative(),
+          label: z.string().max(240),
+          sourceVersion: z.string().max(240).optional(),
+          freshness: z.string().max(80).optional(),
+          complete: z.boolean().optional(),
+          claims: z
+            .array(
+              z
+                .object({
+                  path: z.string().max(240),
+                  value: z.union([
+                    z.string().max(2_400),
+                    z.number().finite(),
+                    z.boolean(),
+                    z.null(),
+                  ]),
+                })
+                .strict(),
+            )
+            .max(100)
+            .optional(),
+          rowProvenance: z
+            .array(
+              z
+                .object({
+                  path: z.string().max(240),
+                  resourceId: z.string().max(240),
+                  version: z.string().max(240),
+                  patientId: z.string().max(200).optional(),
+                  encounterId: z.string().max(200).optional(),
+                  effectiveAt: z.string().max(80).optional(),
+                  provider: z.string().max(160).optional(),
+                })
+                .strict(),
+            )
+            .max(100)
+            .optional(),
+          contextBinding: z
+            .object({
+              sessionId: z.string().max(200),
+              threadId: z.string().max(200),
+              contextRevision: z.number().int().nonnegative(),
+              patientId: z.string().max(200).nullable(),
+              encounterId: z.string().max(200).nullable(),
+            })
+            .strict()
+            .optional(),
+          sourceDigest: z.string().max(240).optional(),
+          digest: z.string().max(240).optional(),
+        })
+        .strict(),
+    )
+    .max(100)
+    .safeParse(source.evidence);
+  const warnings = z
+    .array(z.string().max(600))
+    .max(30)
+    .safeParse(source.warnings);
+  return {
+    id:
+      typeof source.id === "string" && source.id.length <= 200
+        ? source.id
+        : `archived-${randomUUID()}`,
+    classification: classification.success
+      ? classification.data
+      : { intent: "unknown" },
+    runtime: runtime.success
+      ? {
+          route: runtime.data.route,
+          label: runtime.data.label,
+          degraded: runtime.data.degraded,
+          ...(runtime.data.failure ? { failure: runtime.data.failure } : {}),
+        }
+      : {
+          route: "safe-fallback",
+          label: "Archivierte Antwort",
+          degraded: true,
+        },
+    patientContext: patientContext.success ? patientContext.data : null,
+    components,
+    openUi: toOpenUi(components),
+    evidence: evidence.success
+      ? (evidence.data as AssistantResponse["evidence"])
+      : [],
+    warnings: warnings.success ? warnings.data : [],
+  };
+}
+
 function cleanDraft(prompt: string): string {
   return prompt
     .replace(
@@ -385,7 +541,11 @@ function safeSourceFreePatientDialogue(
     )
   )
     return null;
-  return dialogue;
+  const harmlessSpeechAct =
+    /^(?:(?:hallo|guten\s+(?:morgen|tag|abend)|hello|hi|danke|vielen\s+dank|thank\s+you|verstanden|okay|in\s+ordnung|gern)\b|ich\s+kann\s+(?:autorisierte|freigegebene|vorhandene)\s+(?:angaben|quellen|aufgaben|dokumentation)\b)/iu.test(
+      dialogue,
+    );
+  return harmlessSpeechAct ? dialogue : null;
 }
 
 /**
@@ -1036,11 +1196,11 @@ function prohibitedAssistanceRequest(
     return "clinical-decision";
 
   const employmentSubject =
-    /\b(?:mitarbeiter|mitarbeiterin|angestellte|bewerber|bewerberin|personal|pflegekraft|teammitglied)\p{L}*\b/iu.test(
+    /\b(?:mitarbeiter|mitarbeiterin|angestellte|bewerber|bewerberin|personal|pflegekraft|teammitglied|employee|staff|candidate|applicant|worker)\p{L}*\b/iu.test(
       text,
     );
   const employmentDecision =
-    /\b(?:kündig|entlass|einstell|ablehn|disziplin|beförder|rangliste|rank|leistung\s+bewert|performance|emotion|psycholog|schicht\s+zuteil|dienst\s+zuteil)\p{L}*\b/iu.test(
+    /\b(?:kündig|entlass|einstell|ablehn|disziplin|beförder|rangliste|rank|fire|terminat|dismiss|hire|reject|disciplin|promot|demot|leistung\s+bewert|performance|emotion|psycholog|schicht\s+zuteil|dienst\s+zuteil|assign\s+shift)\p{L}*\b/iu.test(
       text,
     );
   return employmentSubject && employmentDecision ? "employment-decision" : null;

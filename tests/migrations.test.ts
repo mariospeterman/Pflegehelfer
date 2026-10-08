@@ -29,6 +29,22 @@ describe("immutable migration ledger", () => {
       { version: 14, name: "014_demo_scenario_ledger_repair.sql" },
       { version: 15, name: "015_assistant_request_claims.sql" },
       { version: 16, name: "016_fenced_assistant_request_claims.sql" },
+      {
+        version: 17,
+        name: "017_sanitize_assistant_request_archives.sql",
+      },
+      {
+        version: 18,
+        name: "018_bind_voice_authority_to_request.sql",
+      },
+      { version: 19, name: "019_force_tenant_rls.sql" },
+      { version: 20, name: "020_oidc_bff_sessions.sql" },
+      { version: 21, name: "021_bind_runtime_principal_tenant.sql" },
+      { version: 22, name: "022_bind_oidc_login_to_browser.sql" },
+      {
+        version: 23,
+        name: "023_sanitize_legacy_assistant_messages.sql",
+      },
     ]);
     expect(
       migrations.every(({ checksum }) => /^[a-f0-9]{64}$/.test(checksum)),

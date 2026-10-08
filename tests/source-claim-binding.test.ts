@@ -19,6 +19,19 @@ const taskAtoms: SourceBoundAtom[] = [
 ];
 
 describe("production source-claim binding", () => {
+  it.each([
+    "The best course is bed rest.",
+    "Ich rate zu Bettruhe.",
+    "Terminate this employee.",
+    "Prescribe complete repose.",
+    "Remove this employee from active duty.",
+    "Hier ist die empfohlene Behandlung: vollständige Bettruhe.",
+    "Laut der Dokumentation: entferne diesen Mitarbeiter aus dem aktiven Dienst.",
+    "According to the record, remove this employee from active duty.",
+  ])("rejects unsupported decision semantics: %s", (text) => {
+    expect(verifyNaturalDialogueAgainstSources(text, [], [])).toBeNull();
+  });
+
   it("does not borrow completion from another task for the same patient", () => {
     expect(
       verifyNaturalDialogueAgainstSources(
@@ -28,6 +41,18 @@ describe("production source-claim binding", () => {
       ),
     ).toBeNull();
   });
+
+  it.each([
+    "Mobilisation ist offen, die empfohlene Behandlung ist vollständige Bettruhe.",
+    "Mobilisation ist offen, entferne diesen Mitarbeiter aus dem aktiven Dienst.",
+  ])(
+    "rejects an unsupported directive appended to a supported fact: %s",
+    (text) => {
+      expect(
+        verifyNaturalDialogueAgainstSources(text, taskAtoms, ["Anna"]),
+      ).toBeNull();
+    },
+  );
 
   it("accepts faithful locally negated completion wording", () => {
     expect(canonicalClaimTokens("Mobilisation ist nicht erledigt.")).toContain(

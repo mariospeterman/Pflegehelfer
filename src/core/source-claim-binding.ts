@@ -79,6 +79,51 @@ function atomClaimTokens(atom: SourceBoundAtom): Set<string> {
   return new Set(canonicalClaimTokens(atom.text));
 }
 
+const sourceBindingGlue = new Set([
+  "offen",
+  "offene",
+  "erledigt",
+  "abgeschlossen",
+  "nicht",
+  "keine",
+  "keinen",
+  "keiner",
+  "keines",
+  "noch",
+  "steht",
+  "ebenfalls",
+  "pausiert",
+  "unterbrochen",
+  "begonnen",
+  "completed",
+  "complete",
+  "open",
+  "pending",
+  "paused",
+  "interrupted",
+  "done",
+]);
+
+function wordsAreBoundToAtom(clause: string, atom: SourceBoundAtom): boolean {
+  const sourceWords = significantWords(
+    [
+      atom.text,
+      ...(atom.entityLabels ?? []),
+      ...(atom.subjectLabels ?? []),
+    ].join(" "),
+  );
+  return significantWords(clause).every(
+    (word) =>
+      sourceBindingGlue.has(word) ||
+      sourceWords.some(
+        (sourceWord) =>
+          sourceWord === word ||
+          (Math.min(sourceWord.length, word.length) >= 5 &&
+            (sourceWord.startsWith(word) || word.startsWith(sourceWord))),
+      ),
+  );
+}
+
 function matchingRows(
   clause: string,
   atoms: readonly SourceBoundAtom[],
@@ -94,11 +139,37 @@ function matchingRows(
   return subjectMatches.length > 0 ? subjectMatches : atoms;
 }
 
+/** Keep the generated-language capability administrative and source-faithful. */
+function containsUnsupportedDecisionDirective(text: string): boolean {
+  const normalized = normalizedText(text);
+  const recommendation =
+    /\b(?:ich\s+rate|ich\s+empfehle|am\s+besten|beste(?:r|s)?\s+(?:weg|vorgehen|maßnahme)|sollte|muss|soll|empfehlung|i\s+(?:recommend|advise)|best\s+course|should|must|needs?\s+to)\b/iu.test(
+      normalized,
+    );
+  const clinicalDirection =
+    /\b(?:bettruhe|im\s+bett\s+bleiben|behandeln|therapieren|medikation|dosis|verabreichen|triag|priorisier|bed\s+rest|stay\s+in\s+bed|treat|therapy|medication|dose|administer|triage|prioriti[sz]e)\b/iu.test(
+      normalized,
+    );
+  const employmentDecision =
+    /\b(?:kündig|entlass|einstell|beförder|degradier|rangliste|fire|terminate|dismiss|hire|promote|demote|rank)\p{L}*\b/iu.test(
+      normalized,
+    );
+  return employmentDecision || (recommendation && clinicalDirection);
+}
+
+function isAllowedAdministrativePresentation(clause: string): boolean {
+  const normalized = normalizedText(clause).trim();
+  return /^(?:hier (?:sind|folgen) die belegten angaben|ich habe die freigegebenen angaben gefunden|ich kann die freigegebenen angaben anzeigen|here are the supported facts|i found the authorized information|i can show the authorized information)[.!?]?$/iu.test(
+    normalized,
+  );
+}
+
 export function clauseIsSupportedBySource(
   clause: string,
   atoms: readonly SourceBoundAtom[],
   protectedTerms: readonly string[],
 ): boolean {
+  if (containsUnsupportedDecisionDirective(clause)) return false;
   const materialTokens = canonicalClaimTokens(clause);
   const hasPatientTerm = protectedTerms.some((term) =>
     containsBoundedPhrase(clause, term),
@@ -107,7 +178,8 @@ export function clauseIsSupportedBySource(
     /\b(?:aktuell|jetzt|derzeit|momentan)\b/iu.test(clause) &&
     materialTokens.length > 0;
   if (hasCurrentMeasurementClaim) return false;
-  if (materialTokens.length === 0 && !hasPatientTerm) return true;
+  if (materialTokens.length === 0 && !hasPatientTerm)
+    return isAllowedAdministrativePresentation(clause);
 
   return matchingRows(clause, atoms).some((atom) => {
     const available = atomClaimTokens(atom);
@@ -123,7 +195,9 @@ export function clauseIsSupportedBySource(
             containsBoundedPhrase(label, term),
           ),
       );
-    return supportsTokens && supportsPatient;
+    return (
+      supportsTokens && supportsPatient && wordsAreBoundToAtom(clause, atom)
+    );
   });
 }
 

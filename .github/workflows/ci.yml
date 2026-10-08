@@ -9,13 +9,118 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with: { version: 11.19.0 }
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with: { node-version: 24.19.0, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: pnpm verify
       - run: pnpm verify:security
       - run: pnpm verify:e2e
       - run: pnpm verify:ops
+
+  real-stack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      PFH_AI_MODE: deterministic
+      PFH_DEEP_LLM_MODE: deterministic
+      PFH_ASR_MODE: browser
+      PFH_TTS_MODE: browser
+      PFH_ALLOW_EXTERNAL_AI: "false"
+      PFH_MEDPLUM_INTEGRATION_TEST: "true"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with: { version: 11.19.0 }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with: { node-version: 24.19.0, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - name: Start isolated synthetic stack
+        run: |
+          pnpm demo:env
+          project="pfh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "PFH_COMPOSE_PROJECT=$project" >> "$GITHUB_ENV"
+          docker compose -p "$project" --env-file .env.demo up -d --wait --wait-timeout 900 \
+            pflegehelfer-postgres medplum-postgres medplum-redis medplum-server medplum-app provider-simulator
+      - name: Provision restricted runtime principal
+        run: |
+          set -a
+          source .env.demo
+          set +a
+          runtime_url="$(node -e 'const u=new URL(process.env.PFH_OPERATIONAL_DATABASE_URL);u.username="pflegehelfer_runtime";u.password=process.env.PFH_RUNTIME_POSTGRES_PASSWORD;process.stdout.write(u.href)')"
+          echo "::add-mask::$PFH_OPERATIONAL_DATABASE_URL"
+          echo "::add-mask::$runtime_url"
+          echo "PFH_MIGRATION_DATABASE_URL=$PFH_OPERATIONAL_DATABASE_URL" >> "$GITHUB_ENV"
+          echo "PFH_OPERATIONAL_DATABASE_URL=$runtime_url" >> "$GITHUB_ENV"
+          for name in PFH_FHIR_BASE_URL MEDPLUM_DEFAULT_SUPER_ADMIN_CLIENT_ID MEDPLUM_DEFAULT_SUPER_ADMIN_CLIENT_SECRET PFH_PROVIDER_SIMULATOR_TOKEN; do
+            value="${!name}"
+            echo "::add-mask::$value"
+            echo "$name=$value" >> "$GITHUB_ENV"
+          done
+      - name: Apply owner migrations before any runtime test
+        run: PFH_DEMO_MODE=true pnpm db:migrate
+      - name: Seed authenticated Medplum project
+        run: pnpm demo:seed
+      - name: Mandatory PostgreSQL, Medplum and provider acceptance
+        run: |
+          PFH_TEST_IDP=true PORT=9000 HOST=127.0.0.1 \
+            PFH_TEST_IDP_ISSUER=http://127.0.0.1:9000 \
+            PFH_TEST_IDP_CLIENT_ID=pflegehelfer-test \
+            PFH_TEST_IDP_REDIRECT_URI=http://127.0.0.1:4173/api/v1/auth/callback \
+            pnpm exec tsx src/server/test-idp.ts > /tmp/pfh-test-idp.log 2>&1 &
+          idp_pid=$!
+          trap 'kill "$idp_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:9000/health >/dev/null; then break; fi
+            if [ "$attempt" = 30 ]; then exit 1; fi
+            sleep 1
+          done
+          export PFH_TEST_OIDC_ISSUER=http://127.0.0.1:9000
+          pnpm exec vitest run --maxWorkers=1 \
+            tests/migrations.test.ts \
+            tests/postgres-oidc-bff.test.ts \
+            tests/postgres-legacy-capability-upgrade.test.ts \
+            tests/postgres-operational-store.test.ts \
+            tests/postgres-atomic-acceptance.test.ts \
+            tests/postgres-clinical-projection-order.regression-1.test.ts \
+            tests/postgres-natural-coworker-continuity.regression-1.test.ts \
+            tests/postgres-provider-worker.test.ts \
+            tests/postgres-sync-summary.regression-1.test.ts \
+            tests/postgres-workspace-collaboration.test.ts \
+            tests/medplum-concurrency.integration.test.ts \
+            tests/provider-simulator-process.test.ts
+      - name: Build the exact tested application
+        run: pnpm build
+      - name: Start built BFF/PWA and prove authenticated stack wiring
+        run: |
+          docker compose -p "$PFH_COMPOSE_PROJECT" --env-file .env.demo --profile showcase \
+            up -d --build --wait --wait-timeout 900 pflegehelfer
+          base=http://127.0.0.1:4173
+          cookie_jar=/tmp/pfh-synthetic-cookie.jar
+          login_headers=/tmp/pfh-login.headers
+          authorize_headers=/tmp/pfh-authorize.headers
+          curl --fail --silent --show-error -D "$login_headers" -o /dev/null \
+            -c "$cookie_jar" "$base/api/v1/auth/login?returnTo=%2F"
+          authorization_url="$(awk 'BEGIN{IGNORECASE=1} /^location:/{sub(/\r$/,""); print $2}' "$login_headers")"
+          test -n "$authorization_url"
+          separator='?'
+          case "$authorization_url" in *\?*) separator='&' ;; esac
+          curl --fail --silent --show-error -D "$authorize_headers" -o /dev/null \
+            -b "$cookie_jar" -c "$cookie_jar" \
+            "${authorization_url}${separator}login_hint=nora.nurse"
+          callback_url="$(awk 'BEGIN{IGNORECASE=1} /^location:/{sub(/\r$/,""); print $2}' "$authorize_headers")"
+          test -n "$callback_url"
+          curl --fail --silent --show-error -o /dev/null \
+            -b "$cookie_jar" -c "$cookie_jar" "$callback_url"
+          curl --fail --silent --show-error -b "$cookie_jar" \
+            "$base/api/v1/auth/session" | grep -q '"authenticated":true'
+          curl --fail --silent --show-error -b "$cookie_jar" \
+            "$base/api/v1/snapshot" | grep -q '"currentUser"'
+          curl --fail --silent --show-error "$base/ready" | grep -q '"status":"ready"'
+      - name: Tenant RLS adversarial checks
+        run: pnpm exec vitest run --maxWorkers=1 tests/postgres-rls.test.ts
+      - name: Stop isolated stack
+        if: always()
+        run: docker compose -p "$PFH_COMPOSE_PROJECT" --env-file .env.demo down -v --remove-orphans

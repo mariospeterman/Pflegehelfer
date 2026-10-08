@@ -20,11 +20,21 @@ export default defineConfig({
     react(),
     {
       name: "pflegehelfer-build-identity",
-      generateBundle() {
+      generateBundle(_options, bundle) {
         this.emitFile({
           type: "asset",
           fileName: "build-info.json",
           source: `${JSON.stringify({ surface: "pwa", ...buildIdentity }, null, 2)}\n`,
+        });
+        const shellAssets = Object.values(bundle)
+          .map((entry) => `/${entry.fileName}`)
+          .filter((fileName) =>
+            /\.(?:css|js|woff2?|png|svg|webmanifest|html)$/i.test(fileName),
+          );
+        this.emitFile({
+          type: "asset",
+          fileName: "sw-assets.json",
+          source: `${JSON.stringify([...new Set(["/", ...shellAssets])])}\n`,
         });
       },
     },
@@ -49,6 +59,22 @@ export default defineConfig({
   build: {
     outDir: "../../dist/pwa",
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes("node_modules")) return undefined;
+          if (id.includes("@openuidev")) return "openui";
+          if (
+            id.includes("recharts") ||
+            id.includes("d3-") ||
+            id.includes("victory-")
+          )
+            return "charts";
+          if (id.includes("react") || id.includes("scheduler")) return "react";
+          return "vendor";
+        },
+      },
+    },
   },
   server: {
     port: 5173,

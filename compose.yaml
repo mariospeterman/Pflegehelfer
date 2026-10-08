@@ -4,16 +4,18 @@ name: pflegehelfer
 # ignored .env.demo file by `pnpm demo:env`; no credential is committed here.
 services:
   pflegehelfer-postgres:
-    image: postgres:16
+    image: postgres:16@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
     restart: unless-stopped
     environment:
       POSTGRES_USER: pflegehelfer
       POSTGRES_PASSWORD: ${PFH_DEMO_POSTGRES_PASSWORD:?Run pnpm demo:env first}
       POSTGRES_DB: pflegehelfer
+      PFH_RUNTIME_POSTGRES_PASSWORD: ${PFH_RUNTIME_POSTGRES_PASSWORD:?Run pnpm demo:env first}
     ports:
       - "127.0.0.1:5434:5432"
     volumes:
       - pflegehelfer-postgres-data:/var/lib/postgresql/data
+      - ./docker/postgres/init-runtime.sh:/docker-entrypoint-initdb.d/10-runtime-role.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U pflegehelfer -d pflegehelfer"]
       interval: 5s
@@ -22,7 +24,7 @@ services:
     networks: [clinical]
 
   medplum-postgres:
-    image: postgres:16
+    image: postgres:16@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
     restart: unless-stopped
     environment:
       POSTGRES_USER: medplum
@@ -48,7 +50,7 @@ services:
     networks: [clinical]
 
   medplum-redis:
-    image: redis:7
+    image: redis:7@sha256:71da9275c5f3fcb97d0fa0c8c5b36cc995327265420f17a04bfd544f458059f7
     restart: unless-stopped
     command:
       - redis-server
@@ -68,7 +70,7 @@ services:
     networks: [clinical]
 
   medplum-server:
-    image: medplum/medplum-server:5.1.37
+    image: medplum/medplum-server:5.1.37@sha256:5a80b62f7f499a80012ca6bb28b83034fe4ce9b2d2790e5745ee3c2e58ae53cf
     restart: unless-stopped
     depends_on:
       medplum-postgres:
@@ -136,7 +138,7 @@ services:
     networks: [clinical]
 
   medplum-app:
-    image: medplum/medplum-app:5.1.37
+    image: medplum/medplum-app:5.1.37@sha256:3e943c933314c8ddfb8996c9e159e6784580cc6ff9633c3118231ab0880ee757
     restart: unless-stopped
     depends_on:
       medplum-server:
@@ -174,6 +176,54 @@ services:
       retries: 10
     networks: [clinical]
 
+  test-idp:
+    profiles: [showcase]
+    build: .
+    restart: unless-stopped
+    command: ["node", "dist/src/server/test-idp.js"]
+    environment:
+      PORT: 9000
+      HOST: 0.0.0.0
+      PFH_TEST_IDP: "true"
+      PFH_TEST_IDP_ISSUER: http://127.0.0.1:4173/synthetic-idp
+      PFH_TEST_IDP_CLIENT_ID: pflegehelfer-test
+      PFH_TEST_IDP_REDIRECT_URI: http://127.0.0.1:4173/api/v1/auth/callback
+    expose: ["9000"]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          'fetch("http://127.0.0.1:9000/health").then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))',
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [clinical]
+
+  pflegehelfer-migrate:
+    profiles: [showcase]
+    build: .
+    restart: "no"
+    command: ["node", "dist/tools/migrate-operational.js"]
+    environment:
+      PFH_DEMO_MODE: "true"
+      PFH_OPERATIONAL_DATABASE_URL: postgresql://pflegehelfer_runtime:${PFH_RUNTIME_POSTGRES_PASSWORD}@pflegehelfer-postgres:5432/pflegehelfer
+      PFH_MIGRATION_DATABASE_URL: postgresql://pflegehelfer:${PFH_DEMO_POSTGRES_PASSWORD}@pflegehelfer-postgres:5432/pflegehelfer
+    depends_on:
+      pflegehelfer-postgres:
+        condition: service_healthy
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    networks: [clinical]
+
   # Optional isolated parser/OCR tier. PDF is an active, complex format, so
   # untrusted documents are never parsed inside the Pflegehelfer API process.
   docling:
@@ -202,9 +252,16 @@ services:
       PFH_DEMO_MODE: "true"
       PFH_RUNTIME_PROFILE: integrated-demo
       PFH_STORAGE_MODE: medplum
-      PFH_OPERATIONAL_DATABASE_URL: postgresql://pflegehelfer:${PFH_DEMO_POSTGRES_PASSWORD}@pflegehelfer-postgres:5432/pflegehelfer
+      PFH_OPERATIONAL_DATABASE_URL: postgresql://pflegehelfer_runtime:${PFH_RUNTIME_POSTGRES_PASSWORD}@pflegehelfer-postgres:5432/pflegehelfer
       PFH_PROVIDER_SIMULATOR_BASE_URL: http://provider-simulator:8787
       PFH_PROVIDER_SIMULATOR_TOKEN: ${PFH_PROVIDER_SIMULATOR_TOKEN:?Run pnpm demo:env first}
+      PFH_OIDC_ISSUER: http://127.0.0.1:4173/synthetic-idp
+      PFH_OIDC_CLIENT_ID: pflegehelfer-test
+      PFH_OIDC_REDIRECT_URI: http://127.0.0.1:4173/api/v1/auth/callback
+      PFH_PUBLIC_ORIGIN: http://127.0.0.1:4173
+      PFH_OIDC_ALLOW_INSECURE_HTTP: "true"
+      PFH_SESSION_ENCRYPTION_SECRET: ${PFH_SESSION_ENCRYPTION_SECRET:?Run pnpm demo:env first}
+      PFH_TEST_IDP_PROXY_BASE_URL: http://test-idp:9000
       PFH_FHIR_BASE_URL: http://medplum-server:8103/
       MEDPLUM_APP_BASE_URL: http://localhost:3001/
       MEDPLUM_DEFAULT_SUPER_ADMIN_CLIENT_ID: ${MEDPLUM_DEFAULT_SUPER_ADMIN_CLIENT_ID:?Run pnpm demo:env first}
@@ -215,9 +272,13 @@ services:
     depends_on:
       pflegehelfer-postgres:
         condition: service_healthy
+      pflegehelfer-migrate:
+        condition: service_completed_successfully
       medplum-server:
         condition: service_healthy
       provider-simulator:
+        condition: service_healthy
+      test-idp:
         condition: service_healthy
     read_only: true
     tmpfs: [/tmp]

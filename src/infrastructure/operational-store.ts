@@ -3,7 +3,10 @@ import type { Resource } from "@medplum/fhirtypes";
 import pg from "pg";
 import { workflowForRole, type WorkflowDefinition } from "../core/workflows.js";
 import type { DurableIntentRecord } from "../core/assistant.js";
-import type { AssistantResponse } from "../core/assistant-service.js";
+import {
+  archiveAssistantResponse,
+  type AssistantResponse,
+} from "../core/assistant-service.js";
 import type { ServiceCheckpoint } from "../core/service.js";
 import {
   providerIdSchema,
@@ -34,7 +37,7 @@ import {
   activeNursingAssignment,
   activeStaffAssignment,
 } from "../core/demo-scenario-runtime.js";
-import { runMigrations } from "./migrations.js";
+import { loadMigrationFiles, runMigrations } from "./migrations.js";
 import type {
   VoiceTranscriptOriginal,
   VoiceTranscriptProvenance,
@@ -233,6 +236,19 @@ function storedTurnPatientId(turn: StoredConversationTurn): string | null {
   return typeof patientId === "string" ? patientId : null;
 }
 
+function archiveConversationTurn(
+  turn: StoredConversationTurn,
+): StoredConversationTurn {
+  const patientId = storedTurnPatientId(turn);
+  return {
+    ...turn,
+    ...(turn.originPatientId === undefined && patientId
+      ? { originPatientId: patientId }
+      : {}),
+    response: archiveAssistantResponse(turn.response),
+  };
+}
+
 export interface DurableVoiceAuthority {
   clientContextId: string;
   actorId: string;
@@ -386,9 +402,22 @@ export interface AssistantRequestIdentity {
   context: AssistantContextBinding;
 }
 
+export interface IntentAuthorityWrite {
+  tokenHash: string;
+  record: DurableIntentRecord;
+  sessionId: string;
+  threadId: string;
+  contextRevision: number;
+  responseId: string;
+  reviewItems: unknown[];
+  clientContextId?: string;
+}
+
 export interface AssistantRequestCompletion extends AssistantRequestIdentity {
   holderId: string;
   response: AssistantResponse;
+  authorities?: IntentAuthorityWrite[];
+  voiceTokenHash?: string;
 }
 
 export interface OperationalStore {
@@ -485,16 +514,7 @@ export interface OperationalStore {
     afterId: number,
     limit?: number,
   ): Promise<DurableUiEvent[]>;
-  storeIntentAuthority(input: {
-    tokenHash: string;
-    record: DurableIntentRecord;
-    sessionId: string;
-    threadId: string;
-    contextRevision: number;
-    responseId: string;
-    reviewItems: unknown[];
-    clientContextId?: string;
-  }): Promise<void>;
+  storeIntentAuthority(input: IntentAuthorityWrite): Promise<void>;
   loadIntentAuthority(input: {
     tokenHash: string;
     actorId: string;
@@ -629,6 +649,10 @@ export interface OperationalStore {
     record: DurableVoiceAuthority,
   ): Promise<void>;
   loadVoiceAuthority(tokenHash: string): Promise<DurableVoiceAuthority | null>;
+  claimVoiceAuthority(
+    tokenHash: string,
+    commandId: string,
+  ): Promise<DurableVoiceAuthority | null>;
   consumeVoiceAuthority(tokenHash: string): Promise<boolean>;
   health(): Promise<boolean>;
   exportDemoWorkspace(): Promise<DemoWorkspaceSnapshot>;
@@ -683,7 +707,11 @@ export class InMemoryOperationalStore implements OperationalStore {
   >();
   private readonly voiceAuthorities = new Map<
     string,
-    { record: DurableVoiceAuthority; consumed: boolean }
+    {
+      record: DurableVoiceAuthority;
+      consumed: boolean;
+      boundCommandId: string | null;
+    }
   >();
   private readonly acceptedCommands = new Map<
     string,
@@ -923,15 +951,17 @@ export class InMemoryOperationalStore implements OperationalStore {
         const authority = [...this.authorities.values()].find(
           (candidate) => candidate.responseId === turn.id,
         );
-        return authority
-          ? {
-              ...turn,
-              proposalLifecycle: {
-                revision: authority.revision,
-                status: authority.proposalStatus,
-              },
-            }
-          : turn;
+        return archiveConversationTurn(
+          authority
+            ? {
+                ...turn,
+                proposalLifecycle: {
+                  revision: authority.revision,
+                  status: authority.proposalStatus,
+                },
+              }
+            : turn,
+        );
       }),
     );
   }
@@ -1030,7 +1060,47 @@ export class InMemoryOperationalStore implements OperationalStore {
       )
         throw new Error("ASSISTANT_REQUEST_CLAIM_STALE");
     }
-    thread.turns = [...thread.turns, structuredClone(turn)].slice(-80);
+    const authoritySnapshot = new Map(
+      [...this.authorities.entries()].map(([key, value]) => [
+        key,
+        structuredClone(value),
+      ]),
+    );
+    const voiceSnapshot = new Map(
+      [...this.voiceAuthorities.entries()].map(([key, value]) => [
+        key,
+        structuredClone(value),
+      ]),
+    );
+    try {
+      for (const authority of requestCompletion?.authorities ?? [])
+        await this.storeIntentAuthority(authority);
+      if (requestCompletion?.voiceTokenHash) {
+        const voice = this.voiceAuthorities.get(
+          requestCompletion.voiceTokenHash,
+        );
+        if (
+          !voice ||
+          voice.consumed ||
+          voice.record.expiresAt < Date.now() ||
+          voice.boundCommandId !== requestCompletion.commandId
+        )
+          throw new Error("VOICE_AUTHORITY_STALE");
+        voice.consumed = true;
+      }
+    } catch (error) {
+      this.authorities.clear();
+      for (const [key, value] of authoritySnapshot)
+        this.authorities.set(key, value);
+      this.voiceAuthorities.clear();
+      for (const [key, value] of voiceSnapshot)
+        this.voiceAuthorities.set(key, value);
+      throw error;
+    }
+    thread.turns = [
+      ...thread.turns,
+      structuredClone(archiveConversationTurn(turn)),
+    ].slice(-80);
     thread.lastActivityAt = new Date().toISOString();
     if (requestCompletion) {
       const key = `${requestCompletion.actorId}:${requestCompletion.commandId}`;
@@ -1075,7 +1145,11 @@ export class InMemoryOperationalStore implements OperationalStore {
       return Promise.resolve({
         state: existing.state,
         ...(existing.response
-          ? { response: structuredClone(existing.response) }
+          ? {
+              response: archiveAssistantResponse(
+                structuredClone(existing.response),
+              ),
+            }
           : {}),
       });
     }
@@ -1535,16 +1609,7 @@ export class InMemoryOperationalStore implements OperationalStore {
         ),
     );
   }
-  storeIntentAuthority(input: {
-    tokenHash: string;
-    record: DurableIntentRecord;
-    sessionId: string;
-    threadId: string;
-    contextRevision: number;
-    responseId: string;
-    reviewItems: unknown[];
-    clientContextId?: string;
-  }): Promise<void> {
+  storeIntentAuthority(input: IntentAuthorityWrite): Promise<void> {
     const session = this.sessions.get(input.record.actorId);
     const thread = this.memoryThreads.get(input.threadId);
     const clientContext = input.clientContextId
@@ -2324,6 +2389,7 @@ export class InMemoryOperationalStore implements OperationalStore {
       this.voiceAuthorities.set(tokenHash, {
         record: structuredClone(record),
         consumed: false,
+        boundCommandId: null,
       });
     return Promise.resolve();
   }
@@ -2336,6 +2402,22 @@ export class InMemoryOperationalStore implements OperationalStore {
         ? structuredClone(authority.record)
         : null,
     );
+  }
+  claimVoiceAuthority(
+    tokenHash: string,
+    commandId: string,
+  ): Promise<DurableVoiceAuthority | null> {
+    const authority = this.voiceAuthorities.get(tokenHash);
+    if (
+      !authority ||
+      authority.consumed ||
+      authority.record.expiresAt < Date.now() ||
+      (authority.boundCommandId !== null &&
+        authority.boundCommandId !== commandId)
+    )
+      return Promise.resolve(null);
+    authority.boundCommandId = commandId;
+    return Promise.resolve(structuredClone(authority.record));
   }
   consumeVoiceAuthority(tokenHash: string): Promise<boolean> {
     const authority = this.voiceAuthorities.get(tokenHash);
@@ -2403,23 +2485,100 @@ export class PostgresOperationalStore
 {
   readonly mode = "postgresql" as const;
   private readonly pool: pg.Pool;
-  constructor(connectionString: string) {
+  private readonly runtimeConnectionString: string;
+  private readonly migrationConnectionString: string | undefined;
+  constructor(connectionString: string, migrationConnectionString?: string) {
+    this.runtimeConnectionString = connectionString;
+    this.migrationConnectionString = migrationConnectionString;
     this.pool = new Pool({
       connectionString,
       max: 10,
+      query_timeout: 15_000,
       statement_timeout: 15_000,
     });
   }
   async initialize(): Promise<void> {
-    await runMigrations(this.pool, {
-      allowLegacyAttestation: process.env.PFH_DEMO_MODE === "true",
-      lockName: `${organizationId}:pflegehelfer-schema-migrations`,
-    });
-    await this.pool.query(
-      `INSERT INTO organizations (id,name) VALUES ($1,$2)
-       ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name`,
-      [organizationId, siteConfiguration.displayName],
+    if (this.migrationConnectionString) {
+      const migrationPool = new Pool({
+        connectionString: this.migrationConnectionString,
+        max: 1,
+        query_timeout: 30_000,
+        statement_timeout: 30_000,
+      });
+      try {
+        await runMigrations(migrationPool, {
+          allowLegacyAttestation: process.env.PFH_DEMO_MODE === "true",
+          lockName: "pflegehelfer-schema-migrations",
+        });
+        await migrationPool.query(
+          `INSERT INTO organizations (id,name) VALUES ($1,$2)
+           ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name`,
+          [organizationId, siteConfiguration.displayName],
+        );
+        const runtimeRole = decodeURIComponent(
+          new URL(this.runtimeConnectionString).username,
+        );
+        await migrationPool.query(
+          `INSERT INTO runtime_tenant_principals
+             (role_name,organization_id,configured_at)
+           VALUES ($1,$2,clock_timestamp())
+           ON CONFLICT (role_name) DO NOTHING`,
+          [runtimeRole, organizationId],
+        );
+        const binding = await migrationPool.query<{ organization_id: string }>(
+          `SELECT organization_id FROM runtime_tenant_principals
+           WHERE role_name=$1`,
+          [runtimeRole],
+        );
+        if (binding.rows[0]?.organization_id !== organizationId)
+          throw new Error("RUNTIME_PRINCIPAL_ALREADY_BOUND_TO_OTHER_TENANT");
+      } finally {
+        await migrationPool.end();
+      }
+    }
+    const expectedVersion = (await loadMigrationFiles()).at(-1)?.version ?? 0;
+    const readiness = await this.pool.query<{
+      applied_version: number;
+      organization_id: string | null;
+      rolsuper: boolean;
+      rolbypassrls: boolean;
+      owns_tenant_table: boolean;
+      session_user_name: string;
+      current_user_name: string;
+    }>(
+      `SELECT COALESCE(max(version),0)::int AS applied_version,
+              pfh_current_organization() AS organization_id,
+              role.rolsuper,
+              role.rolbypassrls,
+              session_user AS session_user_name,
+              current_user AS current_user_name,
+              EXISTS (
+                SELECT 1
+                FROM pg_class owned
+                JOIN pg_namespace namespace ON namespace.oid=owned.relnamespace
+                JOIN information_schema.columns column_info
+                  ON column_info.table_schema=namespace.nspname
+                 AND column_info.table_name=owned.relname
+                 AND column_info.column_name='organization_id'
+                WHERE namespace.nspname='public'
+                  AND owned.relkind IN ('r','p')
+                  AND owned.relowner=role.oid
+              ) AS owns_tenant_table
+       FROM pfh_schema_migrations
+       CROSS JOIN pg_roles role
+       WHERE role.rolname=session_user
+       GROUP BY role.oid,role.rolsuper,role.rolbypassrls`,
     );
+    if (
+      readiness.rows[0]?.applied_version !== expectedVersion ||
+      readiness.rows[0]?.organization_id !== organizationId ||
+      readiness.rows[0]?.rolsuper !== false ||
+      readiness.rows[0]?.rolbypassrls !== false ||
+      readiness.rows[0]?.owns_tenant_table !== false ||
+      readiness.rows[0]?.session_user_name !==
+        readiness.rows[0]?.current_user_name
+    )
+      throw new Error("OPERATIONAL_SCHEMA_OR_TENANT_PRINCIPAL_NOT_READY");
     await this.pool.query(
       `INSERT INTO departments (organization_id,id,name) VALUES ($1,$2,$3)
        ON CONFLICT (organization_id,id) DO UPDATE SET name=EXCLUDED.name`,
@@ -2520,6 +2679,8 @@ export class PostgresOperationalStore
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      await client.query("SET LOCAL lock_timeout = '5s'");
+      await client.query("SET LOCAL statement_timeout = '10s'");
       // The PWA loads the working session and workday concurrently. Serialize
       // creation for one actor so both requests either create or reuse the same
       // active session instead of racing the partial unique index.
@@ -2990,18 +3151,20 @@ export class PostgresOperationalStore
         patientId ?? null,
       ],
     );
-    return result.rows.map((row) => ({
-      ...row.content,
-      createdAt: row.content.createdAt ?? row.created_at.toISOString(),
-      ...(row.proposal_revision !== null && row.proposal_status
-        ? {
-            proposalLifecycle: {
-              revision: row.proposal_revision,
-              status: row.proposal_status,
-            },
-          }
-        : {}),
-    }));
+    return result.rows.map((row) =>
+      archiveConversationTurn({
+        ...row.content,
+        createdAt: row.content.createdAt ?? row.created_at.toISOString(),
+        ...(row.proposal_revision !== null && row.proposal_status
+          ? {
+              proposalLifecycle: {
+                revision: row.proposal_revision,
+                status: row.proposal_status,
+              },
+            }
+          : {}),
+      }),
+    );
   }
   async loadPendingCarePlan(
     actorId: string,
@@ -3117,13 +3280,43 @@ export class PostgresOperationalStore
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      await client.query("SET LOCAL lock_timeout = '5s'");
+      await client.query("SET LOCAL statement_timeout = '10s'");
+      if (requestCompletion) {
+        const claim = await client.query(
+          `SELECT 1 FROM assistant_request_claims
+           WHERE organization_id=$1 AND site_id=$2 AND actor_id=$3
+             AND effective_role=$4 AND command_id=$5 AND request_hash=$6
+             AND session_id=$7 AND thread_id=$8 AND context_revision=$9
+             AND client_context_id=$10 AND state='in-progress'
+             AND holder_id=$11
+             AND lease_expires_at > clock_timestamp()
+           FOR UPDATE`,
+          [
+            organizationId,
+            siteConfiguration.siteId,
+            actorId,
+            role,
+            requestCompletion.commandId,
+            requestCompletion.requestHash,
+            requestCompletion.context.sessionId,
+            requestCompletion.context.threadId,
+            requestCompletion.context.contextRevision,
+            requestCompletion.context.clientContextId,
+            requestCompletion.holderId,
+          ],
+        );
+        if (claim.rowCount !== 1)
+          throw new Error("ASSISTANT_REQUEST_CLAIM_STALE");
+      }
       if (context) {
         const bound = await client.query(
           `SELECT 1 FROM assistant_client_contexts
            WHERE organization_id=$1 AND id=$2 AND actor_id=$3
              AND effective_role=$4 AND session_id=$5 AND thread_id=$6
              AND context_revision=$7 AND patient_id IS NOT DISTINCT FROM $8
-             AND encounter_id IS NOT DISTINCT FROM $9 AND expires_at > now()`,
+             AND encounter_id IS NOT DISTINCT FROM $9
+             AND expires_at > clock_timestamp()`,
           [
             organizationId,
             context.clientContextId,
@@ -3143,7 +3336,7 @@ export class PostgresOperationalStore
          FROM assistant_threads
          WHERE organization_id=$1 AND site_id=$2 AND id=$3
            AND actor_id=$4 AND effective_role=$5 AND department_id=$6
-           AND expires_at > now()
+           AND expires_at > clock_timestamp()
          FOR UPDATE`,
         [
           organizationId,
@@ -3178,6 +3371,24 @@ export class PostgresOperationalStore
             turn.originContextRevision !== context.contextRevision))
       )
         throw new Error("ASSISTANT_CONTEXT_STALE");
+      for (const authority of requestCompletion?.authorities ?? [])
+        await this.storeIntentAuthority(authority, client);
+      if (requestCompletion?.voiceTokenHash) {
+        const consumedVoice = await client.query(
+          `UPDATE safety_authority
+           SET consumed_at=clock_timestamp()
+           WHERE organization_id=$1 AND token_hash=$2 AND authority_type='voice'
+             AND bound_assistant_command_id=$3 AND consumed_at IS NULL
+             AND expires_at > clock_timestamp()`,
+          [
+            organizationId,
+            requestCompletion.voiceTokenHash,
+            requestCompletion.commandId,
+          ],
+        );
+        if (consumedVoice.rowCount !== 1)
+          throw new Error("VOICE_AUTHORITY_STALE");
+      }
       await client.query(
         `INSERT INTO assistant_messages
            (organization_id,thread_id,sequence,id,kind,patient_id,context_revision,input_modality,content)
@@ -3192,7 +3403,7 @@ export class PostgresOperationalStore
             : turn.originPatientId,
           turn.originContextRevision ?? row.context_revision,
           turn.inputModality,
-          turn,
+          archiveConversationTurn(turn),
         ],
       );
       await client.query(
@@ -3203,12 +3414,13 @@ export class PostgresOperationalStore
       if (requestCompletion) {
         const completed = await client.query(
           `UPDATE assistant_request_claims
-           SET state='completed',response=$1,updated_at=now(),
-               expires_at=now()+interval '24 hours',lease_expires_at=now()
+           SET state='completed',response=$1,updated_at=clock_timestamp(),
+               expires_at=clock_timestamp()+interval '24 hours',
+               lease_expires_at=clock_timestamp()
            WHERE organization_id=$2 AND site_id=$3 AND actor_id=$4
              AND command_id=$5 AND request_hash=$6 AND state='in-progress'
              AND thread_id=$7 AND context_revision=$8 AND holder_id=$9
-             AND lease_expires_at > now()`,
+             AND lease_expires_at > clock_timestamp()`,
           [
             requestCompletion.response,
             organizationId,
@@ -3238,6 +3450,8 @@ export class PostgresOperationalStore
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      await client.query("SET LOCAL lock_timeout = '5s'");
+      await client.query("SET LOCAL statement_timeout = '10s'");
       await client.query(
         "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
         [
@@ -3253,10 +3467,11 @@ export class PostgresOperationalStore
         client_context_id: string;
         state: "in-progress" | "completed";
         response: AssistantResponse | null;
-        lease_expires_at: Date;
+        lease_valid: boolean;
       }>(
         `SELECT effective_role,request_hash,session_id,thread_id,context_revision,
-                client_context_id,state,response,lease_expires_at
+                client_context_id,state,response,
+                lease_expires_at > clock_timestamp() AS lease_valid
          FROM assistant_request_claims
          WHERE organization_id=$1 AND site_id=$2 AND actor_id=$3 AND command_id=$4
          FOR UPDATE`,
@@ -3286,18 +3501,22 @@ export class PostgresOperationalStore
           await client.query("COMMIT");
           return {
             state: "completed",
-            ...(existing.response ? { response: existing.response } : {}),
+            ...(existing.response
+              ? { response: archiveAssistantResponse(existing.response) }
+              : {}),
           };
         }
-        if (existing.lease_expires_at.getTime() > Date.now()) {
+        if (existing.lease_valid) {
           await client.query("COMMIT");
           return { state: "in-progress" };
         }
         const holderId = randomUUID();
         await client.query(
           `UPDATE assistant_request_claims
-           SET holder_id=$1,lease_expires_at=now()+interval '30 seconds',
-               expires_at=now()+interval '24 hours',updated_at=now()
+           SET holder_id=$1,
+               lease_expires_at=clock_timestamp()+interval '30 seconds',
+               expires_at=clock_timestamp()+interval '24 hours',
+               updated_at=clock_timestamp()
            WHERE organization_id=$2 AND site_id=$3 AND actor_id=$4 AND command_id=$5`,
           [
             holderId,
@@ -3317,7 +3536,8 @@ export class PostgresOperationalStore
             session_id,thread_id,context_revision,client_context_id,state,
             holder_id,lease_expires_at,expires_at)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'in-progress',$11,
-                 now()+interval '30 seconds',now()+interval '24 hours')`,
+                 clock_timestamp()+interval '30 seconds',
+                 clock_timestamp()+interval '24 hours')`,
         [
           organizationId,
           siteConfiguration.siteId,
@@ -3347,10 +3567,11 @@ export class PostgresOperationalStore
   ): Promise<boolean> {
     const renewed = await this.pool.query(
       `UPDATE assistant_request_claims
-       SET lease_expires_at=now()+interval '30 seconds',updated_at=now()
+       SET lease_expires_at=clock_timestamp()+interval '30 seconds',
+           updated_at=clock_timestamp()
        WHERE organization_id=$1 AND site_id=$2 AND actor_id=$3
          AND command_id=$4 AND request_hash=$5 AND state='in-progress'
-         AND holder_id=$6 AND lease_expires_at > now()`,
+         AND holder_id=$6 AND lease_expires_at > clock_timestamp()`,
       [
         organizationId,
         siteConfiguration.siteId,
@@ -3368,7 +3589,7 @@ export class PostgresOperationalStore
   ): Promise<void> {
     await this.pool.query(
       `UPDATE assistant_request_claims
-       SET lease_expires_at=now(),updated_at=now()
+       SET lease_expires_at=clock_timestamp(),updated_at=clock_timestamp()
        WHERE organization_id=$1 AND site_id=$2 AND actor_id=$3
          AND command_id=$4 AND request_hash=$5 AND state='in-progress'
          AND holder_id=$6`,
@@ -4277,19 +4498,18 @@ export class PostgresOperationalStore
           : String(row.occurred_at),
     }));
   }
-  async storeIntentAuthority(input: {
-    tokenHash: string;
-    record: DurableIntentRecord;
-    sessionId: string;
-    threadId: string;
-    contextRevision: number;
-    responseId: string;
-    reviewItems: unknown[];
-    clientContextId?: string;
-  }): Promise<void> {
-    const client = await this.pool.connect();
+  async storeIntentAuthority(
+    input: IntentAuthorityWrite,
+    transactionClient?: pg.PoolClient,
+  ): Promise<void> {
+    const client = transactionClient ?? (await this.pool.connect());
+    const ownsTransaction = transactionClient === undefined;
     try {
-      await client.query("BEGIN");
+      if (ownsTransaction) {
+        await client.query("BEGIN");
+        await client.query("SET LOCAL lock_timeout = '5s'");
+        await client.query("SET LOCAL statement_timeout = '10s'");
+      }
       const proposalPayload = {
         actorId: input.record.actorId,
         patientId: input.record.patientId,
@@ -4327,9 +4547,10 @@ export class PostgresOperationalStore
              WHERE c.organization_id=$1 AND c.id=$2 AND c.actor_id=$3
                AND c.effective_role=$4 AND c.session_id=$5 AND c.thread_id=$6
                AND c.context_revision=$7 AND c.patient_id=$8
-               AND c.encounter_id=$9 AND c.expires_at > now()
+               AND c.encounter_id=$9 AND c.expires_at > clock_timestamp()
                AND s.status='active' AND t.site_id=$10
-               AND t.thread_type='patient-assistant' AND t.expires_at > now()`,
+               AND t.thread_type='patient-assistant'
+               AND t.expires_at > clock_timestamp()`,
             [
               organizationId,
               input.clientContextId,
@@ -4352,7 +4573,8 @@ export class PostgresOperationalStore
                AND s.assistant_thread_id=$4 AND s.status='active'
                AND t.site_id=$5 AND t.thread_type='patient-assistant'
                AND t.context_revision=$6 AND t.patient_id=$7
-               AND t.subject_encounter_id=$8 AND t.expires_at > now()`,
+               AND t.subject_encounter_id=$8
+               AND t.expires_at > clock_timestamp()`,
             [
               organizationId,
               input.sessionId,
@@ -4376,7 +4598,7 @@ export class PostgresOperationalStore
       if (existingAuthority.rows[0]) {
         if (existingAuthority.rows[0].proposal_hash !== proposalHash)
           throw new Error("INTENT_AUTHORITY_TOKEN_CONFLICT");
-        await client.query("COMMIT");
+        if (ownsTransaction) await client.query("COMMIT");
         return;
       }
       const prior = await client.query<{
@@ -4449,12 +4671,12 @@ export class PostgresOperationalStore
           input.clientContextId ?? null,
         ],
       );
-      await client.query("COMMIT");
+      if (ownsTransaction) await client.query("COMMIT");
     } catch (error) {
-      await client.query("ROLLBACK");
+      if (ownsTransaction) await client.query("ROLLBACK");
       throw error;
     } finally {
-      client.release();
+      if (ownsTransaction) client.release();
     }
   }
   async loadIntentAuthority(input: {
@@ -6052,6 +6274,23 @@ export class PostgresOperationalStore
       ? structuredClone(result.rows[0].binding)
       : null;
   }
+  async claimVoiceAuthority(
+    tokenHash: string,
+    commandId: string,
+  ): Promise<DurableVoiceAuthority | null> {
+    const result = await this.pool.query<{ binding: DurableVoiceAuthority }>(
+      `UPDATE safety_authority
+       SET bound_assistant_command_id=$3
+       WHERE organization_id=$1 AND token_hash=$2 AND authority_type='voice'
+         AND consumed_at IS NULL AND expires_at > clock_timestamp()
+         AND (bound_assistant_command_id IS NULL OR bound_assistant_command_id=$3)
+       RETURNING binding`,
+      [organizationId, tokenHash, commandId],
+    );
+    return result.rows[0]?.binding
+      ? structuredClone(result.rows[0].binding)
+      : null;
+  }
   async consumeVoiceAuthority(tokenHash: string): Promise<boolean> {
     const result = await this.pool.query(
       `UPDATE safety_authority SET consumed_at=now()
@@ -6566,6 +6805,10 @@ export class PostgresOperationalStore
       await client.query(
         `DELETE FROM assistant_client_contexts WHERE organization_id=$1`,
         [organizationId],
+      );
+      await client.query(
+        `DELETE FROM assistant_request_claims WHERE organization_id=$1 AND site_id=$2`,
+        [organizationId, siteConfiguration.siteId],
       );
       await client.query(
         `DELETE FROM working_sessions WHERE organization_id=$1`,
