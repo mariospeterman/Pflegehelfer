@@ -8,6 +8,7 @@ import {
 import { createRemoteJWKSet, jwtVerify, type JWTPayload } from "jose";
 import pg from "pg";
 import { z } from "zod";
+import { monitorPostgresPool } from "../infrastructure/postgres-pool-health.js";
 
 const { Pool } = pg;
 
@@ -86,6 +87,7 @@ export interface IdentityAdapter {
     state: string,
     cookieHeader: string | undefined,
   ): Promise<OidcLogoutCallbackResult>;
+  health(): Promise<boolean>;
   close?(): Promise<void>;
   assertRequestIntegrity(input: {
     identity: AuthenticatedIdentity;
@@ -292,6 +294,7 @@ interface StoredSecrets {
 export class PostgresOidcBff implements IdentityAdapter {
   readonly configured = true;
   private readonly pool: pg.Pool;
+  private readonly poolHealth;
   private readonly encryptionKey: Buffer;
   private discovery: z.infer<typeof discoverySchema> | null = null;
   private jwks: ReturnType<typeof createRemoteJWKSet> | null = null;
@@ -307,9 +310,11 @@ export class PostgresOidcBff implements IdentityAdapter {
     this.pool = new Pool({
       connectionString: this.config.databaseUrl,
       max: 4,
+      connectionTimeoutMillis: 2_000,
       query_timeout: 10_000,
       statement_timeout: 10_000,
     });
+    this.poolHealth = monitorPostgresPool(this.pool);
   }
 
   private backchannelUrl(publicUrl: string): URL {
@@ -745,8 +750,13 @@ export class PostgresOidcBff implements IdentityAdapter {
     };
   }
 
+  health(): Promise<boolean> {
+    return this.poolHealth.probe();
+  }
+
   async close(): Promise<void> {
     await this.pool.end();
+    this.poolHealth.dispose();
   }
 }
 

@@ -1,5 +1,6 @@
 import pg from "pg";
 import { z } from "zod";
+import { monitorPostgresPool } from "../infrastructure/postgres-pool-health.js";
 
 const { Pool } = pg;
 
@@ -46,11 +47,14 @@ export async function provisionOidcMemberships(
   const pool = new Pool({
     connectionString: databaseUrl,
     max: 1,
+    connectionTimeoutMillis: 2_000,
     query_timeout: 10_000,
     statement_timeout: 10_000,
   });
-  const client = await pool.connect();
+  const poolHealth = monitorPostgresPool(pool);
+  let client: pg.PoolClient | null = null;
   try {
+    client = await pool.connect();
     await client.query("BEGIN");
     for (const membership of memberships) {
       const existing = await client.query<{
@@ -118,10 +122,19 @@ export async function provisionOidcMemberships(
     }
     await client.query("COMMIT");
   } catch (error) {
-    await client.query("ROLLBACK");
+    if (client)
+      try {
+        await client.query("ROLLBACK");
+      } catch (rollbackError) {
+        throw new AggregateError(
+          [error, rollbackError],
+          "OIDC_MEMBERSHIP_PROVISIONING_AND_ROLLBACK_FAILED",
+        );
+      }
     throw error;
   } finally {
-    client.release();
+    client?.release();
     await pool.end();
+    poolHealth.dispose();
   }
 }

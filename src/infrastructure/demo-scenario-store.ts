@@ -10,6 +10,7 @@ import {
 import type { WorkflowState } from "../core/service.js";
 import { siteConfiguration } from "../core/site-config.js";
 import type { DemoWorkspaceSnapshot } from "../core/workspace.js";
+import { monitorPostgresPool } from "./postgres-pool-health.js";
 
 const { Pool } = pg;
 const organizationId = siteConfiguration.institutionId;
@@ -42,6 +43,7 @@ export interface DemoScenarioStore {
     workspace: DemoWorkspaceSnapshot,
   ): Promise<DemoScenarioRun>;
   importRun(run: DemoScenarioRun): Promise<DemoScenarioRun>;
+  health(): Promise<boolean>;
   close(): Promise<void>;
 }
 
@@ -134,6 +136,10 @@ export class InMemoryDemoScenarioStore implements DemoScenarioStore {
     return Promise.resolve(structuredClone(run));
   }
 
+  health(): Promise<boolean> {
+    return Promise.resolve(true);
+  }
+
   close(): Promise<void> {
     return Promise.resolve();
   }
@@ -181,13 +187,17 @@ function fromRow(row: ScenarioRow): DemoScenarioRun {
 
 export class PostgresDemoScenarioStore implements DemoScenarioStore {
   private readonly pool: pg.Pool;
+  private readonly poolHealth;
 
   constructor(connectionString: string) {
     this.pool = new Pool({
       connectionString,
       max: 3,
+      connectionTimeoutMillis: 2_000,
+      query_timeout: 15_000,
       statement_timeout: 15_000,
     });
+    this.poolHealth = monitorPostgresPool(this.pool);
   }
 
   async initialize(): Promise<DemoScenarioRun> {
@@ -283,8 +293,13 @@ export class PostgresDemoScenarioStore implements DemoScenarioStore {
     return run;
   }
 
+  health(): Promise<boolean> {
+    return this.poolHealth.probe();
+  }
+
   async close(): Promise<void> {
     await this.pool.end();
+    this.poolHealth.dispose();
   }
 
   private async insert(run: DemoScenarioRun, active: boolean): Promise<void> {

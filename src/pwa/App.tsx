@@ -27,6 +27,7 @@ import {
   authenticatedFetch,
   hasBffSession,
   publishAccessRevoked,
+  redirectToLogin,
   requestIntegrityHeaders,
   requireAuthenticatedResponse,
   subscribeAccessRevoked,
@@ -125,6 +126,10 @@ async function api<T>(
     }),
   );
   const raw = await response.text();
+  if (path === "/api/v1/snapshot" && response.status === 403) {
+    publishAccessRevoked();
+    if (hasBffSession()) redirectToLogin();
+  }
   let result: T & { message?: string };
   try {
     result = JSON.parse(raw) as T & { message?: string };
@@ -1233,13 +1238,10 @@ export function App() {
         setSelectedPatientId(preferredPatientId);
       } catch (failure) {
         if (current !== generation.current) return;
-        assistantContextBinding.current.reset();
-        purgeSensitiveBrowserState();
-        setSnapshot(null);
-        setWorkday(null);
-        setConversations([]);
-        setHandoff(null);
-        setSelectedPatientId(null);
+        // Authentication loss publishes the access-revoked event above and
+        // follows the dedicated purge path. A transient network/5xx failure
+        // must keep the current read-only view and unsent local draft so staff
+        // can reconnect without losing interrupted work.
         setApiReady(false);
         setNotice(
           failure instanceof Error
@@ -1647,7 +1649,13 @@ export function App() {
         <ContextPanel
           snapshot={snapshot}
           patient={patient}
-          onPatient={choosePatient}
+          onPatient={(id) => {
+            if (connected) return choosePatient(id);
+            setNotice(
+              "Die Ansicht bleibt lesbar. Änderungen sind erst nach erneuter Verbindung möglich.",
+            );
+            return Promise.resolve(false);
+          }}
           onNavigate={setDestination}
           modal
           onUser={(id) => {
@@ -1686,6 +1694,7 @@ export function App() {
           </div>
           <button
             className="header-scope-switcher"
+            disabled={!connected}
             aria-label={
               patient
                 ? `Aktiver Kontext: ${patient.displayName}, Zimmer ${patient.room}. Kontext wechseln`
@@ -1744,7 +1753,7 @@ export function App() {
             </button>
           </div>
         </header>
-        {scopePickerOpen && (
+        {scopePickerOpen && connected && (
           <>
             <button
               type="button"
@@ -1811,6 +1820,9 @@ export function App() {
         {notice && (
           <div className="global-notice" role="status">
             <span>{notice}</span>
+            {!apiReady && online && (
+              <button onClick={() => void load()}>Erneut verbinden</button>
+            )}
             <button
               aria-label="Hinweis schliessen"
               onClick={() => setNotice(null)}
@@ -1819,27 +1831,31 @@ export function App() {
             </button>
           </div>
         )}
-        {destination === "Chat" && (
-          <CountersignaturePanel
-            snapshot={snapshot}
-            userId={userId}
-            activePatientId={selectedPatientId}
-            activeEncounterId={patient?.encounterId ?? null}
-            done={async (message) => {
-              await load();
-              setNotice(message);
-            }}
-          />
-        )}
-        {destination === "Provider" &&
-          ["management", "it", "quality-safety"].includes(
-            snapshot.currentUser.role,
-          ) && (
-            <OrganizationEconomicsPanel
+        <fieldset className="degraded-write-boundary" disabled={!connected}>
+          {destination === "Chat" && (
+            <CountersignaturePanel
+              snapshot={snapshot}
               userId={userId}
-              canEdit={["management", "it"].includes(snapshot.currentUser.role)}
+              activePatientId={selectedPatientId}
+              activeEncounterId={patient?.encounterId ?? null}
+              done={async (message) => {
+                await load();
+                setNotice(message);
+              }}
             />
           )}
+          {destination === "Provider" &&
+            ["management", "it", "quality-safety"].includes(
+              snapshot.currentUser.role,
+            ) && (
+              <OrganizationEconomicsPanel
+                userId={userId}
+                canEdit={["management", "it"].includes(
+                  snapshot.currentUser.role,
+                )}
+              />
+            )}
+        </fieldset>
         <Suspense
           fallback={
             <section className="workspace-card" role="status">
@@ -1878,83 +1894,101 @@ export function App() {
               workdayStage={workday?.stage ?? null}
             />
           ) : (
-            <WorkspaceView
-              destination={destination}
-              snapshot={snapshot}
-              patient={patient}
-              userId={userId}
-              workday={
-                ["care-assistant", "registered-nurse"].includes(
-                  snapshot.currentUser.role,
-                )
-                  ? workday
-                  : null
+            <fieldset
+              className="degraded-write-boundary"
+              disabled={!connected}
+              aria-label={
+                connected
+                  ? undefined
+                  : "Nur Lesen, bis die Verbindung wiederhergestellt ist"
               }
-              busy={contextBusy || assistantBusy}
-              onPatient={(id) => {
-                const returnDestination = [
-                  "Handover",
-                  "Plans",
-                  "Tasks",
-                ].includes(destination)
-                  ? destination
-                  : "Profile";
-                void choosePatient(id).then((changed) => {
-                  if (changed) setDestination(returnDestination);
-                });
-              }}
-              onError={setNotice}
-              onNavigate={setDestination}
-              onWorkdayAction={async (command) => {
-                const next = await api<WorkdayView>("/api/v1/workday", userId, {
-                  method: "POST",
-                  body: JSON.stringify(command),
-                });
-                setWorkday(next);
-                const activePatientId = next.activeEpisode?.patientId ?? null;
-                if (activePatientId) {
-                  if (
-                    [
-                      "start-episode",
-                      "interrupt-and-start",
-                      "resume-episode",
-                    ].includes(command.type)
+            >
+              <WorkspaceView
+                destination={destination}
+                snapshot={snapshot}
+                patient={patient}
+                userId={userId}
+                workday={
+                  ["care-assistant", "registered-nurse"].includes(
+                    snapshot.currentUser.role,
                   )
-                    await api("/api/v1/assistant/context", userId, {
-                      method: "POST",
-                      body: JSON.stringify({ patientId: activePatientId }),
-                    });
-                  assistantContextBinding.current.markBound({
-                    userId,
-                    patientId: activePatientId,
-                  });
-                  setSelectedPatientId(activePatientId);
-                  sessionStorage.setItem(
-                    "pfh-patient-context",
-                    activePatientId,
-                  );
+                    ? workday
+                    : null
                 }
-                if (["complete-episode", "close-shift"].includes(command.type))
-                  await load(activePatientId || selectedPatientId);
-              }}
-            />
+                busy={contextBusy || assistantBusy}
+                onPatient={(id) => {
+                  const returnDestination = [
+                    "Handover",
+                    "Plans",
+                    "Tasks",
+                  ].includes(destination)
+                    ? destination
+                    : "Profile";
+                  void choosePatient(id).then((changed) => {
+                    if (changed) setDestination(returnDestination);
+                  });
+                }}
+                onError={setNotice}
+                onNavigate={setDestination}
+                onWorkdayAction={async (command) => {
+                  const next = await api<WorkdayView>(
+                    "/api/v1/workday",
+                    userId,
+                    {
+                      method: "POST",
+                      body: JSON.stringify(command),
+                    },
+                  );
+                  setWorkday(next);
+                  const activePatientId = next.activeEpisode?.patientId ?? null;
+                  if (activePatientId) {
+                    if (
+                      [
+                        "start-episode",
+                        "interrupt-and-start",
+                        "resume-episode",
+                      ].includes(command.type)
+                    )
+                      await api("/api/v1/assistant/context", userId, {
+                        method: "POST",
+                        body: JSON.stringify({ patientId: activePatientId }),
+                      });
+                    assistantContextBinding.current.markBound({
+                      userId,
+                      patientId: activePatientId,
+                    });
+                    setSelectedPatientId(activePatientId);
+                    sessionStorage.setItem(
+                      "pfh-patient-context",
+                      activePatientId,
+                    );
+                  }
+                  if (
+                    ["complete-episode", "close-shift"].includes(command.type)
+                  )
+                    await load(activePatientId || selectedPatientId);
+                }}
+              />
+            </fieldset>
           )}
         </Suspense>
       </main>
       {handoff && patient && (
-        <DraftHandoffSheet
-          handoff={handoff}
-          patient={patient}
-          userId={userId}
-          close={() => {
-            setHandoff(null);
-            setNotice("Entwurf verworfen. Es wurde nichts gesendet.");
-          }}
-          done={async (message) => {
-            await load();
-            setNotice(message);
-          }}
-        />
+        <fieldset className="degraded-write-boundary" disabled={!connected}>
+          <DraftHandoffSheet
+            handoff={handoff}
+            patient={patient}
+            userId={userId}
+            close={() => {
+              setHandoff(null);
+              setNotice("Entwurf verworfen. Es wurde nichts gesendet.");
+            }}
+            done={async (message) => {
+              await load();
+              setNotice(message);
+            }}
+          />
+        </fieldset>
       )}
     </div>
   );

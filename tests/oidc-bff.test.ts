@@ -23,6 +23,7 @@ function fakeIdentity(actorId = "u-hr") {
   return {
     configured: true as const,
     initialize: vi.fn<IdentityAdapter["initialize"]>(() => Promise.resolve()),
+    health: vi.fn<IdentityAdapter["health"]>(() => Promise.resolve(true)),
     beginLogin: vi.fn<IdentityAdapter["beginLogin"]>(() =>
       Promise.resolve({
         redirectTo: "https://idp.example/authorize?state=opaque",
@@ -141,6 +142,26 @@ describe("OIDC BFF boundary", () => {
         PFH_OIDC_ALLOW_INSECURE_HTTP: "true",
       }),
     ).toThrow(/must not contain credentials/);
+  });
+
+  it("reports identity initialization outages as 503 and retries after recovery", async () => {
+    const identity = fakeIdentity();
+    identity.initialize
+      .mockRejectedValueOnce(new Error("database in recovery"))
+      .mockResolvedValue(undefined);
+    const app = buildApp(undefined, { demoMode: true, identity });
+    apps.push(app);
+
+    const unavailable = await app.inject({ method: "GET", url: "/ready" });
+    expect(unavailable.statusCode).toBe(503);
+    expect(unavailable.json()).toMatchObject({
+      status: "not-ready",
+      reason: "identity-store-unavailable",
+    });
+
+    const recovered = await app.inject({ method: "GET", url: "/ready" });
+    expect(recovered.statusCode).toBe(200);
+    expect(identity.initialize).toHaveBeenCalledTimes(2);
   });
 
   it("ignores demo headers when an authenticated BFF identity is active", async () => {

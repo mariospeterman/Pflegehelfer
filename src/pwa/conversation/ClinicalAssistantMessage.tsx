@@ -45,6 +45,7 @@ export interface AssistantHandoff {
 interface ConversationActions {
   userId: string;
   patient: Patient | null;
+  connected: boolean;
   onPatient: (patientId: string | null) => void;
   onHandoff: (handoff: AssistantHandoff) => void;
   onExecuted: (message: string, activePatientId?: string) => Promise<void>;
@@ -128,6 +129,7 @@ export function ClinicalAssistantMessage({
   const executionCommandIdsRef = useRef(
     new Map<string, IntentExecutionAttempt>(),
   );
+  const communicationCommandIdsRef = useRef(new Map<string, string>());
   if (!actions) throw new Error("ConversationActionsProvider fehlt.");
   const source = message.content ?? "";
   const proposalStatus = message.name?.match(
@@ -300,6 +302,12 @@ export function ClinicalAssistantMessage({
 
   const handleAction = async (event: ActionEvent) => {
     if (busy || isRunning) return;
+    if (!actions.connected) {
+      actions.onError(
+        "Die Ansicht bleibt lesbar. Änderungen sind erst nach erneuter Verbindung möglich.",
+      );
+      return;
+    }
     if (
       String(event.type) === "SelectPatient" &&
       typeof event.params.patientId === "string"
@@ -315,6 +323,15 @@ export function ClinicalAssistantMessage({
       )
     ) {
       const transition = String(event.params.transition);
+      const responseText =
+        typeof event.params.response === "string"
+          ? event.params.response.trim()
+          : "";
+      const transitionKey = `${event.params.id}:${transition}:${responseText}`;
+      const commandId =
+        communicationCommandIdsRef.current.get(transitionKey) ??
+        crypto.randomUUID();
+      communicationCommandIdsRef.current.set(transitionKey, commandId);
       setBusy(true);
       actions.onError(null);
       try {
@@ -322,18 +339,27 @@ export function ClinicalAssistantMessage({
           `/api/v1/communications/${encodeURIComponent(event.params.id)}/${transition}`,
           actions.userId,
           {
-            ...(typeof event.params.response === "string" &&
-            event.params.response.trim()
-              ? { response: event.params.response.trim() }
-              : {}),
+            ...(responseText ? { response: responseText } : {}),
             createTask: false,
           },
+          commandId,
         );
         updateMessage({ ...message, content: completedOpenUi });
-        await actions.onExecuted("Teamfrage wurde aktualisiert.");
+        communicationCommandIdsRef.current.delete(transitionKey);
+        try {
+          await actions.onExecuted("Teamfrage wurde aktualisiert.");
+        } catch {
+          actions.onError(
+            "Die Teamfrage wurde bestätigt aktualisiert. Die Ansicht konnte danach nicht neu geladen werden.",
+          );
+        }
       } catch (error) {
+        if (error instanceof AssistantActionError && error.status < 500)
+          communicationCommandIdsRef.current.delete(transitionKey);
         actions.onError(
-          error instanceof Error ? error.message : "Teamfrage fehlgeschlagen.",
+          error instanceof AssistantActionError && error.status < 500
+            ? error.message
+            : "Der Übernahmestatus ist noch unklar. Du kannst dieselbe Aktion sicher erneut versuchen; dabei wird keine zweite Operation angelegt.",
         );
       } finally {
         setBusy(false);
@@ -415,7 +441,9 @@ export function ClinicalAssistantMessage({
         error instanceof AssistantActionError
           ? error.code === "VERSION_CONFLICT"
             ? "Die Angaben haben sich geändert. Der alte Entwurf wurde geschlossen. Bitte frage die aktualisierten Angaben erneut ab."
-            : error.message
+            : error.status >= 500
+              ? "Der Übernahmestatus ist noch unklar. Du kannst dieselbe Aktion sicher erneut versuchen; dabei wird keine zweite Operation angelegt."
+              : error.message
           : "Der Übernahmestatus ist noch unklar. Du kannst dieselbe Aktion sicher erneut versuchen; dabei wird keine zweite Operation angelegt.",
       );
     } finally {

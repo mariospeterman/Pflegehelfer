@@ -7,6 +7,7 @@ import {
   organizationCommercialConfigSchema,
   organizationUsageReceiptSchema,
 } from "../core/organization-economics.js";
+import { monitorPostgresPool } from "./postgres-pool-health.js";
 
 const { Pool } = pg;
 
@@ -25,6 +26,7 @@ export interface CommercialStore {
     organizationId: string,
     period: string,
   ): Promise<OrganizationUsageReceipt[]>;
+  health(): Promise<boolean>;
   close(): Promise<void>;
 }
 
@@ -80,6 +82,10 @@ export class InMemoryCommercialStore implements CommercialStore {
     );
   }
 
+  health(): Promise<boolean> {
+    return Promise.resolve(true);
+  }
+
   close(): Promise<void> {
     return Promise.resolve();
   }
@@ -88,13 +94,17 @@ export class InMemoryCommercialStore implements CommercialStore {
 export class PostgresCommercialStore implements CommercialStore {
   readonly mode = "postgresql" as const;
   private readonly pool: pg.Pool;
+  private readonly poolHealth;
 
   constructor(connectionString: string) {
     this.pool = new Pool({
       connectionString,
       max: 4,
+      connectionTimeoutMillis: 2_000,
+      query_timeout: 15_000,
       statement_timeout: 15_000,
     });
+    this.poolHealth = monitorPostgresPool(this.pool);
   }
 
   async initialize(seed: OrganizationCommercialConfig): Promise<void> {
@@ -186,7 +196,12 @@ export class PostgresCommercialStore implements CommercialStore {
     );
   }
 
+  health(): Promise<boolean> {
+    return this.poolHealth.probe();
+  }
+
   async close(): Promise<void> {
     await this.pool.end();
+    this.poolHealth.dispose();
   }
 }

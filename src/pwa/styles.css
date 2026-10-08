@@ -1286,6 +1286,12 @@ input:focus-visible {
   font-size: 20px;
   cursor: pointer;
 }
+.degraded-write-boundary {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
 .countersignature-panel {
   width: min(760px, calc(100% - 32px));
   margin: 12px auto 0;

@@ -198,6 +198,7 @@ export function AssistantSurface({
       value={{
         userId,
         patient,
+        connected: online,
         onPatient: onSelectPatient,
         onHandoff,
         onExecuted,

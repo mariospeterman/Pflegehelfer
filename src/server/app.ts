@@ -395,13 +395,31 @@ export function buildApp(
     options.scenarioStore ?? new InMemoryDemoScenarioStore();
   const documentInspection =
     options.documentInspection ?? documentInspectionFromEnvironment();
-  const scenarioReady = demoMode
-    ? scenarioStore.initialize()
-    : Promise.resolve(null);
   const commercialSeed = loadOrganizationCommercialConfig();
   if (commercialSeed.organizationId !== siteConfiguration.institutionId)
     throw new Error("COMMERCIAL_CONFIGURATION_SCOPE_MISMATCH");
-  const commercialReady = commercialStore.initialize(commercialSeed);
+  let commercialInitialization: Promise<void> | null = null;
+  const ensureCommercialReady = () => {
+    commercialInitialization ??= commercialStore
+      .initialize(commercialSeed)
+      .catch((error: unknown) => {
+        commercialInitialization = null;
+        throw error;
+      });
+    return commercialInitialization;
+  };
+  let scenarioInitialization: Promise<void> | null = null;
+  const ensureScenarioReady = () => {
+    if (!demoMode) return Promise.resolve();
+    scenarioInitialization ??= scenarioStore
+      .initialize()
+      .then(() => undefined)
+      .catch((error: unknown) => {
+        scenarioInitialization = null;
+        throw error;
+      });
+    return scenarioInitialization;
+  };
   const runtime =
     options.runtime ??
     ({
@@ -423,7 +441,10 @@ export function buildApp(
   let identityInitialization: Promise<void> | null = null;
   const ensureIdentityReady = () => {
     if (!identity) return Promise.resolve();
-    identityInitialization ??= identity.initialize();
+    identityInitialization ??= identity.initialize().catch((error: unknown) => {
+      identityInitialization = null;
+      throw error;
+    });
     return identityInitialization;
   };
   const authenticatedIdentities = new WeakMap<
@@ -446,7 +467,7 @@ export function buildApp(
     options.modelGateway ??
     new ModelGateway(process.env, {
       canStartNewInference: async () => {
-        await commercialReady;
+        await ensureCommercialReady();
         const period = new Date().toISOString().slice(0, 7);
         const configuration = await commercialStore.getConfiguration(
           siteConfiguration.institutionId,
@@ -467,7 +488,7 @@ export function buildApp(
           : { allowed: true, reason: "organization-ai-budget-available" };
       },
       recordProviderUsage: async (receipt) => {
-        await commercialReady;
+        await ensureCommercialReady();
         await commercialStore.recordUsage({
           ...receipt,
           organizationId: siteConfiguration.institutionId,
@@ -1590,42 +1611,57 @@ export function buildApp(
   void app.register(fastifyMultipart, {
     limits: { files: 1, fields: 0, fileSize: 8 * 1024 * 1024 },
   });
+  let drainBackgroundWorkers = () => Promise.resolve();
   {
+    let shuttingDown = false;
     const configuredInterval = Number(
       process.env.PFH_ESCALATION_INTERVAL_MS ?? "5000",
     );
     const intervalMs = Number.isFinite(configuredInterval)
       ? Math.max(1000, configuredInterval)
       : 5000;
+    let escalationSweep: Promise<void> | null = null;
     const escalationTimer = demoMode
       ? setInterval(() => {
-          void persist(
-            () => {
-              const now = new Date().toISOString();
-              service.runScheduledEscalations(now);
-            },
-            undefined,
-            200,
-            true,
-          ).catch((error: unknown) => {
-            app.log.error(
-              {
-                errorType:
-                  error instanceof Error
-                    ? error.constructor.name
-                    : "UnknownError",
+          if (shuttingDown || escalationSweep) return;
+          escalationSweep = (async () => {
+            if (!(await operationalStore.health())) return;
+            await persist(
+              () => {
+                const now = new Date().toISOString();
+                service.runScheduledEscalations(now);
               },
-              "deterministic deadline sweep failed",
+              undefined,
+              200,
+              true,
             );
-          });
+          })()
+            .catch((error: unknown) => {
+              app.log.error(
+                {
+                  errorType:
+                    error instanceof Error
+                      ? error.constructor.name
+                      : "UnknownError",
+                },
+                "deterministic deadline sweep failed",
+              );
+            })
+            .finally(() => {
+              escalationSweep = null;
+            });
         }, intervalMs)
       : null;
     escalationTimer?.unref();
-    let providerWorkerRunning = false;
-    const providerWorkerInterval = Math.max(
-      1000,
-      Number(process.env.PFH_PROVIDER_WORKER_INTERVAL_MS ?? "2000"),
+    let providerWorkerSweep: Promise<void> | null = null;
+    const configuredProviderWorkerInterval = Number(
+      process.env.PFH_PROVIDER_WORKER_INTERVAL_MS ?? "2000",
     );
+    const providerWorkerInterval = Number.isFinite(
+      configuredProviderWorkerInterval,
+    )
+      ? Math.max(1000, configuredProviderWorkerInterval)
+      : 2000;
     const relationalProviderWorker =
       runtime.profile !== "memory-demo"
         ? new ProviderDeliveryWorker(
@@ -1651,17 +1687,30 @@ export function buildApp(
           })
         : null;
     const providerWorkerTimer = setInterval(() => {
-      if (providerWorkerRunning) return;
-      providerWorkerRunning = true;
-      const work = relationalProviderWorker
-        ? Promise.all([
+      if (shuttingDown || providerWorkerSweep) return;
+      providerWorkerSweep = (async () => {
+        if (!(await operationalStore.health())) return;
+        if (relationalProviderWorker) {
+          const workerResults = await Promise.allSettled([
             clinicalProjectionWorker!.runOnce(),
             relationalProviderWorker.runOnce(),
-          ])
-        : service.hasPendingProviderWork()
-          ? persist(() => service.flushOutbox("u-it"), undefined, 200, true)
-          : Promise.resolve();
-      void work
+          ]);
+          const failure = workerResults.find(
+            (result): result is PromiseRejectedResult =>
+              result.status === "rejected",
+          );
+          if (failure)
+            throw failure.reason instanceof Error
+              ? failure.reason
+              : new Error("DELIVERY_WORKER_FAILED");
+        } else if (service.hasPendingProviderWork())
+          await persist(
+            () => service.flushOutbox("u-it"),
+            undefined,
+            200,
+            true,
+          );
+      })()
         .catch((error: unknown) => {
           app.log.error(
             {
@@ -1674,15 +1723,42 @@ export function buildApp(
           );
         })
         .finally(() => {
-          providerWorkerRunning = false;
+          providerWorkerSweep = null;
         });
     }, providerWorkerInterval);
     providerWorkerTimer.unref();
-    app.addHook("onClose", (_instance, done) => {
+    drainBackgroundWorkers = async () => {
+      shuttingDown = true;
       if (escalationTimer) clearInterval(escalationTimer);
       clearInterval(providerWorkerTimer);
-      done();
-    });
+      const activeSweeps = [escalationSweep, providerWorkerSweep].filter(
+        (sweep): sweep is Promise<void> => sweep !== null,
+      );
+      if (activeSweeps.length === 0) return;
+      const configuredGrace = Number(
+        process.env.PFH_WORKER_SHUTDOWN_GRACE_MS ?? "30000",
+      );
+      const graceMs = Number.isFinite(configuredGrace)
+        ? Math.min(60_000, Math.max(1_000, configuredGrace))
+        : 30_000;
+      let graceExpired = false;
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      await Promise.race([
+        Promise.allSettled(activeSweeps),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(() => {
+            graceExpired = true;
+            resolve();
+          }, graceMs);
+        }),
+      ]);
+      if (timer) clearTimeout(timer);
+      if (graceExpired)
+        app.log.warn(
+          { graceMs },
+          "delivery worker shutdown grace expired; recovery must reconcile the durable receipt state",
+        );
+    };
   }
   void app.register(providerIntegrationRoutes, {
     registry: service.providerRegistry,
@@ -2008,72 +2084,165 @@ export function buildApp(
       );
     }
   });
-  app.get("/ready", async (_request, reply) => {
-    await Promise.all([
-      persistenceQueue,
-      assistantAuditQueue,
-      ensureIdentityReady(),
-    ]);
-    const auditValid = service.audit.verify();
-    const [workspaceStatus, operationalReady, providers] = await Promise.all([
+  type WorkspaceReadinessStatus = Awaited<ReturnType<typeof workspace.status>>;
+  type ProviderReadinessStatus = Awaited<
+    ReturnType<typeof service.providerRegistry.status>
+  >;
+  let workspaceProviderReadinessProbe: Promise<
+    [WorkspaceReadinessStatus, ProviderReadinessStatus]
+  > | null = null;
+  const probeWorkspaceAndProviders = () => {
+    workspaceProviderReadinessProbe ??= Promise.all([
       workspace.status(),
-      operationalStore.health(),
       service.providerRegistry.status(service.providerProfile),
-    ]);
-    const actualProfileMatches =
-      workspace.mode === runtime.storageMode &&
-      operationalStore.mode === runtime.persistenceMode;
-    if (!actualProfileMatches)
-      return reply.code(503).send({
-        status: "not-ready",
-        reason: "runtime-profile-mismatch",
-        profile: runtime.profile,
-      });
-    if (!demoMode && !identity)
-      return reply.code(503).send({
-        status: "not-ready",
-        reason: "production-identity-adapter-not-configured",
-        auditValid,
-      });
-    if (!workspaceStatus.ready)
-      return reply.code(503).send({
-        status: "not-ready",
-        reason: "clinical-workspace-unavailable",
-        auditValid,
-      });
-    if (!operationalReady)
-      return reply.code(503).send({
-        status: "not-ready",
-        reason: "operational-store-unavailable",
-        auditValid,
-      });
-    if (
-      runtime.profile === "integrated-demo" &&
-      (providers.length === 0 ||
-        providers.some(
-          (provider) =>
-            provider.operationalStatus !== "SIMULATED" ||
-            provider.health?.status !== "available",
-        ))
-    )
-      return reply.code(503).send({
-        status: "not-ready",
-        reason: "provider-simulator-unavailable",
-        auditValid,
-      });
-    if (!auditValid)
-      return reply.code(503).send({
-        status: "not-ready",
-        reason: "audit-chain-invalid",
-        auditValid,
-      });
-    return {
-      status: "ready",
-      profile: runtime.profile,
-      durability:
-        runtime.profile === "memory-demo" ? "memory-only" : "persistent",
-      auditValid,
+    ]).finally(() => {
+      workspaceProviderReadinessProbe = null;
+    });
+    return workspaceProviderReadinessProbe;
+  };
+  app.get("/ready", async (_request, reply) => {
+    const auditValid = service.audit.verify();
+    const readinessDeadline = new Error("READINESS_DEADLINE_EXCEEDED");
+    const configuredDeadline = Number(
+      process.env.PFH_READINESS_DEADLINE_MS ?? "5000",
+    );
+    const deadlineAt =
+      Date.now() +
+      (Number.isFinite(configuredDeadline)
+        ? Math.min(15_000, Math.max(1_000, configuredDeadline))
+        : 5_000);
+    const bounded = async <T>(operation: Promise<T>): Promise<T> => {
+      const remainingMs = deadlineAt - Date.now();
+      if (remainingMs <= 0) throw readinessDeadline;
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      let result: { kind: "value"; value: T } | { kind: "deadline" };
+      try {
+        result = await Promise.race([
+          operation.then((value) => ({ kind: "value" as const, value })),
+          new Promise<{ kind: "deadline" }>((resolve) => {
+            timer = setTimeout(
+              () => resolve({ kind: "deadline" }),
+              remainingMs,
+            );
+          }),
+        ]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+      if (result.kind === "deadline") throw readinessDeadline;
+      return result.value;
     };
+    try {
+      const [operationalReady, commercialStoreReady, scenarioStoreReady] =
+        await bounded(
+          Promise.all([
+            operationalStore.health(),
+            commercialStore.health(),
+            scenarioStore.health(),
+          ]),
+        );
+      if (!operationalReady)
+        return reply.code(503).send({
+          status: "not-ready",
+          reason: "operational-store-unavailable",
+          auditValid,
+        });
+      if (!commercialStoreReady || !scenarioStoreReady)
+        return reply.code(503).send({
+          status: "not-ready",
+          reason: "supporting-store-unavailable",
+          auditValid,
+        });
+      let identityReady = true;
+      try {
+        await bounded(ensureIdentityReady());
+        identityReady = identity ? await bounded(identity.health()) : true;
+      } catch (error) {
+        if (error === readinessDeadline) throw error;
+        identityReady = false;
+      }
+      if (!identityReady)
+        return reply.code(503).send({
+          status: "not-ready",
+          reason: "identity-store-unavailable",
+          auditValid,
+        });
+      try {
+        await bounded(
+          Promise.all([
+            persistenceQueue,
+            assistantAuditQueue,
+            ensureCommercialReady(),
+            ensureScenarioReady(),
+          ]),
+        );
+      } catch (error) {
+        if (error === readinessDeadline) throw error;
+        return reply.code(503).send({
+          status: "not-ready",
+          reason: "runtime-initialization-unavailable",
+          auditValid,
+        });
+      }
+      const [workspaceStatus, providers] = await bounded(
+        probeWorkspaceAndProviders(),
+      );
+      const actualProfileMatches =
+        workspace.mode === runtime.storageMode &&
+        operationalStore.mode === runtime.persistenceMode;
+      if (!actualProfileMatches)
+        return reply.code(503).send({
+          status: "not-ready",
+          reason: "runtime-profile-mismatch",
+          profile: runtime.profile,
+        });
+      if (!demoMode && !identity)
+        return reply.code(503).send({
+          status: "not-ready",
+          reason: "production-identity-adapter-not-configured",
+          auditValid,
+        });
+      if (!workspaceStatus.ready)
+        return reply.code(503).send({
+          status: "not-ready",
+          reason: "clinical-workspace-unavailable",
+          auditValid,
+        });
+      if (
+        runtime.profile === "integrated-demo" &&
+        (providers.length === 0 ||
+          providers.some(
+            (provider) =>
+              provider.operationalStatus !== "SIMULATED" ||
+              provider.health?.status !== "available",
+          ))
+      )
+        return reply.code(503).send({
+          status: "not-ready",
+          reason: "provider-simulator-unavailable",
+          auditValid,
+        });
+      if (!auditValid)
+        return reply.code(503).send({
+          status: "not-ready",
+          reason: "audit-chain-invalid",
+          auditValid,
+        });
+      return {
+        status: "ready",
+        profile: runtime.profile,
+        durability:
+          runtime.profile === "memory-demo" ? "memory-only" : "persistent",
+        auditValid,
+      };
+    } catch (error) {
+      if (error !== readinessDeadline) throw error;
+      return reply.code(503).send({
+        status: "not-ready",
+        reason: "readiness-deadline-exceeded",
+        auditValid,
+      });
+    }
   });
 
   app.get("/api/v1/diagnostics", async (request) => {
@@ -2179,7 +2348,7 @@ export function buildApp(
 
   app.get("/api/v1/admin/organization-economics", async (request) => {
     requireOrganizationEconomicsRole(request);
-    await commercialReady;
+    await ensureCommercialReady();
     const query = z
       .object({ period: organizationStatementPeriodSchema.optional() })
       .strict()
@@ -2202,7 +2371,7 @@ export function buildApp(
     "/api/v1/admin/organization-economics/statement.csv",
     async (request, reply) => {
       requireOrganizationEconomicsRole(request);
-      await commercialReady;
+      await ensureCommercialReady();
       const query = z
         .object({ period: organizationStatementPeriodSchema.optional() })
         .strict()
@@ -2234,7 +2403,7 @@ export function buildApp(
     "/api/v1/admin/organization-economics/configuration",
     async (request) => {
       requireOrganizationEconomicsRole(request, true);
-      await commercialReady;
+      await ensureCommercialReady();
       const body = z
         .object({
           expectedVersion: z.number().int().positive(),
@@ -2278,7 +2447,7 @@ export function buildApp(
           "Nur IT darf Provider-Nutzungsbelege importieren.",
           403,
         );
-      await commercialReady;
+      await ensureCommercialReady();
       const receipt = organizationUsageReceiptSchema.parse(request.body);
       if (receipt.organizationId !== siteConfiguration.institutionId)
         throw new DomainError(
@@ -3114,10 +3283,19 @@ export function buildApp(
     if (!Number.isFinite(cursor) || cursor < 0) cursor = 0;
     reply.raw.write(`event: connected\ndata: {"cursor":${cursor}}\n\n`);
     let flushing = false;
+    let replayUnavailable = false;
     const flush = async () => {
       if (flushing || reply.raw.destroyed) return;
       flushing = true;
       try {
+        if (!(await operationalStore.health())) {
+          if (!replayUnavailable)
+            app.log.warn(
+              "SSE replay paused while operational store is unavailable",
+            );
+          replayUnavailable = true;
+          return;
+        }
         const events = await operationalStore.listUiEventsAfter(
           actorId,
           cursor,
@@ -3129,6 +3307,21 @@ export function buildApp(
             `id: ${event.id}\nevent: ${event.eventType}\ndata: ${JSON.stringify({ revision: event.id })}\n\n`,
           );
         }
+        if (replayUnavailable)
+          app.log.info("SSE replay resumed after operational store recovery");
+        replayUnavailable = false;
+      } catch (error) {
+        if (!replayUnavailable)
+          app.log.warn(
+            {
+              errorType:
+                error instanceof Error
+                  ? error.constructor.name
+                  : "UnknownError",
+            },
+            "SSE replay paused after operational store query failure",
+          );
+        replayUnavailable = true;
       } finally {
         flushing = false;
       }
@@ -5191,7 +5384,7 @@ export function buildApp(
 
     app.get("/api/v1/admin/demo", async (request) => {
       requireDemoAdministrator(request);
-      await scenarioReady;
+      await ensureScenarioReady();
       const run = await persistScenarioState();
       return {
         run: {
@@ -5212,7 +5405,7 @@ export function buildApp(
 
     app.get("/api/v1/admin/demo/export", async (request, reply) => {
       requireDemoAdministrator(request);
-      await scenarioReady;
+      await ensureScenarioReady();
       const run = await persistScenarioState();
       const bundle = {
         schemaVersion: 1,
@@ -5233,7 +5426,7 @@ export function buildApp(
 
     app.post("/api/v1/admin/demo/import", async (request, reply) => {
       requireDemoAdministrator(request);
-      await scenarioReady;
+      await ensureScenarioReady();
       const body = z
         .object({
           schemaVersion: z.literal(1),
@@ -5263,7 +5456,7 @@ export function buildApp(
 
     app.post("/api/v1/admin/demo/runs", async (request, reply) => {
       requireDemoAdministrator(request);
-      await scenarioReady;
+      await ensureScenarioReady();
       await persistScenarioState();
       const body = z
         .object({
@@ -5852,6 +6045,7 @@ export function buildApp(
   }
 
   app.addHook("onClose", async () => {
+    await drainBackgroundWorkers();
     await Promise.all([
       operationalStore.close(),
       commercialStore.close(),

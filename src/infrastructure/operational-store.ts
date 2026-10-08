@@ -48,6 +48,10 @@ import {
   activeStaffAssignment,
 } from "../core/demo-scenario-runtime.js";
 import { loadMigrationFiles, runMigrations } from "./migrations.js";
+import {
+  monitorPostgresPool,
+  type PostgresPoolHealthBoundary,
+} from "./postgres-pool-health.js";
 import type {
   VoiceTranscriptOriginal,
   VoiceTranscriptProvenance,
@@ -2583,6 +2587,7 @@ export class PostgresOperationalStore
 {
   readonly mode = "postgresql" as const;
   private readonly pool: pg.Pool;
+  private readonly poolHealth: PostgresPoolHealthBoundary;
   private readonly runtimeConnectionString: string;
   private readonly migrationConnectionString: string | undefined;
   constructor(connectionString: string, migrationConnectionString?: string) {
@@ -2591,18 +2596,22 @@ export class PostgresOperationalStore
     this.pool = new Pool({
       connectionString,
       max: 10,
+      connectionTimeoutMillis: 2_000,
       query_timeout: 15_000,
       statement_timeout: 15_000,
     });
+    this.poolHealth = monitorPostgresPool(this.pool);
   }
   async initialize(): Promise<void> {
     if (this.migrationConnectionString) {
       const migrationPool = new Pool({
         connectionString: this.migrationConnectionString,
         max: 1,
+        connectionTimeoutMillis: 2_000,
         query_timeout: 30_000,
         statement_timeout: 30_000,
       });
+      const migrationPoolHealth = monitorPostgresPool(migrationPool);
       try {
         await runMigrations(migrationPool, {
           allowLegacyAttestation: process.env.PFH_DEMO_MODE === "true",
@@ -2632,6 +2641,7 @@ export class PostgresOperationalStore
           throw new Error("RUNTIME_PRINCIPAL_ALREADY_BOUND_TO_OTHER_TENANT");
       } finally {
         await migrationPool.end();
+        migrationPoolHealth.dispose();
       }
     }
     const expectedVersion = (await loadMigrationFiles()).at(-1)?.version ?? 0;
@@ -7079,12 +7089,7 @@ export class PostgresOperationalStore
     }
   }
   async health(): Promise<boolean> {
-    try {
-      await this.pool.query("SELECT 1");
-      return true;
-    } catch {
-      return false;
-    }
+    return this.poolHealth.probe();
   }
   async exportDemoWorkspace(): Promise<DemoWorkspaceSnapshot> {
     const [records, reads] = await Promise.all([
@@ -7269,6 +7274,7 @@ export class PostgresOperationalStore
   }
   async close(): Promise<void> {
     await this.pool.end();
+    this.poolHealth.dispose();
   }
   private async workspaceTransaction<T>(
     input: { commandKey: string; requestHash: string },
