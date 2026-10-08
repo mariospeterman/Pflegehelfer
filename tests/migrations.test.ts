@@ -51,10 +51,14 @@ describe("immutable migration ledger", () => {
       },
       { version: 25, name: "025_oidc_rp_initiated_logout.sql" },
       { version: 26, name: "026_oidc_principal_memberships.sql" },
+      { version: 27, name: "027_provider_resource_ordering.sql" },
     ]);
     expect(
       migrations.every(({ checksum }) => /^[a-f0-9]{64}$/.test(checksum)),
     ).toBe(true);
+    expect(migrations.find(({ version }) => version === 27)?.sql).toContain(
+      "MIGRATION_ORDER_UNPROVEN",
+    );
   });
 
   it("fails closed when an executed migration changes", async () => {

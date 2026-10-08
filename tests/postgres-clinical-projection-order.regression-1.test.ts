@@ -71,6 +71,7 @@ async function acceptSyntheticCommand(
     statusCode: 200,
     resultPayload: { sequence },
     selectedActionIds: ["action-1"],
+    authorizationActions: ["patient:read", "note:draft"],
     policyVersion: "test-policy-v1",
     sourceReadSet,
     auditEntries: [],

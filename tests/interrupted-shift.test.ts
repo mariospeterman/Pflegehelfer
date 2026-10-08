@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { InMemoryOperationalStore } from "../src/infrastructure/operational-store.js";
 import { buildApp } from "../src/server/app.js";
 import { nursingPatientIds } from "../src/core/site-config.js";
+import { PflegehelferService } from "../src/core/service.js";
 
 const apps: ReturnType<typeof buildApp>[] = [];
 afterEach(async () => Promise.all(apps.splice(0).map((app) => app.close())));
@@ -96,6 +97,39 @@ describe("interrupted nursing shift", () => {
       "Dr. David Keller",
     );
   }, 30_000);
+
+  it("rejects a bound workday after the authorized encounter changes", async () => {
+    const service = new PflegehelferService();
+    const app = buildApp(service, { demoMode: true });
+    apps.push(app);
+    const headers = { "x-demo-user": "u-assistant" };
+    const bound = await app.inject({
+      method: "GET",
+      url: "/api/v1/workday",
+      headers,
+    });
+    expect(bound.statusCode).toBe(200);
+    const checkpoint = service.checkpoint();
+    const anna = checkpoint.state.patients.find(
+      (patient) => patient.id === "p-anna",
+    )!;
+    anna.encounterId = "enc-anna-2026-follow-up";
+    service.restoreCheckpoint(checkpoint);
+
+    const read = await app.inject({
+      method: "GET",
+      url: "/api/v1/workday",
+      headers,
+    });
+    expect(read.statusCode).toBe(403);
+    const write = await app.inject({
+      method: "POST",
+      url: "/api/v1/workday",
+      headers: { ...headers, "x-command-id": crypto.randomUUID() },
+      payload: { type: "close-shift" },
+    });
+    expect(write.statusCode).toBe(403);
+  });
 
   it("denies a nursing workday without an exact actor and role assignment", async () => {
     const store = new InMemoryOperationalStore();
@@ -500,6 +534,48 @@ describe("interrupted nursing shift", () => {
     });
     expect(response.statusCode).toBe(422);
     expect(response.json()).toMatchObject({ error: "VALIDATION" });
+  });
+
+  it("reauthorizes every patient in a cached workday response", async () => {
+    const service = new PflegehelferService();
+    const app = buildApp(service, { demoMode: true });
+    apps.push(app);
+    const actorId = "u-nurse";
+    await acknowledgeApiHandover(app, actorId);
+    const commandId = crypto.randomUUID();
+    const request = {
+      method: "POST" as const,
+      url: "/api/v1/workday",
+      headers: {
+        "x-demo-user": actorId,
+        "x-command-id": commandId,
+      },
+      payload: {
+        type: "start-episode",
+        patientId: "p-anna",
+        encounterId: "enc-anna-2026",
+        kind: "planned",
+        title: "Morgenpflege",
+      },
+    };
+    expect((await app.inject(request)).statusCode).toBe(200);
+
+    const checkpoint = service.checkpoint();
+    checkpoint.state.users = checkpoint.state.users.map((user) =>
+      user.id === actorId
+        ? {
+            ...user,
+            patientIds: user.patientIds.filter(
+              (patientId) => patientId !== "p-luca",
+            ),
+          }
+        : user,
+    );
+    service.restoreCheckpoint(checkpoint);
+
+    const replay = await app.inject(request);
+    expect(replay.statusCode).toBe(403);
+    expect(replay.json()).toMatchObject({ error: "AUTH_DENIED" });
   });
 
   it("binds deferred responsibility to the authorized encounter and next shift", async () => {

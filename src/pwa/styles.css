@@ -520,6 +520,14 @@
   gap: 10px;
   box-shadow: var(--shadow);
 }
+
+.openui-agent-thread-error {
+  display: none;
+}
+
+.conversation-thread-error {
+  margin: 0.75rem 0;
+}
 .conversation-error button {
   min-width: 40px;
   min-height: 40px;

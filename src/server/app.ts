@@ -28,7 +28,13 @@ import {
   assistantProposalSchema,
   requiresDedicatedClinicalWorkflow,
 } from "../ai/assistant-proposal.js";
-import { isDomainError, PflegehelferService } from "../core/service.js";
+import {
+  isDomainError,
+  PflegehelferService,
+  type CommandReceipt,
+  type CommandReceiptAuthorization,
+  type ServiceCheckpoint,
+} from "../core/service.js";
 import { emptyWorkflowState } from "../core/service.js";
 import { installDemoScenarioRuntime } from "../core/demo-scenario-runtime.js";
 import {
@@ -56,7 +62,9 @@ import {
   createSyntheticProviderRegistry,
   ProviderDeliveryWorker,
   providerIntegrationRoutes,
+  type ProviderDeliveryAuthorization,
   type ProviderDeliveryStore,
+  type ProviderOutboxJob,
 } from "../core/provider-integration/index.js";
 import { ClinicalProjectionWorker } from "../core/clinical-projection-worker.js";
 import {
@@ -65,6 +73,7 @@ import {
 } from "../infrastructure/medplum-workspace.js";
 import {
   InMemoryOperationalStore,
+  type AcceptedCommandAuthorization,
   type AssistantContextBinding,
   type AssistantRequestIdentity,
   type DurableVoiceAuthority,
@@ -300,6 +309,63 @@ const assistantIntentBody = z
   })
   .strict();
 
+export function authorizeProviderDispatch(
+  service: PflegehelferService,
+  policyVersion: string,
+  job: Readonly<ProviderOutboxJob>,
+): ProviderDeliveryAuthorization {
+  const envelope = job.authorityEnvelope;
+  if (
+    !job.acceptedCommandId ||
+    !envelope ||
+    envelope.acceptedCommandId !== job.acceptedCommandId ||
+    envelope.organizationId !== siteConfiguration.institutionId ||
+    envelope.siteId !== siteConfiguration.siteId ||
+    envelope.departmentId !== siteConfiguration.department.id ||
+    envelope.patientId !==
+      job.payload.command.patientReference.slice("Patient/".length) ||
+    envelope.encounterId !==
+      job.payload.command.encounterReference.slice("Encounter/".length)
+  )
+    return { allowed: false, reason: "acceptance-envelope-invalid" };
+  try {
+    const currentActor = service.user(String(envelope.actorId));
+    if (currentActor.role !== envelope.actorRole)
+      return { allowed: false, reason: "actor-role-revoked" };
+    if (envelope.policyVersion !== policyVersion)
+      return { allowed: false, reason: "policy-version-revoked" };
+    const patient = service
+      .snapshot(currentActor.id, String(envelope.purpose) as Purpose)
+      .patients.find((candidate) => candidate.id === envelope.patientId);
+    if (!patient)
+      return { allowed: false, reason: "care-relationship-revoked" };
+    if (patient.encounterId !== envelope.encounterId)
+      return { allowed: false, reason: "encounter-relationship-revoked" };
+    const actionByOperation: Record<string, Action> = {
+      "Observation.write": "observation:approve",
+      "NursingNote.write": "note:approve",
+      "Task.write": "task:update",
+      "Communication.write": "communication:create",
+    };
+    const action = actionByOperation[job.operation];
+    if (
+      !action ||
+      !Array.isArray(envelope.actions) ||
+      !envelope.actions.includes(action) ||
+      !decide(
+        currentActor,
+        action,
+        String(envelope.purpose) as Purpose,
+        patient,
+      ).allow
+    )
+      return { allowed: false, reason: "permission-revoked" };
+  } catch {
+    return { allowed: false, reason: "actor-revoked" };
+  }
+  return { allowed: true };
+}
+
 export function buildApp(
   providedService?: PflegehelferService,
   options: {
@@ -316,6 +382,9 @@ export function buildApp(
     identity?: IdentityAdapter;
   } = {},
 ): FastifyInstance {
+  // PIDs are namespace-local and routinely collide across replicas. Bind all
+  // queue holders created by this process to one boot-unique generation.
+  const workerGeneration = randomUUID();
   const demoMode = options.demoMode ?? process.env.PFH_DEMO_MODE === "true";
   const workspace = options.workspace ?? new InMemoryClinicalWorkspace();
   const operationalStore =
@@ -408,6 +477,7 @@ export function buildApp(
   const asr = new AsrGateway();
   const tts = new TtsGateway();
   const knowledge = new ApprovedKnowledgeService();
+  let durableResources = service.fhirResources();
   const assistant = new AssistantService(service, models, knowledge, {
     getSyncStatus: async () => {
       const diagnostics = await operationalStore.deliveryDiagnostics();
@@ -426,6 +496,26 @@ export function buildApp(
           providerDeliveries: diagnostics.providerDeliveries,
         },
       };
+    },
+    captureSourceReadSet: async (sourceReadSet) => {
+      try {
+        return await workspace.captureSourceReadSet(
+          sourceReadSet,
+          durableResources,
+        );
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          (error.message.startsWith("SOURCE_READ_") ||
+            error.message.startsWith("MEDPLUM_RESOURCE_VERSION_MISSING"))
+        )
+          throw new DomainError(
+            "VERSION_CONFLICT",
+            "Die autorisierte Quelle hat sich während der Prüfung geändert. Bitte die aktualisierten Angaben erneut prüfen.",
+            409,
+          );
+        throw error;
+      }
     },
   });
   const effectiveDataClass = () =>
@@ -550,7 +640,6 @@ export function buildApp(
         : null,
     };
   };
-  let durableResources = service.fhirResources();
   let persistenceQueue: Promise<void> = Promise.resolve();
   let assistantAuditQueue: Promise<void> = Promise.resolve();
   let eventRevision = 0;
@@ -588,6 +677,7 @@ export function buildApp(
         );
       const sourceReadSet = await workspace.captureSourceReadSet(
         parseSourceReadSetV1(record.sourceReadSet),
+        durableResources,
       );
       authorities.push({
         tokenHash: authorityHash(component.intentToken),
@@ -727,6 +817,383 @@ export function buildApp(
     };
   };
   const committedCommandKeys = new Set(service.commandReceiptKeys());
+  const receiptActionsForAudit = (
+    entries: readonly { action: string; outcome?: string }[],
+  ): Action[] => {
+    const actions = new Set<Action>(["patient:read"]);
+    for (const entry of entries) {
+      if (entry.action === "task:create") actions.add("task:create");
+      else if (entry.action.startsWith("task:")) actions.add("task:update");
+      else if (entry.action === "observation:draft")
+        actions.add("observation:draft");
+      else if (entry.action.startsWith("observation:"))
+        actions.add("observation:approve");
+      else if (entry.action === "note:draft") actions.add("note:draft");
+      else if (entry.action.startsWith("note:")) actions.add("note:approve");
+      else if (entry.action === "communication:create")
+        actions.add("communication:create");
+      else if (entry.action.startsWith("communication:"))
+        actions.add("communication:respond");
+      else if (entry.action.startsWith("intake:")) actions.add("intake:update");
+      else if (entry.action.startsWith("round:")) actions.add("round:decide");
+      else if (entry.action === "assistant:workflow-interrupted")
+        actions.add("task:update");
+      else if (
+        [
+          "assistant:plan-executed",
+          "assistant:communication-handoff",
+          "assistant:task-handoff",
+        ].includes(entry.action)
+      ) {
+        // These entries summarize an already mapped action set or return a
+        // non-executable handoff. They do not add authority by themselves.
+      } else if (
+        entry.outcome === "success" &&
+        !["patient:read", "snapshot:read"].includes(entry.action)
+      )
+        throw new Error(
+          `COMMAND_RECEIPT_AUDIT_ACTION_UNMAPPED:${entry.action}`,
+        );
+    }
+    return [...actions];
+  };
+  const assertPatientReceiptReadable = (
+    actorId: string,
+    purpose: Purpose,
+    patientId: string,
+    encounterId: string,
+  ) => {
+    const snapshot = service.snapshot(actorId, purpose);
+    const patient = snapshot.patients.find(
+      (candidate) => candidate.id === patientId,
+    );
+    if (!patient || patient.encounterId !== encounterId)
+      throw new DomainError(
+        "AUTH_DENIED",
+        "Die aktuelle Patienten- oder Fallbeziehung für diesen Beleg fehlt.",
+        403,
+      );
+  };
+  const assertAcceptedReceiptReadable = async (
+    actorId: string,
+    authorization: AcceptedCommandAuthorization,
+  ) => {
+    const actor = service.user(actorId);
+    if (
+      authorization.actorId !== actorId ||
+      authorization.actorRole !== actor.role ||
+      authorization.siteId !== siteConfiguration.siteId ||
+      authorization.departmentId !== siteConfiguration.department.id
+    )
+      throw new DomainError(
+        "AUTH_DENIED",
+        "Die aktuelle Leseberechtigung für diesen Beleg fehlt.",
+        403,
+      );
+    if (
+      !(await operationalStore.isAcceptedCommandReceiptCurrent(authorization))
+    )
+      throw new DomainError(
+        "AUTH_DENIED",
+        "Sitzung, Gespräch oder Zielgruppe dieses Belegs ist nicht mehr aktuell freigegeben.",
+        403,
+      );
+    assertPatientReceiptReadable(
+      actorId,
+      authorization.purpose,
+      authorization.patientId,
+      authorization.encounterId,
+    );
+    const patient = service
+      .snapshot(actorId, authorization.purpose)
+      .patients.find((candidate) => candidate.id === authorization.patientId);
+    if (
+      !patient ||
+      authorization.actions.length === 0 ||
+      authorization.actions.some(
+        (action) =>
+          !decide(actor, action, authorization.purpose, patient).allow,
+      )
+    )
+      throw new DomainError(
+        "AUTH_DENIED",
+        "Die aktuelle Rollen- oder Vorgangsberechtigung für diesen Beleg fehlt.",
+        403,
+      );
+  };
+  const commandReceiptAuthorization = (
+    request: FastifyRequest,
+    before: ServiceCheckpoint,
+    result: unknown,
+  ): CommandReceiptAuthorization => {
+    const actorId = userId(request);
+    const actor = service.user(actorId);
+    const route = request.routeOptions.url;
+    if (!route) throw new Error("COMMAND_RECEIPT_ROUTE_MISSING");
+    const body =
+      request.body && typeof request.body === "object"
+        ? (request.body as Record<string, unknown>)
+        : {};
+    const params =
+      request.params && typeof request.params === "object"
+        ? (request.params as Record<string, unknown>)
+        : {};
+    const states = [before.state, service.checkpoint().state];
+    const targetId = typeof params.id === "string" ? params.id : null;
+    const routeTargets = (
+      state: ServiceCheckpoint["state"],
+    ): Array<{
+      id: string;
+      patientId: string | null;
+      encounterId?: string | null;
+    }> => {
+      if (route === "/api/v1/tasks/:id/:transition") return state.tasks;
+      if (route === "/api/v1/communications/:id/:transition")
+        return state.communications;
+      if (route === "/api/v1/intake/:id/review") return state.intake;
+      if (route === "/api/v1/:type/:id/approve")
+        return params.type === "observation"
+          ? state.observations
+          : params.type === "note"
+            ? state.notes
+            : [];
+      return [];
+    };
+    const target = targetId
+      ? states
+          .flatMap(routeTargets)
+          .find((candidate) => candidate.id === targetId)
+      : undefined;
+    const patientId =
+      typeof body.patientId === "string"
+        ? body.patientId
+        : target && "patientId" in target
+          ? target.patientId
+          : null;
+    const patient = patientId
+      ? states
+          .flatMap((state) => state.patients)
+          .find((candidate) => candidate.id === patientId)
+      : undefined;
+    const encounterId =
+      typeof body.encounterId === "string"
+        ? body.encounterId
+        : target && "encounterId" in target
+          ? target.encounterId
+          : (patient?.encounterId ?? null);
+    const purpose = purposeSchema.parse(body.purpose ?? actor.defaultPurpose);
+    const patientScopes = new Map<
+      string,
+      { patientId: string; encounterId: string }
+    >();
+    const addPatientScope = (
+      candidatePatientId: unknown,
+      candidateEncounterId: unknown,
+    ) => {
+      if (typeof candidatePatientId !== "string") return;
+      const resolvedEncounterId =
+        typeof candidateEncounterId === "string"
+          ? candidateEncounterId
+          : states
+              .flatMap((state) => state.patients)
+              .find((candidate) => candidate.id === candidatePatientId)
+              ?.encounterId;
+      if (resolvedEncounterId)
+        patientScopes.set(`${candidatePatientId}\0${resolvedEncounterId}`, {
+          patientId: candidatePatientId,
+          encounterId: resolvedEncounterId,
+        });
+    };
+    addPatientScope(patientId, encounterId);
+    if (result && typeof result === "object") {
+      const resultRecord = result as Record<string, unknown>;
+      addPatientScope(resultRecord.patientId, resultRecord.encounterId);
+      if (typeof resultRecord.activePatientId === "string") {
+        const activePatient = states
+          .flatMap((state) => state.patients)
+          .find((candidate) => candidate.id === resultRecord.activePatientId);
+        addPatientScope(activePatient?.id, activePatient?.encounterId);
+      }
+    }
+    let workdayAuthority: CommandReceiptAuthorization["workdayAuthority"] =
+      null;
+    if (route === "/api/v1/workday" && result && typeof result === "object") {
+      const workday = result as Record<string, unknown>;
+      const handover =
+        workday.handover && typeof workday.handover === "object"
+          ? (workday.handover as Record<string, unknown>)
+          : null;
+      for (const item of Array.isArray(handover?.items)
+        ? (handover.items as unknown[])
+        : [])
+        if (item && typeof item === "object") {
+          const scoped = item as Record<string, unknown>;
+          addPatientScope(scoped.patientId, scoped.encounterId);
+        }
+      const workdayScopedItems: unknown[] = [];
+      for (const collection of [
+        handover?.patientIds,
+        workday.plan,
+        workday.incomingTransfers,
+        workday.outgoingTransfers,
+      ])
+        if (Array.isArray(collection))
+          workdayScopedItems.push(...(collection as unknown[]));
+      for (const scopedItem of workdayScopedItems) {
+        if (typeof scopedItem === "string") addPatientScope(scopedItem, null);
+        else if (scopedItem && typeof scopedItem === "object") {
+          const scoped = scopedItem as Record<string, unknown>;
+          addPatientScope(scoped.patientId, scoped.encounterId);
+        }
+      }
+      for (const episode of Array.isArray(workday.episodes)
+        ? workday.episodes
+        : [])
+        if (episode && typeof episode === "object") {
+          const scoped = episode as Record<string, unknown>;
+          addPatientScope(scoped.patientId, scoped.encounterId);
+        }
+      if (
+        typeof workday.sessionId !== "string" ||
+        typeof handover?.id !== "string" ||
+        typeof handover.version !== "number" ||
+        typeof handover.contentHash !== "string"
+      )
+        throw new Error("COMMAND_RECEIPT_WORKDAY_AUTHORITY_MISSING");
+      workdayAuthority = {
+        sessionId: workday.sessionId,
+        handoverId: handover.id,
+        handoverVersion: handover.version,
+        handoverContentHash: handover.contentHash,
+      };
+    }
+    let actions: Action[];
+    if (route === "/api/v1/tasks") actions = ["task:create"];
+    else if (route === "/api/v1/tasks/:id/:transition")
+      actions = ["task:update"];
+    else if (route === "/api/v1/observations/drafts")
+      actions = ["observation:draft"];
+    else if (route === "/api/v1/notes/drafts") actions = ["note:draft"];
+    else if (route === "/api/v1/:type/:id/approve")
+      actions = [
+        params.type === "observation" ? "observation:approve" : "note:approve",
+      ];
+    else if (route === "/api/v1/communications")
+      actions = ["communication:create"];
+    else if (route === "/api/v1/communications/:id/:transition")
+      actions = ["communication:respond"];
+    else if (route === "/api/v1/intake/:id/review") actions = ["intake:update"];
+    else if (route === "/api/v1/round-actions") actions = ["round:decide"];
+    else if (route === "/api/v1/assistant/intents/:token/execute")
+      actions = receiptActionsForAudit(
+        service.audit.snapshot().slice(before.audit.length),
+      );
+    else if (route === "/api/v1/workday") actions = ["task:update"];
+    else if (route === "/api/v1/assistant/conversation/clear")
+      actions = ["patient:read"];
+    else if (
+      route.startsWith("/api/v1/admin/demo/") ||
+      route.startsWith("/api/v1/simulators/") ||
+      route === "/api/v1/demo/reset" ||
+      route === "/api/v1/outbox/process" ||
+      route === "/api/v1/outbox/:outboxId/reconcile"
+    )
+      actions = ["provider:operate"];
+    else throw new Error(`COMMAND_RECEIPT_AUTHORIZATION_UNMAPPED:${route}`);
+    return {
+      actorId,
+      actorRole: actor.role,
+      siteId: siteConfiguration.siteId,
+      departmentId: siteConfiguration.department.id,
+      route,
+      purpose,
+      actions,
+      patientId,
+      encounterId,
+      patientScopes: [...patientScopes.values()],
+      workdayAuthority,
+    };
+  };
+  const assertCommandReceiptReadable = async (
+    request: FastifyRequest,
+    receipt: CommandReceipt,
+  ) => {
+    const actorId = userId(request);
+    const actor = service.user(actorId);
+    const authorization = receipt.authorization;
+    if (
+      authorization.actorId !== actorId ||
+      authorization.actorRole !== actor.role ||
+      authorization.siteId !== siteConfiguration.siteId ||
+      authorization.departmentId !== siteConfiguration.department.id ||
+      authorization.route !== request.routeOptions.url ||
+      authorization.actions.length === 0
+    )
+      throw new DomainError(
+        "AUTH_DENIED",
+        "Die aktuelle Rollen- oder Vorgangsberechtigung für diesen Beleg fehlt.",
+        403,
+      );
+    const snapshot = service.snapshot(actorId, authorization.purpose);
+    if (
+      authorization.actions.some(
+        (action) => !decide(actor, action, authorization.purpose).allow,
+      )
+    )
+      throw new DomainError(
+        "AUTH_DENIED",
+        "Die aktuelle Rollen- oder Vorgangsberechtigung für diesen Beleg fehlt.",
+        403,
+      );
+    const scopes =
+      authorization.patientScopes.length > 0
+        ? authorization.patientScopes
+        : authorization.patientId && authorization.encounterId
+          ? [
+              {
+                patientId: authorization.patientId,
+                encounterId: authorization.encounterId,
+              },
+            ]
+          : [];
+    for (const scope of scopes) {
+      const patient = snapshot.patients.find(
+        (candidate) => candidate.id === scope.patientId,
+      );
+      if (!patient || patient.encounterId !== scope.encounterId)
+        throw new DomainError(
+          "AUTH_DENIED",
+          "Die aktuelle Patienten- oder Fallbeziehung für diesen Beleg fehlt.",
+          403,
+        );
+      if (
+        authorization.actions.some(
+          (action) =>
+            !decide(actor, action, authorization.purpose, patient).allow,
+        )
+      )
+        throw new DomainError(
+          "AUTH_DENIED",
+          "Die aktuelle Rollen- oder Vorgangsberechtigung für diesen Beleg fehlt.",
+          403,
+        );
+    }
+    if (authorization.workdayAuthority) {
+      const current = await operationalStore.getWorkday(actorId, actor.role);
+      const authority = authorization.workdayAuthority;
+      if (
+        current.sessionId !== authority.sessionId ||
+        current.handover.id !== authority.handoverId ||
+        current.handover.version !== authority.handoverVersion ||
+        current.handover.contentHash !== authority.handoverContentHash
+      )
+        throw new DomainError(
+          "AUTH_DENIED",
+          "Arbeitstag- oder Übergabeautorität dieses Belegs ist nicht mehr aktuell.",
+          403,
+        );
+    }
+  };
   const persist = <T>(
     operation: () => T | Promise<T>,
     request?: FastifyRequest,
@@ -758,6 +1225,13 @@ export function buildApp(
             "Befehls-ID wurde bereits mit einem anderen Inhalt verwendet.",
             409,
           );
+        if (!request)
+          throw new DomainError(
+            "AUTH_DENIED",
+            "Der Beleg kann ohne gebundenen Anfragekontext nicht gelesen werden.",
+            403,
+          );
+        await assertCommandReceiptReadable(request, committed);
         return JSON.parse(committed.payload) as T;
       }
       const before = service.checkpoint();
@@ -771,6 +1245,11 @@ export function buildApp(
             ...command,
             statusCode,
             payload,
+            authorization: commandReceiptAuthorization(
+              request!,
+              before,
+              result,
+            ),
           };
         if (stagedReceipt) service.recordCommandReceipt(stagedReceipt);
         const nextCheckpoint = service.checkpoint();
@@ -858,6 +1337,13 @@ export function buildApp(
             service.commandReceipt(command.key) ??
             (await workspace.loadCommandReceipt(command.key));
           if (recovered && recovered.requestHash === command.requestHash) {
+            if (!request)
+              throw new DomainError(
+                "AUTH_DENIED",
+                "Der Beleg kann ohne gebundenen Anfragekontext nicht gelesen werden.",
+                403,
+              );
+            await assertCommandReceiptReadable(request, recovered);
             service.recordCommandReceipt(recovered);
             committedCommandKeys.add(command.key);
             if (request?.method === "POST") publishInvalidation();
@@ -1146,78 +1632,22 @@ export function buildApp(
             operationalStore as OperationalStore & ProviderDeliveryStore,
             service.providerRegistry,
             {
-              workerId: `api-provider-${process.pid}`,
+              workerId: `api-provider-${workerGeneration}`,
               profile: service.providerProfile,
-              authorizeDelivery: (job) => {
-                const envelope = job.authorityEnvelope;
-                if (
-                  !job.acceptedCommandId ||
-                  !envelope ||
-                  envelope.acceptedCommandId !== job.acceptedCommandId ||
-                  envelope.organizationId !== siteConfiguration.institutionId ||
-                  envelope.siteId !== siteConfiguration.siteId ||
-                  envelope.departmentId !== siteConfiguration.department.id ||
-                  envelope.patientId !==
-                    job.payload.command.patientReference.slice(
-                      "Patient/".length,
-                    ) ||
-                  envelope.encounterId !==
-                    job.payload.command.encounterReference.slice(
-                      "Encounter/".length,
-                    )
-                )
-                  return {
-                    allowed: false,
-                    reason: "acceptance-envelope-invalid",
-                  };
-                try {
-                  const currentActor = service.user(String(envelope.actorId));
-                  if (currentActor.role !== envelope.actorRole)
-                    return { allowed: false, reason: "actor-role-revoked" };
-                  if (envelope.policyVersion !== runtimeSitePack.packDigest)
-                    return { allowed: false, reason: "policy-version-revoked" };
-                  const patient = service
-                    .snapshot(
-                      currentActor.id,
-                      String(envelope.purpose) as Purpose,
-                    )
-                    .patients.find(
-                      (candidate) => candidate.id === envelope.patientId,
-                    );
-                  if (!patient)
-                    return {
-                      allowed: false,
-                      reason: "care-relationship-revoked",
-                    };
-                  const actionByOperation: Record<string, Action> = {
-                    "Observation.write": "observation:approve",
-                    "NursingNote.write": "note:approve",
-                    "Task.write": "task:update",
-                    "Communication.write": "communication:create",
-                  };
-                  const action = actionByOperation[job.operation];
-                  if (
-                    !action ||
-                    !decide(
-                      currentActor,
-                      action,
-                      String(envelope.purpose) as Purpose,
-                      patient,
-                    ).allow
-                  )
-                    return { allowed: false, reason: "permission-revoked" };
-                } catch {
-                  return { allowed: false, reason: "actor-revoked" };
-                }
-                return { allowed: true };
-              },
+              batchSize: 1,
+              authorizeDelivery: (job) =>
+                authorizeProviderDispatch(
+                  service,
+                  runtimeSitePack.packDigest,
+                  job,
+                ),
             },
           )
         : null;
     const clinicalProjectionWorker =
       runtime.profile !== "memory-demo"
         ? new ClinicalProjectionWorker(operationalStore, workspace, {
-            workerId: `api-medplum-${process.pid}`,
+            workerId: `api-medplum-${workerGeneration}`,
           })
         : null;
     const providerWorkerTimer = setInterval(() => {
@@ -1426,16 +1856,23 @@ export function buildApp(
         "Befehls-ID wurde bereits mit einem anderen Inhalt verwendet.",
         409,
       );
-    if (cached)
-      return reply
-        .code(cached.statusCode)
-        .type("application/json; charset=utf-8")
-        .send(cached.payload);
-    const accepted = await operationalStore.loadAcceptedCommandReceipt(
-      key,
-      requestHash,
-    );
-    if (accepted) return reply.code(accepted.statusCode).send(accepted.payload);
+    if (route === "/api/v1/assistant/intents/:token/execute") {
+      const accepted = await operationalStore.loadAcceptedCommandReceipt(
+        key,
+        requestHash,
+      );
+      if (accepted) {
+        await assertAcceptedReceiptReadable(actorId, accepted.authorization);
+        return reply.code(accepted.statusCode).send(accepted.payload);
+      }
+      if (cached) {
+        await assertCommandReceiptReadable(request, cached);
+        return reply
+          .code(cached.statusCode)
+          .type("application/json; charset=utf-8")
+          .send(cached.payload);
+      }
+    }
     requestCommandKeys.set(request, { key, requestHash });
   });
 
@@ -1916,7 +2353,7 @@ export function buildApp(
             });
           if (receipt.replayed) service.audit.truncate(auditLength);
           publishInvalidation();
-          return receipt;
+          return { ...receipt, replayed: false };
         } catch (error) {
           service.audit.truncate(auditLength);
           throw error;
@@ -3022,7 +3459,60 @@ export function buildApp(
       },
     });
     let workday = await operationalStore.getWorkday(actorId, actor.role);
-    if (workday.handover.clinicalBound) return presentWorkday(workday);
+    const authorizedPatients = new Map(
+      service
+        .snapshot(actorId, actor.defaultPurpose)
+        .patients.map((patient) => [patient.id, patient]),
+    );
+    const referencedPatientIds = new Set([
+      ...workday.handover.patientIds,
+      ...workday.plan.map((item) => item.patientId),
+      ...workday.episodes.map((item) => item.patientId),
+      ...workday.incomingTransfers.map((item) => item.patientId),
+      ...workday.outgoingTransfers.map((item) => item.patientId),
+    ]);
+    if (
+      [...referencedPatientIds].some(
+        (patientId) => !authorizedPatients.has(patientId),
+      )
+    )
+      throw new DomainError(
+        "AUTH_DENIED",
+        "Ein Patientenkontext der Übergabe ist nicht mehr freigegeben.",
+        403,
+      );
+    if (workday.handover.clinicalBound) {
+      const encounterBindings = new Map<string, Set<string>>();
+      const bindEncounter = (patientId: string, encounterId: string | null) => {
+        if (!encounterId) return;
+        const bindings = encounterBindings.get(patientId) ?? new Set<string>();
+        bindings.add(encounterId);
+        encounterBindings.set(patientId, bindings);
+      };
+      for (const item of workday.handover.items)
+        bindEncounter(item.patientId, item.encounterId);
+      for (const episode of workday.episodes)
+        bindEncounter(episode.patientId, episode.encounterId);
+      if (
+        [...referencedPatientIds].some((patientId) => {
+          const currentEncounterId =
+            authorizedPatients.get(patientId)?.encounterId;
+          const boundEncounters = encounterBindings.get(patientId);
+          return (
+            !currentEncounterId ||
+            !boundEncounters ||
+            boundEncounters.size !== 1 ||
+            !boundEncounters.has(currentEncounterId)
+          );
+        })
+      )
+        throw new DomainError(
+          "AUTH_DENIED",
+          "Ein Fallkontext der Übergabe ist nicht mehr aktuell freigegeben.",
+          403,
+        );
+      return presentWorkday(workday);
+    }
     const snapshot = service.snapshot(actorId, actor.defaultPurpose);
     const patientById = new Map(
       snapshot.patients.map((patient) => [patient.id, patient]),
@@ -3258,8 +3748,7 @@ export function buildApp(
         z.object({ type: z.literal("close-shift") }).strict(),
       ])
       .parse(request.body) as WorkdayCommand;
-    if (command.type === "acknowledge-handover")
-      await boundClinicalWorkday(actorId);
+    await boundClinicalWorkday(actorId);
     if ("patientId" in command) {
       const allowedPatient = service
         .snapshot(actorId, actor.defaultPurpose)
@@ -4104,17 +4593,22 @@ export function buildApp(
     const reviewedSourceReadSet = parseSourceReadSetV1(
       durableIntent.sourceReadSet,
     );
+    const rejectStaleIntent = async (message: string): Promise<never> => {
+      await operationalStore.supersedeIntentAuthority(tokenHash);
+      throw new DomainError("VERSION_CONFLICT", message, 409);
+    };
     if (reviewedSourceReadSet.policyVersion !== runtimeSitePack.packDigest)
-      throw new DomainError(
-        "VERSION_CONFLICT",
+      return rejectStaleIntent(
         "Richtlinie oder Arbeitsablauf wurde seit dem Entwurf geändert. Bitte erneut prüfen.",
-        409,
       );
     let currentSourceReadSet: SourceReadSetV1;
     try {
       currentSourceReadSet =
         workspace.mode === "medplum"
-          ? await workspace.refreshSourceReadSet(reviewedSourceReadSet)
+          ? await workspace.refreshSourceReadSet(
+              reviewedSourceReadSet,
+              durableResources,
+            )
           : assistant.refreshMemorySourceReadSet(
               actorId,
               reviewedSourceReadSet,
@@ -4123,20 +4617,16 @@ export function buildApp(
       if (
         error instanceof Error &&
         (error.message.startsWith("SOURCE_READ_") ||
-          error.message === "MEDPLUM_RESOURCE_VERSION_MISSING")
+          error.message.startsWith("MEDPLUM_RESOURCE_VERSION_MISSING"))
       )
-        throw new DomainError(
-          "VERSION_CONFLICT",
+        return rejectStaleIntent(
           "Die gelesenen Quelldaten sind nicht mehr vollständig verfügbar. Bitte erneut prüfen.",
-          409,
         );
       throw error;
     }
     if (!sourceReadSetMatches(reviewedSourceReadSet, currentSourceReadSet))
-      throw new DomainError(
-        "VERSION_CONFLICT",
+      return rejectStaleIntent(
         "Die gelesenen Quelldaten haben sich seit dem Entwurf geändert. Bitte erneut prüfen.",
-        409,
       );
     if (
       runtime.profile !== "integrated-demo" &&
@@ -4317,6 +4807,7 @@ export function buildApp(
                       pending.idempotencyKey,
                   ),
               );
+            const acceptedAuditEntries = service.audit.slice(beforeAuditLength);
             const receipt = await operationalStore.acceptIntentCommand({
               tokenHash,
               actorId,
@@ -4334,9 +4825,11 @@ export function buildApp(
               statusCode: 200,
               resultPayload: result,
               selectedActionIds: execution.reviewedActionIds ?? [],
+              authorizationActions:
+                receiptActionsForAudit(acceptedAuditEntries),
               policyVersion: runtimeSitePack.packDigest,
               sourceReadSet: reviewedSourceReadSet,
-              auditEntries: service.audit.slice(beforeAuditLength),
+              auditEntries: acceptedAuditEntries,
               clinicalResources: changedResources,
               removedReferences,
               clinicalExpectedVersions,
@@ -4358,6 +4851,11 @@ export function buildApp(
               requestHash: command.requestHash,
               statusCode: receipt.statusCode,
               payload: JSON.stringify(receipt.payload),
+              authorization: commandReceiptAuthorization(
+                request,
+                beforeCheckpoint,
+                receipt.payload,
+              ),
             });
             service.retireAcceptedProviderCommands(
               providerCommands.map((pending) => pending.command.idempotencyKey),
@@ -4367,7 +4865,8 @@ export function buildApp(
             return receipt.payload;
           } catch (error) {
             service.restoreCheckpoint(beforeCheckpoint);
-            assistant.restoreDurableIntent(token, durableIntent);
+            if (!(isDomainError(error) && error.code === "VERSION_CONFLICT"))
+              assistant.restoreDurableIntent(token, durableIntent);
             throw error;
           }
         });
@@ -4375,9 +4874,13 @@ export function buildApp(
         executedResult = await persist(executeAuthorizedIntent, request);
       }
     } catch (error) {
-      if (runtime.profile !== "integrated-demo")
-        await operationalStore.releaseIntentAuthority(tokenHash);
-      assistant.restoreDurableIntent(token, durableIntent);
+      if (isDomainError(error) && error.code === "VERSION_CONFLICT")
+        await operationalStore.supersedeIntentAuthority(tokenHash);
+      else {
+        if (runtime.profile !== "integrated-demo")
+          await operationalStore.releaseIntentAuthority(tokenHash);
+        assistant.restoreDurableIntent(token, durableIntent);
+      }
       throw error;
     }
     if (

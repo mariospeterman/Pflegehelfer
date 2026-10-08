@@ -72,7 +72,7 @@ describe("persisted workspace collaboration", () => {
     expect(replay.statusCode).toBe(200);
     expect(replay.json()).toMatchObject({
       value: { id: commentId },
-      replayed: false,
+      replayed: true,
     });
 
     const visible = await app.inject({

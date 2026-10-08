@@ -1,6 +1,9 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { PassThrough } from "node:stream";
 import type { Observation, OutboxSummary } from "../src/core/types.js";
+import { PflegehelferService } from "../src/core/service.js";
+import { siteConfiguration } from "../src/core/site-config.js";
+import { InMemoryOperationalStore } from "../src/infrastructure/operational-store.js";
 import { buildApp } from "../src/server/app.js";
 
 const apps: ReturnType<typeof buildApp>[] = [];
@@ -265,6 +268,95 @@ describe("purpose-specific BFF", () => {
     expect(differentTarget.json()).toMatchObject({ error: "INVALID_STATE" });
   });
 
+  it("reauthorizes hot-cache receipt reads against the current patient relationship", async () => {
+    const service = new PflegehelferService();
+    const app = buildApp(service, { demoMode: true });
+    apps.push(app);
+    const headers = commandHeaders("u-assistant");
+    const first = await app.inject({
+      method: "POST",
+      url: "/api/v1/tasks/t-bp-anna/accept",
+      headers,
+      payload: {},
+    });
+    expect(first.statusCode).toBe(200);
+
+    const checkpoint = service.checkpoint();
+    checkpoint.state.users = checkpoint.state.users.map((user) =>
+      user.id === "u-assistant"
+        ? {
+            ...user,
+            patientIds: user.patientIds.filter((id) => id !== "p-anna"),
+          }
+        : user,
+    );
+    service.restoreCheckpoint(checkpoint);
+
+    const replay = await app.inject({
+      method: "POST",
+      url: "/api/v1/tasks/t-bp-anna/accept",
+      headers,
+      payload: {},
+    });
+    expect(replay.statusCode).toBe(403);
+    expect(replay.json()).toMatchObject({ error: "AUTH_DENIED" });
+  });
+
+  it("reauthorizes atomically accepted receipt reads before early replay", async () => {
+    const service = new PflegehelferService();
+    const store = new InMemoryOperationalStore();
+    vi.spyOn(store, "loadAcceptedCommandReceipt").mockResolvedValue({
+      id: crypto.randomUUID(),
+      statusCode: 200,
+      payload: { patientId: "p-anna", status: "pending-provider" },
+      replayed: true,
+      authorization: {
+        kind: "clinical-intent",
+        actorId: "u-nurse",
+        actorRole: "registered-nurse",
+        siteId: siteConfiguration.siteId,
+        departmentId: siteConfiguration.department.id,
+        purpose: "direct-care",
+        patientId: "p-anna",
+        encounterId: "enc-anna-2026",
+        sessionId: crypto.randomUUID(),
+        threadId: crypto.randomUUID(),
+        contextRevision: 1,
+        actions: ["patient:read", "note:draft"],
+      },
+    });
+    const checkpoint = service.checkpoint();
+    checkpoint.state.users = checkpoint.state.users.map((user) =>
+      user.id === "u-nurse"
+        ? {
+            ...user,
+            patientIds: user.patientIds.filter((id) => id !== "p-anna"),
+          }
+        : user,
+    );
+    service.restoreCheckpoint(checkpoint);
+    const app = buildApp(service, {
+      demoMode: true,
+      operationalStore: store,
+    });
+    apps.push(app);
+
+    const replay = await app.inject({
+      method: "POST",
+      url: `/api/v1/assistant/intents/${"a".repeat(64)}/execute`,
+      headers: commandHeaders("u-nurse"),
+      payload: {
+        patientId: "p-anna",
+        encounterId: "enc-anna-2026",
+        purpose: "direct-care",
+        resourceVersion: 1,
+        explicitlyConfirmed: true,
+      },
+    });
+    expect(replay.statusCode).toBe(403);
+    expect(replay.json()).toMatchObject({ error: "AUTH_DENIED" });
+  });
+
   it("keeps treatment instructions out of the generic task endpoint", async () => {
     const app = buildApp(undefined, { demoMode: true });
     apps.push(app);
@@ -517,6 +609,41 @@ describe("purpose-specific BFF", () => {
     });
     expect(mismatchedReplay.statusCode).toBe(409);
     expect(mismatchedReplay.json()).toMatchObject({ error: "INVALID_STATE" });
+  });
+
+  it("reauthorizes patientless receipt actions against the current device policy", async () => {
+    const service = new PflegehelferService();
+    const app = buildApp(service, { demoMode: true });
+    apps.push(app);
+    const commandId = crypto.randomUUID();
+    const request = {
+      method: "POST" as const,
+      url: "/api/v1/tasks",
+      headers: {
+        "x-demo-user": "u-nurse",
+        "x-command-id": commandId,
+      },
+      payload: {
+        patientId: null,
+        title: "Dienstübergabe vorbereiten",
+        reason: "Administrative Vorbereitung",
+        ownerRole: "registered-nurse",
+        priority: "routine",
+        dueAt: "2026-10-08T18:00:00.000Z",
+        purpose: "direct-care",
+      },
+    };
+    expect((await app.inject(request)).statusCode).toBe(201);
+
+    const checkpoint = service.checkpoint();
+    checkpoint.state.users = checkpoint.state.users.map((user) =>
+      user.id === "u-nurse" ? { ...user, managedDevice: false } : user,
+    );
+    service.restoreCheckpoint(checkpoint);
+
+    const replay = await app.inject(request);
+    expect(replay.statusCode).toBe(403);
+    expect(replay.json()).toMatchObject({ error: "AUTH_DENIED" });
   });
 
   it("restores only the actor-bound short-lived shift conversation", async () => {

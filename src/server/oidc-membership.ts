@@ -53,6 +53,31 @@ export async function provisionOidcMemberships(
   try {
     await client.query("BEGIN");
     for (const membership of memberships) {
+      const existing = await client.query<{
+        actor_id: string;
+        membership_version: string;
+        policy_version: string;
+        active: boolean;
+      }>(
+        `SELECT actor_id,membership_version::text,policy_version,active
+         FROM oidc_principal_memberships
+         WHERE organization_id=$1 AND issuer=$2 AND subject=$3
+         FOR UPDATE`,
+        [membership.organizationId, membership.issuer, membership.subject],
+      );
+      const prior = existing.rows[0];
+      const priorVersion = prior ? Number(prior.membership_version) : 0;
+      const authorizationChanged = Boolean(
+        prior &&
+        (prior.actor_id !== membership.actorId ||
+          prior.policy_version !== membership.policyVersion ||
+          prior.active !== membership.active),
+      );
+      const effectiveVersion = prior
+        ? authorizationChanged
+          ? Math.max(priorVersion + 1, membership.membershipVersion)
+          : Math.max(priorVersion, membership.membershipVersion)
+        : membership.membershipVersion;
       await client.query(
         `INSERT INTO oidc_principal_memberships
            (organization_id,issuer,subject,actor_id,membership_version,
@@ -72,15 +97,24 @@ export async function provisionOidcMemberships(
           membership.issuer,
           membership.subject,
           membership.actorId,
-          membership.membershipVersion,
+          effectiveVersion,
           membership.policyVersion,
           membership.active,
         ],
       );
-      // Existing sessions become unusable immediately because authentication
-      // joins the exact actor/membership/policy revision. Keeping the immutable
-      // historical row avoids requiring the migration principal to bypass the
-      // FORCE-RLS session table merely to annotate the invalidation.
+      if (prior && effectiveVersion !== priorVersion)
+        await client.query(
+          `UPDATE oidc_sessions
+           SET revoked_at=COALESCE(revoked_at,clock_timestamp()),
+               revocation_reason=COALESCE(revocation_reason,'membership-revision')
+           WHERE organization_id=$1 AND issuer=$2 AND subject=$3
+             AND revoked_at IS NULL`,
+          [membership.organizationId, membership.issuer, membership.subject],
+        );
+      // A deactivate/reactivate cycle, actor reassignment or policy change
+      // always advances the server-owned revision even when the deployment
+      // input repeats an old value. Old sessions are also terminally marked;
+      // they can therefore never become valid again after later provisioning.
     }
     await client.query("COMMIT");
   } catch (error) {

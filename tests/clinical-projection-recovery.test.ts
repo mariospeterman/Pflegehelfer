@@ -65,6 +65,7 @@ async function queueSyntheticProjection(store: InMemoryOperationalStore) {
     statusCode: 200,
     resultPayload: { queued: true },
     selectedActionIds: ["action-1"],
+    authorizationActions: ["patient:read", "note:draft"],
     policyVersion: "test-policy-v1",
     sourceReadSet,
     auditEntries: [],

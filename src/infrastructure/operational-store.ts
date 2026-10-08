@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { Resource } from "@medplum/fhirtypes";
 import pg from "pg";
+import { z } from "zod";
 import { workflowForRole, type WorkflowDefinition } from "../core/workflows.js";
 import type { DurableIntentRecord } from "../core/assistant.js";
 import {
@@ -37,7 +38,11 @@ import type {
   WorkdayView,
   WorkEpisodeView,
 } from "../core/workday.js";
-import { siteConfiguration } from "../core/site-config.js";
+import {
+  actionSchema,
+  siteConfiguration,
+  type Action,
+} from "../core/site-config.js";
 import {
   activeNursingAssignment,
   activeStaffAssignment,
@@ -272,6 +277,22 @@ export interface AcceptedCommandReceipt {
   statusCode: number;
   payload: unknown;
   replayed: boolean;
+  authorization: AcceptedCommandAuthorization;
+}
+
+export interface AcceptedCommandAuthorization {
+  kind: "clinical-intent";
+  actorId: string;
+  actorRole: Role;
+  siteId: string;
+  departmentId: string;
+  purpose: Purpose;
+  patientId: string;
+  encounterId: string;
+  sessionId: string;
+  threadId: string;
+  contextRevision: number;
+  actions: Action[];
 }
 
 export interface LocalIntentAcceptance {
@@ -291,6 +312,7 @@ export interface LocalIntentAcceptance {
   statusCode: number;
   resultPayload: unknown;
   selectedActionIds: string[];
+  authorizationActions: Action[];
   policyVersion: string;
   sourceReadSet: SourceReadSetV1;
   auditEntries: AuditEntry[];
@@ -539,12 +561,20 @@ export interface OperationalStore {
     commandKey: string,
     requestHash: string,
   ): Promise<AcceptedCommandReceipt | null>;
+  isAcceptedCommandReceiptCurrent(
+    authorization: AcceptedCommandAuthorization,
+  ): Promise<boolean>;
   loadLatestAcceptedCheckpoint(): Promise<ServiceCheckpoint | null>;
   claimClinicalProjection(input: {
     workerId: string;
     leaseDurationMs: number;
     now?: Date;
   }): Promise<ClinicalProjectionJob | null>;
+  renewClinicalProjection(input: {
+    jobId: string;
+    workerId: string;
+    leaseDurationMs: number;
+  }): Promise<boolean>;
   finishClinicalProjection(input: {
     jobId: string;
     workerId: string;
@@ -642,6 +672,7 @@ export interface OperationalStore {
     }>
   >;
   releaseIntentAuthority(tokenHash: string): Promise<void>;
+  supersedeIntentAuthority(tokenHash: string): Promise<void>;
   revokeResponseAuthorities(actorId: string, responseId: string): Promise<void>;
   suspendActorAuthorities(actorId: string): Promise<void>;
   suspendAssistantContextAuthorities(
@@ -706,6 +737,7 @@ export class InMemoryOperationalStore implements OperationalStore {
       reviewItems: Array<{ id: string; label: string; kind: string }>;
       clientContextId: string | null;
       consumed: boolean;
+      accepted: boolean;
       revision: number;
       proposalStatus: "pending" | "superseded" | "consumed" | "expired";
     }
@@ -721,6 +753,10 @@ export class InMemoryOperationalStore implements OperationalStore {
   private readonly acceptedCommands = new Map<
     string,
     { requestHash: string; receipt: AcceptedCommandReceipt }
+  >();
+  private readonly workspaceCommandReceipts = new Map<
+    string,
+    { requestHash: string; payload: unknown }
   >();
   private readonly assistantRequests = new Map<
     string,
@@ -1664,6 +1700,7 @@ export class InMemoryOperationalStore implements OperationalStore {
         }>,
         clientContextId: input.clientContextId ?? null,
         consumed: false,
+        accepted: false,
         revision: Math.max(0, ...related.map(({ revision }) => revision)) + 1,
         proposalStatus: "pending",
       });
@@ -1762,6 +1799,7 @@ export class InMemoryOperationalStore implements OperationalStore {
         candidate.responseId === authority.responseId
       ) {
         candidate.consumed = true;
+        candidate.accepted = true;
         candidate.proposalStatus = "consumed";
       }
     const receipt: AcceptedCommandReceipt = {
@@ -1769,6 +1807,20 @@ export class InMemoryOperationalStore implements OperationalStore {
       statusCode: input.statusCode,
       payload: structuredClone(input.resultPayload),
       replayed: false,
+      authorization: {
+        kind: "clinical-intent",
+        actorId: input.actorId,
+        actorRole: input.actorRole,
+        siteId: siteConfiguration.siteId,
+        departmentId,
+        purpose: input.purpose,
+        patientId: input.patientId,
+        encounterId: input.encounterId,
+        sessionId: input.sessionId,
+        threadId: input.threadId,
+        contextRevision: input.contextRevision,
+        actions: [...input.authorizationActions],
+      },
     };
     this.acceptedCommands.set(input.commandKey, {
       requestHash: input.requestHash,
@@ -1808,6 +1860,26 @@ export class InMemoryOperationalStore implements OperationalStore {
       replayed: true,
     });
   }
+  isAcceptedCommandReceiptCurrent(
+    authorization: AcceptedCommandAuthorization,
+  ): Promise<boolean> {
+    const session = this.sessions.get(authorization.actorId);
+    const thread = this.memoryThreads.get(authorization.threadId);
+    return Promise.resolve(
+      Boolean(
+        session &&
+        session.id === authorization.sessionId &&
+        session.threadId === authorization.threadId &&
+        session.status === "active" &&
+        session.effectiveRole === authorization.actorRole &&
+        thread &&
+        thread.actorId === authorization.actorId &&
+        thread.patientId === authorization.patientId &&
+        thread.encounterId === authorization.encounterId &&
+        thread.contextRevision >= authorization.contextRevision,
+      ),
+    );
+  }
   loadLatestAcceptedCheckpoint(): Promise<ServiceCheckpoint | null> {
     const latest = this.clinicalProjectionJobs.at(-1);
     return Promise.resolve(latest ? structuredClone(latest.checkpoint) : null);
@@ -1832,6 +1904,17 @@ export class InMemoryOperationalStore implements OperationalStore {
     job.lastErrorCode = null;
     job.attempts += 1;
     return Promise.resolve(structuredClone(job));
+  }
+  renewClinicalProjection(input: {
+    jobId: string;
+    workerId: string;
+    leaseDurationMs: number;
+  }): Promise<boolean> {
+    const job = this.clinicalProjectionJobs.find(
+      (candidate) =>
+        candidate.id === input.jobId && candidate.leaseOwner === input.workerId,
+    );
+    return Promise.resolve(Boolean(job));
   }
   finishClinicalProjection(input: {
     jobId: string;
@@ -1909,7 +1992,7 @@ export class InMemoryOperationalStore implements OperationalStore {
           403,
         ),
       );
-    const prior = this.acceptedCommands.get(input.commandKey);
+    const prior = this.workspaceCommandReceipts.get(input.commandKey);
     if (prior) {
       if (prior.requestHash !== input.requestHash)
         return Promise.reject(
@@ -1921,7 +2004,7 @@ export class InMemoryOperationalStore implements OperationalStore {
         );
       return Promise.resolve({
         ...(structuredClone(
-          prior.receipt.payload,
+          prior.payload,
         ) as ClinicalProjectionRecoveryReceipt),
         replayed: true,
       });
@@ -1951,14 +2034,9 @@ export class InMemoryOperationalStore implements OperationalStore {
     };
     head.state = "retry";
     head.leaseOwner = null;
-    this.acceptedCommands.set(input.commandKey, {
+    this.workspaceCommandReceipts.set(input.commandKey, {
       requestHash: input.requestHash,
-      receipt: {
-        id: randomUUID(),
-        statusCode: 200,
-        payload: structuredClone(result),
-        replayed: false,
-      },
+      payload: structuredClone(result),
     });
     const id = (this.uiEvents.at(-1)?.id ?? 0) + 1;
     this.uiEvents.push({
@@ -2307,7 +2385,7 @@ export class InMemoryOperationalStore implements OperationalStore {
     commandKey: string,
     requestHash: string,
   ): WorkspaceMutationResult<T> | null {
-    const stored = this.acceptedCommands.get(commandKey);
+    const stored = this.workspaceCommandReceipts.get(commandKey);
     if (!stored) return null;
     if (stored.requestHash !== requestHash)
       throw new DomainError(
@@ -2315,7 +2393,7 @@ export class InMemoryOperationalStore implements OperationalStore {
         "Befehls-ID wurde bereits mit einem anderen Inhalt verwendet.",
         409,
       );
-    const payload = stored.receipt.payload as WorkspaceMutationResult<T> | T;
+    const payload = stored.payload as WorkspaceMutationResult<T> | T;
     return {
       value: structuredClone(
         typeof payload === "object" &&
@@ -2333,21 +2411,28 @@ export class InMemoryOperationalStore implements OperationalStore {
     requestHash: string,
     payload: unknown,
   ): void {
-    this.acceptedCommands.set(commandKey, {
+    this.workspaceCommandReceipts.set(commandKey, {
       requestHash,
-      receipt: {
-        id: commandKey,
-        statusCode: 200,
-        payload: structuredClone({ value: payload, replayed: false }),
-        replayed: false,
-      },
+      payload: structuredClone({ value: payload, replayed: false }),
     });
   }
   releaseIntentAuthority(tokenHash: string): Promise<void> {
     const authority = this.authorities.get(tokenHash);
-    if (authority && authority.record.expiresAt >= Date.now()) {
+    if (
+      authority &&
+      !authority.accepted &&
+      authority.record.expiresAt >= Date.now()
+    ) {
       authority.consumed = false;
       authority.proposalStatus = "pending";
+    }
+    return Promise.resolve();
+  }
+  supersedeIntentAuthority(tokenHash: string): Promise<void> {
+    const authority = this.authorities.get(tokenHash);
+    if (authority && !authority.accepted) {
+      authority.consumed = true;
+      authority.proposalStatus = "superseded";
     }
     return Promise.resolve();
   }
@@ -2478,6 +2563,7 @@ export class InMemoryOperationalStore implements OperationalStore {
     this.authorities.clear();
     this.voiceAuthorities.clear();
     this.acceptedCommands.clear();
+    this.workspaceCommandReceipts.clear();
     this.clinicalProjectionJobs.splice(0, this.clinicalProjectionJobs.length);
     this.workspaceComments.clear();
     this.workspaceCommentReads.clear();
@@ -4794,8 +4880,26 @@ export class PostgresOperationalStore
         request_hash: string;
         status_code: number;
         result_payload: unknown;
+        actor_id: string;
+        actor_role: Role;
+        site_id: string;
+        department_id: string;
+        purpose: Purpose;
+        patient_id: string;
+        encounter_id: string;
+        session_id: string;
+        thread_id: string;
+        context_revision: number;
+        authorization_actions: unknown;
       }>(
-        `SELECT id::text,request_hash,status_code,result_payload
+        `SELECT id::text,request_hash,status_code,result_payload,actor_id,
+                actor_role,site_id,department_id,purpose,patient_id,encounter_id,
+                session_id::text,thread_id::text,context_revision,
+                COALESCE((SELECT cr.result_ref->'authorization'->'actions'
+                  FROM command_receipts cr
+                  WHERE cr.organization_id=accepted_commands.organization_id
+                    AND cr.command_key=accepted_commands.command_key
+                  LIMIT 1),'[]'::jsonb) AS authorization_actions
          FROM accepted_commands
          WHERE organization_id=$1 AND command_key=$2 FOR UPDATE`,
         [organizationId, input.commandKey],
@@ -4813,6 +4917,22 @@ export class PostgresOperationalStore
           statusCode: prior.rows[0].status_code,
           payload: structuredClone(prior.rows[0].result_payload),
           replayed: true,
+          authorization: {
+            kind: "clinical-intent",
+            actorId: prior.rows[0].actor_id,
+            actorRole: prior.rows[0].actor_role,
+            siteId: prior.rows[0].site_id,
+            departmentId: prior.rows[0].department_id,
+            purpose: prior.rows[0].purpose,
+            patientId: prior.rows[0].patient_id,
+            encounterId: prior.rows[0].encounter_id,
+            sessionId: prior.rows[0].session_id,
+            threadId: prior.rows[0].thread_id,
+            contextRevision: Number(prior.rows[0].context_revision),
+            actions: z
+              .array(actionSchema)
+              .parse(prior.rows[0].authorization_actions),
+          },
         };
       }
       if (input.clientContextId) {
@@ -4946,6 +5066,26 @@ export class PostgresOperationalStore
         );
 
       const acceptedCommandId = randomUUID();
+      const authorityEnvelope = {
+        kind: "clinical-intent" as const,
+        acceptedCommandId,
+        organizationId,
+        siteId: siteConfiguration.siteId,
+        departmentId,
+        actorId: input.actorId,
+        actorRole: input.actorRole,
+        purpose: input.purpose,
+        patientId: input.patientId,
+        encounterId: input.encounterId,
+        sessionId: input.sessionId,
+        threadId: input.threadId,
+        contextRevision: input.contextRevision,
+        actions: [...input.authorizationActions],
+        proposalRevisionId: bound.proposal_revision_id,
+        proposalHash: bound.proposal_hash,
+        policyVersion: input.policyVersion,
+        acceptedAt: new Date().toISOString(),
+      };
       await client.query(
         `INSERT INTO accepted_commands
            (organization_id,id,command_key,request_hash,actor_id,actor_role,site_id,
@@ -5013,6 +5153,7 @@ export class PostgresOperationalStore
           JSON.stringify({
             acceptedCommandId,
             payload: input.resultPayload,
+            authorization: authorityEnvelope,
           }),
         ],
       );
@@ -5180,24 +5321,6 @@ export class PostgresOperationalStore
           }),
         ],
       );
-      const authorityEnvelope = {
-        acceptedCommandId,
-        organizationId,
-        siteId: siteConfiguration.siteId,
-        departmentId,
-        actorId: input.actorId,
-        actorRole: input.actorRole,
-        purpose: input.purpose,
-        patientId: input.patientId,
-        encounterId: input.encounterId,
-        sessionId: input.sessionId,
-        threadId: input.threadId,
-        contextRevision: input.contextRevision,
-        proposalRevisionId: bound.proposal_revision_id,
-        proposalHash: bound.proposal_hash,
-        policyVersion: input.policyVersion,
-        acceptedAt: new Date().toISOString(),
-      };
       for (const pending of input.providerCommands) {
         const payload = providerOutboxPayloadSchema.parse({
           schemaVersion: 1,
@@ -5208,8 +5331,8 @@ export class PostgresOperationalStore
         const inserted = await client.query(
           `INSERT INTO provider_outbox
              (organization_id,id,provider_id,profile_id,operation,idempotency_key,
-              payload,state,accepted_command_id,authority_envelope)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,'pending',$8,$9)
+              payload,state,accepted_command_id,authority_envelope,target_key)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,'pending',$8,$9,$10)
            ON CONFLICT (organization_id,provider_id,profile_id,idempotency_key)
            DO NOTHING RETURNING id`,
           [
@@ -5222,6 +5345,7 @@ export class PostgresOperationalStore
             payload,
             acceptedCommandId,
             authorityEnvelope,
+            `${pending.provider}:${pending.profile}:${pending.command.resource.resourceType}/${pending.command.resource.id}`,
           ],
         );
         if (!inserted.rowCount) {
@@ -5248,6 +5372,20 @@ export class PostgresOperationalStore
         statusCode: input.statusCode,
         payload: structuredClone(input.resultPayload),
         replayed: false,
+        authorization: {
+          kind: "clinical-intent",
+          actorId: input.actorId,
+          actorRole: input.actorRole,
+          siteId: siteConfiguration.siteId,
+          departmentId,
+          purpose: input.purpose,
+          patientId: input.patientId,
+          encounterId: input.encounterId,
+          sessionId: input.sessionId,
+          threadId: input.threadId,
+          contextRevision: input.contextRevision,
+          actions: [...input.authorizationActions],
+        },
       };
     } catch (error) {
       await client.query("ROLLBACK");
@@ -5265,8 +5403,26 @@ export class PostgresOperationalStore
       request_hash: string;
       status_code: number;
       result_payload: unknown;
+      actor_id: string;
+      actor_role: Role;
+      site_id: string;
+      department_id: string;
+      purpose: Purpose;
+      patient_id: string;
+      encounter_id: string;
+      session_id: string;
+      thread_id: string;
+      context_revision: number;
+      authorization_actions: unknown;
     }>(
-      `SELECT id::text,request_hash,status_code,result_payload
+      `SELECT id::text,request_hash,status_code,result_payload,actor_id,
+              actor_role,site_id,department_id,purpose,patient_id,encounter_id,
+              session_id::text,thread_id::text,context_revision,
+              COALESCE((SELECT cr.result_ref->'authorization'->'actions'
+                FROM command_receipts cr
+                WHERE cr.organization_id=accepted_commands.organization_id
+                  AND cr.command_key=accepted_commands.command_key
+                LIMIT 1),'[]'::jsonb) AS authorization_actions
        FROM accepted_commands WHERE organization_id=$1 AND command_key=$2`,
       [organizationId, commandKey],
     );
@@ -5275,7 +5431,11 @@ export class PostgresOperationalStore
       const operational = await this.pool.query<{
         request_hash: string;
         status_code: number;
-        result_ref: { acceptedCommandId?: unknown; payload?: unknown };
+        result_ref: {
+          acceptedCommandId?: unknown;
+          payload?: unknown;
+          authorization?: unknown;
+        };
       }>(
         `SELECT request_hash,status_code,result_ref
          FROM command_receipts
@@ -5290,6 +5450,29 @@ export class PostgresOperationalStore
           "Befehls-ID wurde bereits mit einem anderen Inhalt verwendet.",
           409,
         );
+      const authorization = z
+        .object({
+          kind: z.literal("clinical-intent"),
+          actorId: z.string().min(1),
+          actorRole: z.custom<Role>(),
+          siteId: z.string().min(1),
+          departmentId: z.string().min(1),
+          purpose: z.custom<Purpose>(),
+          patientId: z.string().min(1),
+          encounterId: z.string().min(1),
+          sessionId: z.string().min(1),
+          threadId: z.string().min(1),
+          contextRevision: z.number().int().nonnegative(),
+          actions: z.array(actionSchema).min(1),
+        })
+        .passthrough()
+        .safeParse(receipt.result_ref?.authorization);
+      if (!authorization.success)
+        throw new DomainError(
+          "AUTH_DENIED",
+          "Die aktuelle Leseberechtigung für diesen Beleg ist nicht nachweisbar.",
+          403,
+        );
       return {
         id:
           typeof receipt.result_ref?.acceptedCommandId === "string"
@@ -5298,6 +5481,7 @@ export class PostgresOperationalStore
         statusCode: receipt.status_code,
         payload: structuredClone(receipt.result_ref?.payload),
         replayed: true,
+        authorization: authorization.data,
       };
     }
     if (row.request_hash !== requestHash)
@@ -5311,7 +5495,51 @@ export class PostgresOperationalStore
       statusCode: row.status_code,
       payload: structuredClone(row.result_payload),
       replayed: true,
+      authorization: {
+        kind: "clinical-intent",
+        actorId: row.actor_id,
+        actorRole: row.actor_role,
+        siteId: row.site_id,
+        departmentId: row.department_id,
+        purpose: row.purpose,
+        patientId: row.patient_id,
+        encounterId: row.encounter_id,
+        sessionId: row.session_id,
+        threadId: row.thread_id,
+        contextRevision: Number(row.context_revision),
+        actions: z.array(actionSchema).parse(row.authorization_actions),
+      },
     };
+  }
+  async isAcceptedCommandReceiptCurrent(
+    authorization: AcceptedCommandAuthorization,
+  ): Promise<boolean> {
+    const result = await this.pool.query(
+      `SELECT 1
+       FROM assistant_threads t
+       JOIN working_sessions s
+         ON s.organization_id=t.organization_id AND s.id=$2
+       WHERE t.organization_id=$1 AND t.id=$3
+         AND t.actor_id=$4 AND t.effective_role=$5
+         AND t.site_id=$6 AND t.department_id=$7
+         AND t.patient_id=$8 AND t.subject_encounter_id=$9
+         AND t.context_revision >= $10 AND t.expires_at > now()
+         AND s.actor_id=$4 AND s.effective_role=$5 AND s.department_id=$7
+         AND s.assistant_thread_id=t.id AND s.status='active'`,
+      [
+        organizationId,
+        authorization.sessionId,
+        authorization.threadId,
+        authorization.actorId,
+        authorization.actorRole,
+        authorization.siteId,
+        authorization.departmentId,
+        authorization.patientId,
+        authorization.encounterId,
+        authorization.contextRevision,
+      ],
+    );
+    return result.rowCount === 1;
   }
   async loadLatestAcceptedCheckpoint(): Promise<ServiceCheckpoint | null> {
     const result = await this.pool.query<{
@@ -5334,8 +5562,12 @@ export class PostgresOperationalStore
     leaseDurationMs: number;
     now?: Date;
   }): Promise<ClinicalProjectionJob | null> {
-    const now = input.now ?? new Date();
-    const leaseExpiresAt = new Date(now.getTime() + input.leaseDurationMs);
+    if (
+      !Number.isInteger(input.leaseDurationMs) ||
+      input.leaseDurationMs < 1_000 ||
+      input.leaseDurationMs > 5 * 60_000
+    )
+      throw new Error("INVALID_CLINICAL_PROJECTION_LEASE_DURATION");
     const result = await this.pool.query<{
       id: string;
       accepted_command_id: string;
@@ -5351,8 +5583,8 @@ export class PostgresOperationalStore
       `WITH candidate AS (
          SELECT o.organization_id,o.id FROM clinical_projection_outbox o
          WHERE o.organization_id=$1 AND (
-           (o.state IN ('pending','retry') AND o.next_attempt_at <= $2)
-           OR (o.state='leased' AND o.lease_expires_at <= $2)
+           (o.state IN ('pending','retry') AND o.next_attempt_at <= clock_timestamp())
+           OR (o.state='leased' AND o.lease_expires_at <= clock_timestamp())
          ) AND NOT EXISTS (
            SELECT 1 FROM clinical_projection_outbox earlier
            WHERE earlier.organization_id=o.organization_id
@@ -5363,13 +5595,14 @@ export class PostgresOperationalStore
          ORDER BY o.created_at,o.id FOR UPDATE SKIP LOCKED LIMIT 1
        )
        UPDATE clinical_projection_outbox o
-       SET state='leased',attempts=o.attempts+1,lease_owner=$3,
-           lease_expires_at=$4,last_error_class=NULL
+       SET state='leased',attempts=o.attempts+1,lease_owner=$2,
+           lease_expires_at=clock_timestamp()+($3::integer * interval '1 millisecond'),
+           last_error_class=NULL
        FROM candidate c
        WHERE o.organization_id=c.organization_id AND o.id=c.id
        RETURNING o.id::text,o.accepted_command_id::text,o.idempotency_key,
                  o.payload,o.attempts`,
-      [organizationId, now, input.workerId, leaseExpiresAt],
+      [organizationId, input.workerId, input.leaseDurationMs],
     );
     const row = result.rows[0];
     if (!row) return null;
@@ -5426,6 +5659,7 @@ export class PostgresOperationalStore
          SET state='delivered',lease_owner=NULL,lease_expires_at=NULL,
              delivered_at=now(),last_error_class=NULL
          WHERE organization_id=$1 AND id=$2 AND state='leased' AND lease_owner=$3
+           AND lease_expires_at > clock_timestamp()
          RETURNING accepted_command_id
        )
        UPDATE accepted_commands a SET state=CASE
@@ -5462,6 +5696,7 @@ export class PostgresOperationalStore
          SET state=$4,next_attempt_at=COALESCE($5,next_attempt_at),
              lease_owner=NULL,lease_expires_at=NULL,last_error_class=$6
          WHERE organization_id=$1 AND id=$2 AND state='leased' AND lease_owner=$3
+           AND lease_expires_at > clock_timestamp()
          RETURNING accepted_command_id
        ), marked AS (
          UPDATE accepted_commands a SET state='manual-review'
@@ -5482,6 +5717,27 @@ export class PostgresOperationalStore
     );
     if (result.rowCount !== 1)
       throw new Error("CLINICAL_PROJECTION_LEASE_LOST");
+  }
+  async renewClinicalProjection(input: {
+    jobId: string;
+    workerId: string;
+    leaseDurationMs: number;
+  }): Promise<boolean> {
+    if (
+      !Number.isInteger(input.leaseDurationMs) ||
+      input.leaseDurationMs < 1_000 ||
+      input.leaseDurationMs > 5 * 60_000
+    )
+      throw new Error("INVALID_CLINICAL_PROJECTION_LEASE_DURATION");
+    const result = await this.pool.query(
+      `UPDATE clinical_projection_outbox
+       SET lease_expires_at=clock_timestamp()+($4::integer * interval '1 millisecond')
+       WHERE organization_id=$1 AND id=$2 AND state='leased' AND lease_owner=$3
+         AND lease_expires_at > clock_timestamp()
+       RETURNING id`,
+      [organizationId, input.jobId, input.workerId, input.leaseDurationMs],
+    );
+    return result.rowCount === 1;
   }
   async manualClinicalProjectionHead(): Promise<ManualClinicalProjectionHold | null> {
     const result = await this.pool.query<{
@@ -6207,20 +6463,100 @@ export class PostgresOperationalStore
     });
   }
   async releaseIntentAuthority(tokenHash: string): Promise<void> {
-    await this.pool.query(
-      `WITH released AS (
-         UPDATE safety_authority SET consumed_at=NULL
-         WHERE organization_id=$1 AND token_hash=$2 AND authority_type='intent'
-           AND consumed_at IS NOT NULL AND expires_at > now()
-         RETURNING proposal_revision_id
-       )
-       UPDATE assistant_proposal_revisions p
-       SET status='pending',consumed_at=NULL
-       FROM released
-       WHERE p.organization_id=$1 AND p.id=released.proposal_revision_id
-         AND p.status='consumed'`,
-      [organizationId, tokenHash],
-    );
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const locked = await client.query<{ proposal_revision_id: string }>(
+        `SELECT a.proposal_revision_id::text
+         FROM safety_authority a
+         JOIN assistant_proposal_revisions p
+           ON p.organization_id=a.organization_id AND p.id=a.proposal_revision_id
+         WHERE a.organization_id=$1 AND a.token_hash=$2
+           AND a.authority_type='intent' AND a.consumed_at IS NOT NULL
+           AND a.expires_at > now() AND p.status='consumed'
+         FOR UPDATE OF a,p`,
+        [organizationId, tokenHash],
+      );
+      const proposalRevisionId = locked.rows[0]?.proposal_revision_id;
+      if (proposalRevisionId) {
+        const accepted = await client.query(
+          `SELECT 1 FROM accepted_commands
+           WHERE organization_id=$1 AND proposal_revision_id=$2 LIMIT 1`,
+          [organizationId, proposalRevisionId],
+        );
+        if (!accepted.rowCount) {
+          await client.query(
+            `UPDATE safety_authority SET consumed_at=NULL
+             WHERE organization_id=$1 AND token_hash=$2
+               AND authority_type='intent'`,
+            [organizationId, tokenHash],
+          );
+          await client.query(
+            `UPDATE assistant_proposal_revisions
+             SET status='pending',consumed_at=NULL
+             WHERE organization_id=$1 AND id=$2 AND status='consumed'`,
+            [organizationId, proposalRevisionId],
+          );
+        }
+      }
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+  async supersedeIntentAuthority(tokenHash: string): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const locked = await client.query<{ proposal_revision_id: string }>(
+        `SELECT a.proposal_revision_id::text
+         FROM safety_authority a
+         JOIN assistant_proposal_revisions p
+           ON p.organization_id=a.organization_id AND p.id=a.proposal_revision_id
+         WHERE a.organization_id=$1 AND a.token_hash=$2
+           AND a.authority_type='intent'
+           AND p.status IN ('pending','consumed')
+         FOR UPDATE OF a,p`,
+        [organizationId, tokenHash],
+      );
+      const proposalRevisionId = locked.rows[0]?.proposal_revision_id;
+      if (proposalRevisionId) {
+        // This statement runs after the row lock was acquired. Under READ
+        // COMMITTED it therefore observes an acceptance transaction that won
+        // the race while this transaction waited for the same authority row.
+        const accepted = await client.query(
+          `SELECT 1 FROM accepted_commands
+           WHERE organization_id=$1 AND proposal_revision_id=$2 LIMIT 1`,
+          [organizationId, proposalRevisionId],
+        );
+        if (!accepted.rowCount) {
+          await client.query(
+            `UPDATE safety_authority
+             SET consumed_at=COALESCE(consumed_at,clock_timestamp())
+             WHERE organization_id=$1 AND token_hash=$2
+               AND authority_type='intent'`,
+            [organizationId, tokenHash],
+          );
+          await client.query(
+            `UPDATE assistant_proposal_revisions
+             SET status='superseded',
+                 consumed_at=COALESCE(consumed_at,clock_timestamp())
+             WHERE organization_id=$1 AND id=$2
+               AND status IN ('pending','consumed')`,
+            [organizationId, proposalRevisionId],
+          );
+        }
+      }
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
   async revokeResponseAuthorities(
     actorId: string,
@@ -6356,10 +6692,11 @@ export class PostgresOperationalStore
       retrySafety: input.retrySafety ?? "reconcile-before-retry",
     });
     const id = randomUUID();
+    const targetKey = `${provider}:${profile}:${payload.command.resource.resourceType}/${payload.command.resource.id}`;
     const inserted = await this.pool.query<{ id: string }>(
       `INSERT INTO provider_outbox
-         (organization_id,id,provider_id,profile_id,operation,idempotency_key,payload,state)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,'pending')
+         (organization_id,id,provider_id,profile_id,operation,idempotency_key,payload,state,target_key)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,'pending',$8)
        ON CONFLICT (organization_id,provider_id,profile_id,idempotency_key)
        DO NOTHING
        RETURNING id::text`,
@@ -6371,6 +6708,7 @@ export class PostgresOperationalStore
         payload.command.operation,
         payload.command.idempotencyKey,
         payload,
+        targetKey,
       ],
     );
     if (inserted.rows[0]) return { id: inserted.rows[0].id, inserted: true };
@@ -6405,8 +6743,6 @@ export class PostgresOperationalStore
       input.leaseDurationMs > 5 * 60_000
     )
       throw new Error("INVALID_PROVIDER_LEASE_DURATION");
-    const now = input.now ?? new Date();
-    const leaseExpiresAt = new Date(now.getTime() + input.leaseDurationMs);
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
@@ -6436,16 +6772,31 @@ export class PostgresOperationalStore
                )
              )
              AND (
-               (state IN ('pending','retry') AND next_attempt_at <= $3)
-               OR (state='leased' AND lease_expires_at <= $3)
+               (state IN ('pending','retry') AND next_attempt_at <= clock_timestamp())
+               OR (state='leased' AND lease_expires_at <= clock_timestamp())
              )
-           ORDER BY next_attempt_at,id
+             AND NOT EXISTS (
+               SELECT 1 FROM provider_outbox earlier
+               WHERE earlier.organization_id=provider_outbox.organization_id
+                 AND earlier.target_key=provider_outbox.target_key
+                 AND earlier.state <> 'delivered'
+                 AND earlier.enqueue_sequence < provider_outbox.enqueue_sequence
+             )
+             AND NOT EXISTS (
+               SELECT 1 FROM provider_outbox dependency
+               WHERE dependency.organization_id=provider_outbox.organization_id
+                 AND dependency.payload->'command'->>'commandId'=
+                     provider_outbox.payload->'command'->>'causationId'
+                 AND dependency.state <> 'delivered'
+             )
+           ORDER BY next_attempt_at,enqueue_sequence
            FOR UPDATE SKIP LOCKED
-           LIMIT $4
+           LIMIT $3
          ), claimed AS (
            UPDATE provider_outbox o
-           SET state='leased',attempts=o.attempts+1,lease_owner=$5,
-               lease_expires_at=$6,last_error_class=NULL
+           SET state='leased',attempts=o.attempts+1,lease_owner=$4,
+               lease_expires_at=clock_timestamp()+($5::integer * interval '1 millisecond'),
+               last_error_class=NULL
            FROM candidates c
            WHERE o.organization_id=c.organization_id AND o.id=c.id
            RETURNING o.*,c.prior_state
@@ -6462,7 +6813,7 @@ export class PostgresOperationalStore
            ORDER BY r.created_at DESC,r.id DESC LIMIT 1
          ) receipt ON true
          ORDER BY c.next_attempt_at,c.id`,
-        [organizationId, profile, now, input.limit, workerId, leaseExpiresAt],
+        [organizationId, profile, input.limit, workerId, input.leaseDurationMs],
       );
       const jobs: ProviderOutboxJob[] = [];
       for (const row of claimed.rows) {
@@ -6526,6 +6877,27 @@ export class PostgresOperationalStore
       client.release();
     }
   }
+  async renewProviderDelivery(input: {
+    jobId: string;
+    workerId: string;
+    leaseDurationMs: number;
+  }): Promise<boolean> {
+    if (
+      !Number.isInteger(input.leaseDurationMs) ||
+      input.leaseDurationMs < 1_000 ||
+      input.leaseDurationMs > 5 * 60_000
+    )
+      throw new Error("INVALID_PROVIDER_LEASE_DURATION");
+    const result = await this.pool.query(
+      `UPDATE provider_outbox
+       SET lease_expires_at=clock_timestamp()+($4::integer * interval '1 millisecond')
+       WHERE organization_id=$1 AND id=$2 AND state='leased' AND lease_owner=$3
+         AND lease_expires_at > clock_timestamp()
+       RETURNING id`,
+      [organizationId, input.jobId, input.workerId, input.leaseDurationMs],
+    );
+    return result.rowCount === 1;
+  }
   async finishProviderDelivery(input: {
     jobId: string;
     workerId: string;
@@ -6574,6 +6946,7 @@ export class PostgresOperationalStore
          SET state=$4,next_attempt_at=$5,lease_owner=NULL,lease_expires_at=NULL,
              last_error_class=$6
          WHERE organization_id=$1 AND id=$2 AND state='leased' AND lease_owner=$3
+           AND lease_expires_at > clock_timestamp()
          RETURNING provider_id,idempotency_key,accepted_command_id::text`,
         [
           organizationId,
@@ -6679,6 +7052,7 @@ export class PostgresOperationalStore
          SET state=$4,next_attempt_at=COALESCE($5,next_attempt_at),
              lease_owner=NULL,lease_expires_at=NULL,last_error_class=$6
          WHERE organization_id=$1 AND id=$2 AND state='leased' AND lease_owner=$3
+           AND lease_expires_at > clock_timestamp()
          RETURNING accepted_command_id::text`,
         [
           organizationId,

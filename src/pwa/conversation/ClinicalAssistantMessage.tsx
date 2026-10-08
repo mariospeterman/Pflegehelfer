@@ -21,6 +21,10 @@ import {
   supersededOpenUi,
 } from "./conversation-presentations";
 import { claimPlayback } from "./playback-owner";
+import {
+  resolveIntentExecutionAttempt,
+  type IntentExecutionAttempt,
+} from "./intent-execution-retry";
 
 export interface AssistantHandoff {
   kind: "task" | "communication";
@@ -41,7 +45,7 @@ export interface AssistantHandoff {
 interface ConversationActions {
   userId: string;
   patient: Patient | null;
-  onPatient: (patientId: string) => void;
+  onPatient: (patientId: string | null) => void;
   onHandoff: (handoff: AssistantHandoff) => void;
   onExecuted: (message: string, activePatientId?: string) => Promise<void>;
   onError: (message: string | null) => void;
@@ -65,6 +69,7 @@ async function post<T>(
   path: string,
   userId: string,
   body: unknown,
+  commandId: string = crypto.randomUUID(),
 ): Promise<T> {
   const response = await authenticatedFetch(path, {
     method: "POST",
@@ -72,15 +77,32 @@ async function post<T>(
       "content-type": "application/json",
       "x-demo-user": userId,
       ...assistantClientContextHeaders(),
-      "x-command-id": crypto.randomUUID(),
+      "x-command-id": commandId,
       ...requestIntegrityHeaders("POST"),
     },
     body: JSON.stringify(body),
   });
-  const result = (await response.json()) as T & { message?: string };
+  const result = (await response.json()) as T & {
+    error?: string;
+    message?: string;
+  };
   if (!response.ok)
-    throw new Error(result.message ?? "Assistenzaktion fehlgeschlagen.");
+    throw new AssistantActionError(
+      response.status,
+      result.error ?? "UNKNOWN",
+      result.message ?? "Assistenzaktion fehlgeschlagen.",
+    );
   return result;
+}
+
+class AssistantActionError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+  }
 }
 
 export function ClinicalAssistantMessage({
@@ -103,6 +125,9 @@ export function ClinicalAssistantMessage({
   } | null>(null);
   const speechGenerationRef = useRef(0);
   const releasePlaybackRef = useRef<(() => void) | null>(null);
+  const executionCommandIdsRef = useRef(
+    new Map<string, IntentExecutionAttempt>(),
+  );
   if (!actions) throw new Error("ConversationActionsProvider fehlt.");
   const source = message.content ?? "";
   const proposalStatus = message.name?.match(
@@ -318,6 +343,22 @@ export function ClinicalAssistantMessage({
 
     const token = event.params.intentToken;
     if (typeof token !== "string" || !actions.patient) return;
+    const reviewedActionIds = Array.isArray(event.params.reviewedActionIds)
+      ? event.params.reviewedActionIds.map(String)
+      : undefined;
+    const executionAttempt = resolveIntentExecutionAttempt(
+      executionCommandIdsRef.current,
+      token,
+      reviewedActionIds,
+      () => crypto.randomUUID(),
+    );
+    if ("conflict" in executionAttempt) {
+      actions.onError(
+        "Der Status der vorherigen Übernahme ist noch unklar. Wiederhole zuerst exakt dieselbe Auswahl; eine geänderte Auswahl benötigt danach einen neuen Entwurf.",
+      );
+      return;
+    }
+    const commandId = executionAttempt.commandId;
     setBusy(true);
     actions.onError(null);
     try {
@@ -327,16 +368,19 @@ export function ClinicalAssistantMessage({
         itemStates?: string[];
         workflowChanged?: boolean;
         activePatientId?: string;
-      }>(`/api/v1/assistant/intents/${token}/execute`, actions.userId, {
-        patientId: actions.patient.id,
-        encounterId: actions.patient.encounterId,
-        purpose: "direct-care",
-        resourceVersion: actions.patient.source.version,
-        explicitlyConfirmed: true,
-        reviewedActionIds: Array.isArray(event.params.reviewedActionIds)
-          ? event.params.reviewedActionIds
-          : undefined,
-      });
+      }>(
+        `/api/v1/assistant/intents/${token}/execute`,
+        actions.userId,
+        {
+          patientId: actions.patient.id,
+          encounterId: actions.patient.encounterId,
+          purpose: "direct-care",
+          resourceVersion: actions.patient.source.version,
+          explicitlyConfirmed: true,
+          reviewedActionIds,
+        },
+        commandId,
+      );
       updateMessage({
         ...message,
         name: message.name?.replace(
@@ -355,10 +399,24 @@ export function ClinicalAssistantMessage({
         result.workflowChanged ? result.activePatientId : undefined,
       );
     } catch (error) {
+      if (
+        error instanceof AssistantActionError &&
+        error.code === "VERSION_CONFLICT"
+      )
+        updateMessage({
+          ...message,
+          name: message.name?.replace(
+            /pflegehelfer-proposal:[^:]+:/,
+            "pflegehelfer-proposal:superseded:",
+          ),
+          content: supersededOpenUi,
+        });
       actions.onError(
-        error instanceof Error
-          ? error.message
-          : "Entwurf konnte nicht übernommen werden.",
+        error instanceof AssistantActionError
+          ? error.code === "VERSION_CONFLICT"
+            ? "Die Angaben haben sich geändert. Der alte Entwurf wurde geschlossen. Bitte frage die aktualisierten Angaben erneut ab."
+            : error.message
+          : "Der Übernahmestatus ist noch unklar. Du kannst dieselbe Aktion sicher erneut versuchen; dabei wird keine zweite Operation angelegt.",
       );
     } finally {
       setBusy(false);

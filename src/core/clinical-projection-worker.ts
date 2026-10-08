@@ -27,13 +27,43 @@ export class ClinicalProjectionWorker {
 
   async runOnce(): Promise<ClinicalProjectionWorkerResult> {
     const now = this.options.now?.() ?? new Date();
+    const leaseDurationMs = this.options.leaseDurationMs ?? 30_000;
     const job = await this.store.claimClinicalProjection({
       workerId: this.options.workerId,
-      leaseDurationMs: this.options.leaseDurationMs ?? 30_000,
+      leaseDurationMs,
       now,
     });
     if (!job) return { claimed: 0, delivered: 0, retrying: 0, manual: 0 };
+    let leaseLost = false;
+    let renewal = Promise.resolve();
+    const renew = async () => {
+      if (
+        !(await this.store.renewClinicalProjection({
+          jobId: job.id,
+          workerId: this.options.workerId,
+          leaseDurationMs,
+        }))
+      ) {
+        leaseLost = true;
+        throw new Error("CLINICAL_PROJECTION_LEASE_LOST");
+      }
+    };
+    const timer = setInterval(
+      () => {
+        renewal = renewal.then(renew).catch(() => {
+          leaseLost = true;
+        });
+      },
+      Math.max(500, Math.floor(leaseDurationMs / 3)),
+    );
+    timer.unref();
+    const assertLease = async () => {
+      await renewal;
+      if (leaseLost) throw new Error("CLINICAL_PROJECTION_LEASE_LOST");
+      await renew();
+    };
     try {
+      await assertLease();
       const references = [
         ...job.resources.map(
           (resource) => `${resource.resourceType}/${resource.id}`,
@@ -71,6 +101,7 @@ export class ClinicalProjectionWorker {
         undefined,
         job.expectedVersions,
       );
+      await assertLease();
       if (
         !this.workspace.verifyProjection ||
         !(await this.workspace.verifyProjection(
@@ -88,6 +119,7 @@ export class ClinicalProjectionWorker {
       const maximumAttempts = this.options.maximumAttempts ?? 8;
       const errorCode =
         error instanceof Error ? error.message.slice(0, 160) : "UNKNOWN";
+      if (errorCode === "CLINICAL_PROJECTION_LEASE_LOST") throw error;
       const concurrencyConflict =
         /(?:409|412|version|if-match|if-none-match)/i.test(errorCode);
       const retry = !concurrencyConflict && job.attempts < maximumAttempts;
@@ -112,6 +144,9 @@ export class ClinicalProjectionWorker {
         retrying: retry ? 1 : 0,
         manual: retry ? 0 : 1,
       };
+    } finally {
+      clearInterval(timer);
+      await renewal;
     }
   }
 }

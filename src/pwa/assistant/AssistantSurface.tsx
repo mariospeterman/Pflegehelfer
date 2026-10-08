@@ -72,6 +72,21 @@ function ClinicalUserMessage({ message }: { message: UserMessage }) {
   );
 }
 
+function LocalizedThreadError() {
+  const threadError = useThread((state) => state.threadError);
+  const isRunning = useThread((state) => state.isRunning);
+  if (!threadError || isRunning) return null;
+  return (
+    <div className="assistant-error conversation-thread-error" role="alert">
+      <strong>Gespräch unterbrochen</strong>
+      <span>
+        {threadError.message ||
+          "Das Gespräch konnte nicht fortgesetzt werden. Bitte versuche es erneut."}
+      </span>
+    </div>
+  );
+}
+
 function AuthorizedThreadBootstrap() {
   const {
     threads,
@@ -157,7 +172,7 @@ export function AssistantSurface({
   snapshotRevision: string;
   opening: ConversationOpening;
   launchPrompt: { id: number; text: string; autoSubmit?: boolean } | null;
-  onSelectPatient: (patientId: string) => void;
+  onSelectPatient: (patientId: string | null) => void;
   onBusyChange: (busy: boolean) => void;
   externallyBusy: boolean;
   onNavigate: (destination: WorkspaceDestination) => void;
@@ -268,6 +283,7 @@ export function AssistantSurface({
                   assistantMessage={ClinicalAssistantMessage}
                   userMessage={ClinicalUserMessage}
                 />
+                <LocalizedThreadError />
               </div>
             </AgentInterface.ScrollArea>
             <AgentInterface.Composer>

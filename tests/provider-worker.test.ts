@@ -314,6 +314,10 @@ describe("bounded provider delivery worker", () => {
       }).runOnce(),
     ).resolves.toMatchObject({ retrying: 0, manual: 1 });
     expect(unsafeStore.failures[0]?.retryAt).toBeNull();
+    expect(unsafeStore.failures[0]).toMatchObject({
+      errorCode: "UNCERTAIN_REMOTE_OUTCOME",
+      errorClassification: "version-conflict",
+    });
   });
 
   it("fails closed before adapter execution when delivery authority is revoked", async () => {

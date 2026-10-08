@@ -93,6 +93,60 @@ function registry(onRead = vi.fn()) {
 }
 
 describe("bounded agent runtime", () => {
+  it("guards a source result before any later model interpretation", async () => {
+    const events: string[] = [];
+    const model = fixtureModel([
+      { kind: "tool-call", toolName: "get_open_questions", input: {} },
+      {
+        kind: "answer",
+        text: "Eine Frage ist offen.",
+        sourceReferenceIds: ["questions:v4"],
+      },
+    ]);
+    const guardedRegistry = new AuthorizedToolRegistry(
+      [
+        {
+          name: "get_open_questions",
+          version: 1,
+          description: "Read authorized unresolved questions.",
+          effect: "read",
+          input: z.object({}).strict(),
+          execute: () => {
+            events.push("local-read");
+            return Promise.resolve({
+              referenceId: "questions:v4",
+              complete: true,
+              data: { pending: 1 },
+            });
+          },
+        },
+      ],
+      (_toolName, result) => {
+        events.push("authoritative-source-guard");
+        return Promise.resolve(result);
+      },
+    );
+    const originalNext = model.next.bind(model);
+    model.next = (input) => {
+      events.push(`model-${model.inputs.length + 1}`);
+      return originalNext(input);
+    };
+
+    await expect(
+      new BoundedAgentRuntime(model, guardedRegistry).run({
+        request: "Was ist offen?",
+        context,
+        allowedTools: ["get_open_questions"],
+      }),
+    ).resolves.toMatchObject({ status: "answer", toolCalls: 1 });
+    expect(events).toEqual([
+      "model-1",
+      "local-read",
+      "authoritative-source-guard",
+      "model-2",
+    ]);
+  });
+
   it("reports model and validation progress before the terminal result resolves", async () => {
     let release!: (decision: AgentModelDecision) => void;
     const pending = new Promise<AgentModelDecision>((resolve) => {

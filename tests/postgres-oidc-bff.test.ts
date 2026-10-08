@@ -92,7 +92,7 @@ describe.runIf(Boolean(databaseUrl && migrationDatabaseUrl && issuer))(
           issuer: issuer!,
           subject: "synthetic-org-demo-nora",
           actorId: "u-nurse",
-          membershipVersion: 2,
+          membershipVersion: result.identity.membershipVersion + 1,
           policyVersion: "directory-v2-test",
           active: true,
         },
@@ -159,6 +159,91 @@ describe.runIf(Boolean(databaseUrl && migrationDatabaseUrl && issuer))(
           loginCookie,
         ),
       ).rejects.toThrow(/MEMBERSHIP_MISSING_OR_REVOKED/);
+    });
+
+    it("makes revocation terminal across reactivation, downgrade and actor reassignment", async () => {
+      const configuration = {
+        organizationId: "org-demo",
+        issuer: issuer!,
+        subject: "synthetic-org-demo-nora",
+        actorId: "u-nurse",
+        membershipVersion: 10,
+        policyVersion: "directory-v2-terminal-revocation",
+        active: true,
+      } as const;
+      await provisionOidcMemberships(migrationDatabaseUrl!, [configuration]);
+      const bff = new PostgresOidcBff({
+        issuer: issuer!,
+        clientId: "pflegehelfer-test",
+        redirectUri,
+        logoutRedirectUri,
+        publicOrigin: new URL(redirectUri).origin,
+        organizationId: "org-demo",
+        databaseUrl: databaseUrl!,
+        encryptionSecret: "synthetic-oidc-test-secret-material-000000000",
+        sessionTtlSeconds: 900,
+        allowInsecureHttp: true,
+      });
+      instances.push(bff);
+      await bff.initialize();
+      const login = async () => {
+        const start = await bff.beginLogin();
+        const loginCookie = start.cookies[0]!.split(";", 1)[0];
+        const authorizationUrl = new URL(start.redirectTo);
+        authorizationUrl.searchParams.set("login_hint", "nora.nurse");
+        const authorization = await fetch(authorizationUrl, {
+          redirect: "manual",
+        });
+        const callback = new URL(authorization.headers.get("location")!);
+        const result = await bff.completeLogin(
+          callback.searchParams.get("code")!,
+          callback.searchParams.get("state")!,
+          loginCookie,
+        );
+        return {
+          result,
+          cookieHeader: result.cookies
+            .map((entry) => entry.split(";", 1)[0])
+            .join("; "),
+        };
+      };
+
+      const original = await login();
+      await expect(
+        bff.authenticate(original.cookieHeader),
+      ).resolves.not.toBeNull();
+
+      await provisionOidcMemberships(migrationDatabaseUrl!, [
+        { ...configuration, active: false },
+      ]);
+      await expect(bff.authenticate(original.cookieHeader)).resolves.toBeNull();
+
+      await provisionOidcMemberships(migrationDatabaseUrl!, [configuration]);
+      await expect(bff.authenticate(original.cookieHeader)).resolves.toBeNull();
+      const reauthenticated = await login();
+      await expect(
+        bff.authenticate(reauthenticated.cookieHeader),
+      ).resolves.toMatchObject({ actorId: "u-nurse" });
+
+      await provisionOidcMemberships(migrationDatabaseUrl!, [
+        { ...configuration, membershipVersion: 1 },
+      ]);
+      await expect(
+        bff.authenticate(reauthenticated.cookieHeader),
+      ).resolves.toMatchObject({ actorId: "u-nurse" });
+
+      await provisionOidcMemberships(migrationDatabaseUrl!, [
+        {
+          ...configuration,
+          actorId: "u-assistant",
+          membershipVersion: 1,
+        },
+      ]);
+      await expect(
+        bff.authenticate(reauthenticated.cookieHeader),
+      ).resolves.toBeNull();
+      const reassigned = await login();
+      expect(reassigned.result.identity.actorId).toBe("u-assistant");
     });
   },
 );

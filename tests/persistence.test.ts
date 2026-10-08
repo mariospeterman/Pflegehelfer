@@ -25,6 +25,7 @@ import {
 } from "../src/core/voice-provenance.js";
 import { siteConfiguration } from "../src/core/site-config.js";
 import type { SourceReadSetV1 } from "../src/core/source-read-set.js";
+import { buildSourceReadSetV1 } from "../src/core/source-read-set.js";
 
 function canonicalJson(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
@@ -37,11 +38,30 @@ function canonicalJson(value: unknown): string {
     .join(",")}}`;
 }
 
+function receiptAuthorization(
+  route = "/api/v1/tasks",
+): CommandReceipt["authorization"] {
+  return {
+    actorId: "u-nurse",
+    actorRole: "registered-nurse",
+    siteId: siteConfiguration.siteId,
+    departmentId: siteConfiguration.department.id,
+    route,
+    purpose: "direct-care",
+    actions: ["task:create"],
+    patientId: "p-anna",
+    encounterId: "enc-anna-2026",
+    patientScopes: [{ patientId: "p-anna", encounterId: "enc-anna-2026" }],
+    workdayAuthority: null,
+  };
+}
+
 class RecordingWorkspace implements ClinicalWorkspace {
   readonly mode = "medplum" as const;
   checkpoint: ServiceCheckpoint | null = null;
   failNext = false;
   commitThenFail = false;
+  changeSourceOnRefresh = false;
   activeWrites = 0;
   maxActiveWrites = 0;
   maxResourceBatch = 0;
@@ -83,7 +103,20 @@ class RecordingWorkspace implements ClinicalWorkspace {
   }
 
   refreshSourceReadSet(value: SourceReadSetV1): Promise<SourceReadSetV1> {
-    return Promise.resolve(structuredClone(value));
+    if (!this.changeSourceOnRefresh)
+      return Promise.resolve(structuredClone(value));
+    const { digest, ...sourceReadContent } = value;
+    void digest;
+    const changedResources = value.resources.map((resource, index) =>
+      index === 0 ? { ...resource, version: "999" } : resource,
+    );
+    return Promise.resolve(
+      buildSourceReadSetV1({
+        ...sourceReadContent,
+        capturedAt: new Date().toISOString(),
+        resources: changedResources,
+      }),
+    );
   }
 
   loadCheckpoint(): Promise<ServiceCheckpoint | null> {
@@ -381,6 +414,7 @@ describe("durable workflow checkpoint", () => {
         requestHash: "a".repeat(64),
         statusCode: 201,
         payload: '{"id":"legacy"}',
+        authorization: receiptAuthorization(),
       },
     ];
     const legacy = serializeCheckpoint(checkpoint, null);
@@ -498,6 +532,396 @@ describe("durable workflow checkpoint", () => {
     ).toBe(true);
   });
 
+  it("restores clinical state but discards pre-authorization checkpoint receipts", () => {
+    const service = new PflegehelferService();
+    const checkpoint = service.checkpoint();
+    const legacyReceipt = {
+      key: "legacy-unsafe-receipt",
+      requestHash: "b".repeat(64),
+      statusCode: 201,
+      payload: '{"id":"legacy"}',
+    };
+    (checkpoint as unknown as { commandReceipts: unknown[] }).commandReceipts =
+      [legacyReceipt];
+
+    const restored = deserializeCheckpoint(
+      serializeCheckpoint(checkpoint, null),
+      null,
+    );
+
+    expect(restored.state.patients).toEqual(checkpoint.state.patients);
+    expect(restored.commandReceipts).toEqual([]);
+  });
+
+  it("rejects version-one standalone receipts instead of replaying them", () => {
+    const receipt: CommandReceipt = {
+      key: "legacy-standalone-receipt",
+      requestHash: "c".repeat(64),
+      statusCode: 201,
+      payload: '{"id":"legacy"}',
+      authorization: receiptAuthorization(),
+    };
+    const binary = serializeCommandReceipt(receipt, null);
+    const envelope = JSON.parse(
+      Buffer.from(binary.data!, "base64").toString("utf8"),
+    ) as { schemaVersion: number };
+    envelope.schemaVersion = 1;
+    binary.data = Buffer.from(JSON.stringify(envelope), "utf8").toString(
+      "base64",
+    );
+
+    expect(() =>
+      deserializeCommandReceipt(binary, receipt.key, null, []),
+    ).toThrow("unsupported version");
+  });
+
+  it("returns a controlled conflict for a pre-upgrade standalone receipt", async () => {
+    const receipt: CommandReceipt = {
+      key: "legacy-upgrade-receipt",
+      requestHash: "d".repeat(64),
+      statusCode: 201,
+      payload: '{"id":"legacy"}',
+      authorization: receiptAuthorization(),
+    };
+    const binary = serializeCommandReceipt(receipt, null);
+    const envelope = JSON.parse(
+      Buffer.from(binary.data!, "base64").toString("utf8"),
+    ) as { schemaVersion: number };
+    envelope.schemaVersion = 1;
+    binary.data = Buffer.from(JSON.stringify(envelope), "utf8").toString(
+      "base64",
+    );
+    const workspace = new MedplumClinicalWorkspace(
+      "http://127.0.0.1:8103/",
+      "test-client",
+      "test-secret",
+      "http://127.0.0.1:3001/",
+    );
+    const internals = workspace as unknown as {
+      client: {
+        startClientLogin: () => Promise<void>;
+        readResource: () => Promise<Resource>;
+      };
+    };
+    internals.client.startClientLogin = () => Promise.resolve();
+    internals.client.readResource = () => Promise.resolve(binary);
+
+    await expect(
+      workspace.loadCommandReceipt(receipt.key),
+    ).rejects.toMatchObject({ code: "INVALID_STATE", statusCode: 409 });
+  });
+
+  it("rejects rebinding changed native FHIR fields to a fresh version", async () => {
+    const service = new PflegehelferService();
+    const expected = service
+      .fhirResources()
+      .find((resource) => resource.resourceType === "Task")!;
+    const expectedPatient = service
+      .fhirResources()
+      .find(
+        (resource) =>
+          resource.resourceType === "Patient" &&
+          (
+            resource as { identifier?: Array<{ value?: string }> }
+          ).identifier?.some(({ value }) => value === "p-anna"),
+      )!;
+    const expectedEncounter = service
+      .fhirResources()
+      .find(
+        (resource) =>
+          resource.resourceType === "Encounter" &&
+          (
+            resource as { identifier?: Array<{ value?: string }> }
+          ).identifier?.some(({ value }) => value === "enc-anna-2026"),
+      )!;
+    const logicalId = (
+      expected as Resource & {
+        identifier?: Array<{ system?: string; value?: string }>;
+      }
+    ).identifier?.find(
+      ({ system }) => system === "https://pflegehelfer.example.invalid/task-id",
+    )?.value;
+    expect(logicalId).toBeTruthy();
+    const expectedVersion = {
+      ...structuredClone(expected),
+      meta: { ...expected.meta, versionId: "41" },
+    } as Resource;
+    const changed = structuredClone(expectedVersion) as Resource & {
+      code?: { text?: string };
+    };
+    changed.meta = { ...changed.meta, versionId: "42" };
+    changed.code = {
+      ...(changed.code && typeof changed.code === "object" ? changed.code : {}),
+      text: "Extern geänderter Auftrag",
+    };
+    const sourceReadSet = buildSourceReadSetV1({
+      schemaVersion: 1,
+      evidenceAuthority: "memory-demo-not-fhir-evident",
+      capturedAt: new Date().toISOString(),
+      purpose: "direct-care",
+      policyVersion: "test-policy",
+      patientId: "p-anna",
+      encounterId: "enc-anna-2026",
+      resources: [
+        {
+          reference: "Patient/p-anna",
+          logicalReference: "Patient/p-anna",
+          version: "1",
+          patientId: "p-anna",
+          encounterId: "enc-anna-2026",
+          claims: [],
+        },
+        {
+          reference: "Encounter/enc-anna-2026",
+          logicalReference: "Encounter/enc-anna-2026",
+          version: "1",
+          patientId: "p-anna",
+          encounterId: "enc-anna-2026",
+          claims: [],
+        },
+        {
+          reference: `Task/${logicalId}`,
+          logicalReference: `Task/${logicalId}`,
+          version: "1",
+          patientId: "p-anna",
+          encounterId: "enc-anna-2026",
+          claims: [{ path: "tasks.0.title", value: "Alter Auftrag" }],
+        },
+      ],
+      selectors: [],
+    });
+    const workspace = new MedplumClinicalWorkspace(
+      "http://127.0.0.1:8103/",
+      "test-client",
+      "test-secret",
+      "http://127.0.0.1:3001/",
+    );
+    const internals = workspace as unknown as {
+      client: {
+        startClientLogin: () => Promise<void>;
+        readResource: (_type: string, id: string) => Promise<Resource>;
+      };
+    };
+    internals.client.startClientLogin = () => Promise.resolve();
+    const expectedPatientVersion = {
+      ...structuredClone(expectedPatient),
+      meta: { ...expectedPatient.meta, versionId: "11" },
+    } as Resource;
+    const expectedEncounterVersion = {
+      ...structuredClone(expectedEncounter),
+      meta: { ...expectedEncounter.meta, versionId: "12" },
+    } as Resource;
+    internals.client.readResource = (_type, id) =>
+      Promise.resolve(
+        id === expected.id
+          ? changed
+          : id === expectedPatient.id
+            ? expectedPatientVersion
+            : expectedEncounterVersion,
+      );
+    await expect(
+      workspace.captureSourceReadSet(sourceReadSet, [
+        expectedVersion,
+        expectedPatientVersion,
+        expectedEncounterVersion,
+      ]),
+    ).rejects.toThrow(/SOURCE_READ_RESOURCE_CONTENT_CHANGED/);
+  });
+
+  it("follows bounded FHIR pages and includes imported resources beyond page one", async () => {
+    const service = new PflegehelferService();
+    const resources = service.fhirResources();
+    const patient = resources.find(
+      (resource) =>
+        resource.resourceType === "Patient" &&
+        (
+          resource as { identifier?: Array<{ value?: string }> }
+        ).identifier?.some(({ value }) => value === "p-anna"),
+    )!;
+    const encounter = resources.find(
+      (resource) =>
+        resource.resourceType === "Encounter" &&
+        (
+          resource as { identifier?: Array<{ value?: string }> }
+        ).identifier?.some(({ value }) => value === "enc-anna-2026"),
+    )!;
+    const makeExternalTask = (id: string, dueAt: string): Resource => ({
+      resourceType: "Task",
+      id,
+      meta: { versionId: id === "external-first" ? "7" : "9" },
+      status: "ready",
+      intent: "order",
+      businessStatus: {
+        coding: [
+          {
+            system: "https://pflegehelfer.example.invalid/task-workflow-state",
+            code: "new",
+          },
+        ],
+      },
+      code: { text: `Import ${id}` },
+      for: { reference: `Patient/${patient.id}` },
+      encounter: { reference: `Encounter/${encounter.id}` },
+      executionPeriod: { end: dueAt },
+    });
+    const first = makeExternalTask(
+      "external-first",
+      "2026-10-08T09:00:00.000Z",
+    );
+    const second = makeExternalTask(
+      "external-second",
+      "2026-10-08T10:00:00.000Z",
+    );
+    const references = ["Task/external-first", "Task/external-second"];
+    const sourceReadSet = buildSourceReadSetV1({
+      schemaVersion: 1,
+      evidenceAuthority: "fhir-meta-versionId",
+      capturedAt: new Date().toISOString(),
+      purpose: "direct-care",
+      policyVersion: "test-policy",
+      patientId: "p-anna",
+      encounterId: "enc-anna-2026",
+      resources: [first, second].map((resource) => ({
+        reference: `${resource.resourceType}/${resource.id}`,
+        logicalReference: `${resource.resourceType}/${resource.id}`,
+        version: resource.meta!.versionId!,
+        patientId: "p-anna",
+        encounterId: "enc-anna-2026",
+        claims: [],
+      })),
+      selectors: [
+        {
+          id: "get_open_tasks.tasks",
+          resourceType: "Task",
+          patientId: "p-anna",
+          encounterId: "enc-anna-2026",
+          predicate: "task-open",
+          order: "due-asc",
+          limit: 2,
+          totalCount: 2,
+          complete: true,
+          absenceObserved: false,
+          membershipReferences: references,
+          selectedReferences: references,
+          claims: [],
+        },
+      ],
+    });
+    const workspace = new MedplumClinicalWorkspace(
+      "http://127.0.0.1:8103/",
+      "test-client",
+      "test-secret",
+      "http://127.0.0.1:3001/",
+    );
+    let receivedQuery = "";
+    const internals = workspace as unknown as {
+      client: {
+        startClientLogin: () => Promise<void>;
+        searchResourcePages: (
+          resourceType: string,
+          query: URLSearchParams,
+        ) => AsyncGenerator<Resource[]>;
+        readResource: () => Promise<Resource>;
+      };
+    };
+    internals.client.startClientLogin = () => Promise.resolve();
+    internals.client.searchResourcePages = async function* (
+      resourceType,
+      query,
+    ) {
+      await Promise.resolve();
+      expect(resourceType).toBe("Task");
+      receivedQuery = query.toString();
+      yield [first];
+      yield [second];
+    };
+    internals.client.readResource = () =>
+      Promise.reject(new Error("unexpected direct read"));
+    const captured = await workspace.captureSourceReadSet(sourceReadSet, [
+      first,
+      second,
+    ]);
+    expect(receivedQuery).toContain(`patient=Patient%2F${patient.id}`);
+    expect(receivedQuery).toContain(`encounter=Encounter%2F${encounter.id}`);
+    expect(captured.selectors[0]).toMatchObject({
+      totalCount: 2,
+      complete: false,
+      absenceObserved: false,
+      membershipReferences: references,
+      selectedReferences: references,
+    });
+    expect(
+      captured.resources.map(({ logicalReference }) => logicalReference),
+    ).toEqual(references);
+  });
+
+  it("fails closed when a FHIR selector exceeds the bounded page budget", async () => {
+    const sourceReadSet = buildSourceReadSetV1({
+      schemaVersion: 1,
+      evidenceAuthority: "fhir-meta-versionId",
+      capturedAt: new Date().toISOString(),
+      purpose: "direct-care",
+      policyVersion: "test-policy",
+      patientId: "p-anna",
+      encounterId: "enc-anna-2026",
+      resources: [
+        {
+          reference: "Patient/native-patient",
+          logicalReference: "Patient/native-patient",
+          version: "1",
+          patientId: "p-anna",
+          encounterId: "enc-anna-2026",
+          claims: [],
+        },
+        {
+          reference: "Encounter/native-encounter",
+          logicalReference: "Encounter/native-encounter",
+          version: "1",
+          patientId: "p-anna",
+          encounterId: "enc-anna-2026",
+          claims: [],
+        },
+      ],
+      selectors: [
+        {
+          id: "get_open_tasks.tasks",
+          resourceType: "Task",
+          patientId: "p-anna",
+          encounterId: "enc-anna-2026",
+          predicate: "task-open",
+          order: "due-asc",
+          limit: 20,
+          totalCount: 0,
+          complete: true,
+          absenceObserved: true,
+          membershipReferences: [],
+          selectedReferences: [],
+          claims: [],
+        },
+      ],
+    });
+    const workspace = new MedplumClinicalWorkspace(
+      "http://127.0.0.1:8103/",
+      "test-client",
+      "test-secret",
+      "http://127.0.0.1:3001/",
+    );
+    const internals = workspace as unknown as {
+      client: {
+        startClientLogin: () => Promise<void>;
+        searchResourcePages: () => AsyncGenerator<Resource[]>;
+      };
+    };
+    internals.client.startClientLogin = () => Promise.resolve();
+    internals.client.searchResourcePages = async function* () {
+      await Promise.resolve();
+      for (let page = 0; page < 101; page += 1) yield [];
+    };
+    await expect(workspace.captureSourceReadSet(sourceReadSet)).rejects.toThrow(
+      "SOURCE_READ_SELECTOR_INCOMPLETE",
+    );
+  });
+
   it("authenticates durable receipts across rotation and rejects tampering", () => {
     const oldKey = "old-receipt-key-with-at-least-32-random-bytes";
     const nextKey = "next-receipt-key-with-at-least-32-random-bytes";
@@ -506,6 +930,7 @@ describe("durable workflow checkpoint", () => {
       requestHash: "a".repeat(64),
       statusCode: 201,
       payload: '{"id":"task-signed"}',
+      authorization: receiptAuthorization(),
     };
     const signed = serializeCommandReceipt(receipt, oldKey);
     expect(signed.meta?.tag).toContainEqual({
@@ -582,6 +1007,7 @@ describe("durable workflow checkpoint", () => {
         requestHash: "a".repeat(64),
         statusCode: 200,
         payload: "{}",
+        authorization: receiptAuthorization(),
       },
     );
     const entries = (captured as Bundle | null)?.entry ?? [];
@@ -815,6 +1241,7 @@ describe("durable workflow checkpoint", () => {
         requestHash: "a".repeat(64),
         statusCode: 200,
         payload: JSON.stringify({ index, padding: "x".repeat(1024) }),
+        authorization: receiptAuthorization(),
       });
     await workspace.synchronize([], firstService.checkpoint());
     expect(
@@ -890,6 +1317,7 @@ describe("durable workflow checkpoint", () => {
           .digest("hex"),
         statusCode: 201,
         payload: JSON.stringify({ id: `durable-task-${index}` }),
+        authorization: receiptAuthorization(route),
       };
       service.recordCommandReceipt(receipt);
       workspace.receipts.set(receipt.key, structuredClone(receipt));
@@ -1052,11 +1480,16 @@ describe("durable workflow checkpoint", () => {
         encounterId: string;
         resourceVersion: number;
       };
-      components: Array<{ type: string; intentToken?: string }>;
+      components: Array<{
+        type: string;
+        intentToken?: string;
+        reviewItems?: Array<{ id: string }>;
+      }>;
     }>();
-    const token = response.components.find(
+    const review = response.components.find(
       (component) => component.type === "DraftAction",
-    )?.intentToken;
+    );
+    const token = review?.intentToken;
     expect(token).toBeTruthy();
     await first.close();
 
@@ -1075,6 +1508,9 @@ describe("durable workflow checkpoint", () => {
         resourceVersion: patientContext.resourceVersion,
         purpose: "direct-care",
         explicitlyConfirmed: true,
+        ...(review?.reviewItems
+          ? { reviewedActionIds: review.reviewItems.map((item) => item.id) }
+          : {}),
       },
     });
     expect(execution.statusCode, execution.body).toBe(200);
@@ -1098,6 +1534,97 @@ describe("durable workflow checkpoint", () => {
       },
     });
     expect(replay.statusCode).toBe(403);
+    await restarted.close();
+  });
+
+  it("durably supersedes a proposal when its reviewed source changes", async () => {
+    const service = new PflegehelferService();
+    const workspace = new RecordingWorkspace();
+    const operationalStore = new InMemoryOperationalStore();
+    const app = buildApp(service, {
+      demoMode: true,
+      workspace,
+      operationalStore,
+    });
+    const actorId = "u-nurse";
+    const headers = { "x-demo-user": actorId };
+    await app.inject({
+      method: "POST",
+      url: "/api/v1/assistant/context",
+      headers: { ...headers, "x-command-id": crypto.randomUUID() },
+      payload: { patientId: "p-anna" },
+    });
+    const query = await app.inject({
+      method: "POST",
+      url: "/api/v1/assistant/query",
+      headers: { ...headers, "x-command-id": crypto.randomUUID() },
+      payload: {
+        patientId: "p-anna",
+        prompt: "Notiz: Transfer mit Rollator und Hilfestellung durchgeführt.",
+        inputModality: "typed",
+      },
+    });
+    const response = query.json<{
+      patientContext: {
+        patientId: string;
+        encounterId: string;
+        resourceVersion: number;
+      };
+      components: Array<{
+        type: string;
+        intentToken?: string;
+        reviewItems?: Array<{ id: string }>;
+      }>;
+    }>();
+    const review = response.components.find(
+      (component) => component.type === "DraftAction",
+    );
+    const token = review?.intentToken;
+    expect(token).toBeTruthy();
+    workspace.changeSourceOnRefresh = true;
+    const conflict = await app.inject({
+      method: "POST",
+      url: `/api/v1/assistant/intents/${token}/execute`,
+      headers: { ...headers, "x-command-id": crypto.randomUUID() },
+      payload: {
+        patientId: response.patientContext.patientId,
+        encounterId: response.patientContext.encounterId,
+        resourceVersion: response.patientContext.resourceVersion,
+        purpose: "direct-care",
+        explicitlyConfirmed: true,
+        ...(review?.reviewItems
+          ? { reviewedActionIds: review.reviewItems.map((item) => item.id) }
+          : {}),
+      },
+    });
+    expect(conflict.statusCode, conflict.body).toBe(409);
+    await app.close();
+    const restarted = buildApp(service, {
+      demoMode: true,
+      workspace,
+      operationalStore,
+    });
+    const conversation = await restarted.inject({
+      method: "GET",
+      url: "/api/v1/assistant/conversation",
+      headers,
+    });
+    const turns = conversation.json<{
+      turns: Array<{ proposalLifecycle?: { status: string } }>;
+    }>().turns;
+    expect(
+      turns.some((turn) => turn.proposalLifecycle?.status === "pending"),
+    ).toBe(false);
+    expect(
+      turns.some((turn) => turn.proposalLifecycle?.status === "superseded"),
+    ).toBe(true);
+    const pending = await restarted.inject({
+      method: "POST",
+      url: "/api/v1/assistant/pending-review",
+      headers: { ...headers, "x-command-id": crypto.randomUUID() },
+      payload: {},
+    });
+    expect(pending.json()).toEqual({ pending: null });
     await restarted.close();
   });
 

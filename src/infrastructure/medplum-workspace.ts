@@ -23,8 +23,9 @@ import {
   tenantTag,
   tenantTagSystem,
 } from "../core/fhir-resource-set.js";
-import { siteConfiguration } from "../core/site-config.js";
+import { actionSchema, siteConfiguration } from "../core/site-config.js";
 import type { CommandReceipt, ServiceCheckpoint } from "../core/service.js";
+import { DomainError, type Role } from "../core/types.js";
 import {
   buildSourceReadSetV1,
   parseSourceReadSetV1,
@@ -117,6 +118,45 @@ const patientRecord = identifiedRecord.extend({
 const patientBoundRecord = identifiedRecord.extend({
   patientId: z.string().min(1).max(160),
 });
+const commandReceiptAuthorizationSchema = z
+  .object({
+    actorId: z.string().min(1),
+    actorRole: z.custom<Role>(
+      (value) =>
+        typeof value === "string" && value in siteConfiguration.roleProfiles,
+    ),
+    siteId: z.string().min(1),
+    departmentId: z.string().min(1),
+    route: z.string().min(1),
+    purpose: z.enum([
+      "direct-care",
+      "operations",
+      "administration",
+      "quality-review",
+      "emergency",
+    ]),
+    actions: z.array(actionSchema),
+    patientId: z.string().min(1).nullable(),
+    encounterId: z.string().min(1).nullable(),
+    patientScopes: z.array(
+      z
+        .object({
+          patientId: z.string().min(1),
+          encounterId: z.string().min(1),
+        })
+        .strict(),
+    ),
+    workdayAuthority: z
+      .object({
+        sessionId: z.string().min(1),
+        handoverId: z.string().min(1),
+        handoverVersion: z.number().int().positive(),
+        handoverContentHash: z.string().min(1),
+      })
+      .strict()
+      .nullable(),
+  })
+  .strict();
 const auditRecord = z
   .object({
     id: z.string().min(1).max(160),
@@ -183,6 +223,10 @@ const checkpointSchema = z
                 requestHash: z.string().regex(/^[a-f0-9]{64}$/),
                 statusCode: z.number().int().min(200).max(299),
                 payload: z.string().max(64 * 1024),
+                // Legacy checkpoint receipts are retained only long enough to
+                // parse the clinical checkpoint. They are filtered below and
+                // can never be replayed without a v2 authorization envelope.
+                authorization: commandReceiptAuthorizationSchema.optional(),
               })
               .strict(),
           )
@@ -302,6 +346,10 @@ export function deserializeCheckpoint(
     ...legacyCheckpoint,
     dataClass: legacyCheckpoint.dataClass ?? "institution-local",
     state: currentState,
+    commandReceipts: (legacyCheckpoint.commandReceipts ?? []).filter(
+      (receipt): receipt is CommandReceipt =>
+        commandReceiptSchema.safeParse(receipt).success,
+    ),
   };
   const assertUnique = (label: string, records: Array<{ id: string }>) => {
     if (new Set(records.map((record) => record.id)).size !== records.length)
@@ -373,6 +421,7 @@ const commandReceiptSchema = z
     requestHash: z.string().regex(/^[a-f0-9]{64}$/),
     statusCode: z.number().int().min(200).max(299),
     payload: z.string().max(64 * 1024),
+    authorization: commandReceiptAuthorizationSchema,
   })
   .strict();
 
@@ -386,7 +435,7 @@ export function serializeCommandReceipt(
 ): Binary {
   const payload = JSON.stringify(commandReceiptSchema.parse(receipt));
   const envelope = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     sha256: createHash("sha256").update(payload).digest("hex"),
     ...(hmacKey
       ? {
@@ -415,7 +464,7 @@ export function serializeCommandReceipt(
       tag: [
         {
           system: "https://pflegehelfer.example.invalid/control-plane",
-          code: "command-receipt-v1",
+          code: "command-receipt-v2",
         },
         tenantTag(),
       ],
@@ -442,7 +491,7 @@ export function deserializeCommandReceipt(
     hmacKeyId?: unknown;
     payload?: unknown;
   };
-  if (envelope.schemaVersion !== 1)
+  if (envelope.schemaVersion !== 2)
     throw new Error("Medplum command receipt has an unsupported version.");
   const payload = JSON.stringify(envelope.payload);
   const actualHash = createHash("sha256").update(payload).digest("hex");
@@ -494,9 +543,11 @@ export interface ClinicalWorkspace {
   ): Promise<boolean>;
   captureSourceReadSet(
     sourceReadSet: SourceReadSetV1,
+    expectedResources?: readonly Resource[],
   ): Promise<SourceReadSetV1>;
   refreshSourceReadSet(
     sourceReadSet: SourceReadSetV1,
+    expectedResources?: readonly Resource[],
   ): Promise<SourceReadSetV1>;
   loadCheckpoint(): Promise<ServiceCheckpoint | null>;
   loadCommandReceipt(key: string): Promise<CommandReceipt | null>;
@@ -904,6 +955,7 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
   private async readSourceReadSet(
     input: SourceReadSetV1,
     requireDraftMatch: boolean,
+    expectedResources: readonly Resource[] = [],
   ): Promise<SourceReadSetV1> {
     await this.connect();
     const reviewed = parseSourceReadSetV1(input);
@@ -929,11 +981,13 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
       const domainId = identified.identifier?.find(
         (identifier) => identifier.system === system,
       )?.value;
-      if (!domainId)
-        throw new Error(
-          `SOURCE_READ_DOMAIN_IDENTIFIER_MISSING:${referenceOf(resource)}`,
-        );
-      return `${resource.resourceType}/${domainId}`;
+      // Authorized imported/native resources need not carry Pflegehelfer's
+      // projection identifier. Their server-owned physical reference remains
+      // the stable logical handle; managedProjection tags are never required
+      // for read evidence.
+      return domainId
+        ? `${resource.resourceType}/${domainId}`
+        : referenceOf(resource);
     };
     const expectedPhysicalByLogical = new Map(
       reviewed.resources.map((resource) => [
@@ -942,16 +996,60 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
       ]),
     );
     const resourcesByReference = new Map<string, Resource>();
+    const expectedByReference = new Map<string, Resource>(
+      expectedResources.flatMap((resource) =>
+        resource.id
+          ? [[`${resource.resourceType}/${resource.id}`, resource] as const]
+          : [],
+      ),
+    );
+    const contentDigest = (resource: Resource): string => {
+      const normalized = structuredClone(resource);
+      if (normalized.meta) {
+        delete normalized.meta.versionId;
+        delete normalized.meta.lastUpdated;
+      }
+      const canonical = (value: unknown): string => {
+        if (value === null || typeof value !== "object")
+          return JSON.stringify(value);
+        if (Array.isArray(value))
+          return `[${value.map((item) => canonical(item)).join(",")}]`;
+        const record = value as Record<string, unknown>;
+        return `{${Object.keys(record)
+          .sort()
+          .map((key) => `${JSON.stringify(key)}:${canonical(record[key])}`)
+          .join(",")}}`;
+      };
+      return createHash("sha256").update(canonical(normalized)).digest("hex");
+    };
     const selectorResults = [] as SourceReadSetV1["selectors"];
     for (const selector of reviewed.selectors) {
-      const existing = await this.client.searchResources(
-        selector.resourceType,
-        `_tag=${encodeURIComponent(`${tenantTagSystem}|${tenantTag().code}`)}&_tag=${encodeURIComponent(`${managedProjectionTag.system}|${managedProjectionTag.code}`)}&_count=1000`,
-      );
-      if (existing.length >= 1_000)
-        throw new Error("SOURCE_READ_SELECTOR_LIMIT_EXCEEDED");
       const patientReference = `Patient/${fhirResourceId("Patient", selector.patientId)}`;
       const encounterReference = `Encounter/${fhirResourceId("Encounter", selector.encounterId)}`;
+      const sort =
+        selector.order === "due-asc"
+          ? "period"
+          : selector.order === "effective-desc"
+            ? "-date"
+            : "-sent";
+      const query = new URLSearchParams({
+        patient: patientReference,
+        encounter: encounterReference,
+        _count: "100",
+        _total: "accurate",
+        _sort: sort,
+      });
+      const existing: Resource[] = [];
+      let pageCount = 0;
+      for await (const page of this.client.searchResourcePages(
+        selector.resourceType,
+        query,
+      )) {
+        pageCount += 1;
+        if (pageCount > 100 || existing.length + page.length > 10_000)
+          throw new Error("SOURCE_READ_SELECTOR_INCOMPLETE");
+        existing.push(...page);
+      }
       const matching = existing.filter((resource) => {
         const candidate = resource as Resource & {
           for?: { reference?: string };
@@ -1046,8 +1144,13 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
       selectorResults.push({
         ...selector,
         totalCount: membershipReferences.length,
-        complete: membershipReferences.length <= selector.limit,
-        absenceObserved: membershipReferences.length === 0,
+        // searchResourcePages exposes resource arrays, not the raw Bundle
+        // total/next-link evidence. We therefore cannot prove that the
+        // selector exhausted the server result set and must fail closed on
+        // completeness and absence claims even after consuming every yielded
+        // page. Membership/version evidence remains usable for positive reads.
+        complete: false,
+        absenceObserved: false,
         membershipReferences,
         selectedReferences,
       });
@@ -1086,6 +1189,13 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
       if (!version)
         throw new Error(`MEDPLUM_RESOURCE_VERSION_MISSING:${reference}`);
       const prior = reviewedByLogical.get(logicalReference);
+      const expected = expectedByReference.get(reference);
+      if (
+        requireDraftMatch &&
+        prior &&
+        (!expected || contentDigest(expected) !== contentDigest(resource))
+      )
+        throw new Error(`SOURCE_READ_RESOURCE_CONTENT_CHANGED:${reference}`);
       return {
         reference,
         logicalReference,
@@ -1110,14 +1220,16 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
 
   captureSourceReadSet(
     sourceReadSet: SourceReadSetV1,
+    expectedResources: readonly Resource[] = [],
   ): Promise<SourceReadSetV1> {
-    return this.readSourceReadSet(sourceReadSet, true);
+    return this.readSourceReadSet(sourceReadSet, true, expectedResources);
   }
 
   refreshSourceReadSet(
     sourceReadSet: SourceReadSetV1,
+    expectedResources: readonly Resource[] = [],
   ): Promise<SourceReadSetV1> {
-    return this.readSourceReadSet(sourceReadSet, false);
+    return this.readSourceReadSet(sourceReadSet, false, expectedResources);
   }
 
   async verifyProjection(
@@ -1386,6 +1498,15 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
       );
     } catch (error) {
       if (isNotFoundError(error)) return null;
+      if (
+        error instanceof Error &&
+        error.message === "Medplum command receipt has an unsupported version."
+      )
+        throw new DomainError(
+          "INVALID_STATE",
+          "Der frühere Operationsbeleg kann nach dem Sicherheitsupgrade nicht automatisch wiederaufgenommen werden. Bitte den Status prüfen, bevor eine neue Aktion gestartet wird.",
+          409,
+        );
       throw error;
     }
   }

@@ -92,6 +92,26 @@ export interface CommandReceipt {
   requestHash: string;
   statusCode: number;
   payload: string;
+  authorization: CommandReceiptAuthorization;
+}
+
+export interface CommandReceiptAuthorization {
+  actorId: string;
+  actorRole: Role;
+  siteId: string;
+  departmentId: string;
+  route: string;
+  purpose: Purpose;
+  actions: Action[];
+  patientId: string | null;
+  encounterId: string | null;
+  patientScopes: Array<{ patientId: string; encounterId: string }>;
+  workdayAuthority: {
+    sessionId: string;
+    handoverId: string;
+    handoverVersion: number;
+    handoverContentHash: string;
+  } | null;
 }
 
 // Receipts are durably stored as individual, deterministic Medplum Binary

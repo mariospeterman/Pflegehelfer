@@ -92,6 +92,10 @@ describe.runIf(Boolean(databaseUrl))("atomic local command acceptance", () => {
         statusCode: 200,
         resultPayload: { accepted: true },
         selectedActionIds: ["action-1"],
+        authorizationActions: ["patient:read", "note:draft"] as [
+          "patient:read",
+          "note:draft",
+        ],
         policyVersion: "test-policy-v1",
         sourceReadSet,
         auditEntries: [auditEntry],
@@ -178,6 +182,16 @@ describe.runIf(Boolean(databaseUrl))("atomic local command acceptance", () => {
           proposalLifecycle: { revision: 1, status: "consumed" },
         },
       ]);
+      await store.supersedeIntentAuthority(tokenHash);
+      await expect(
+        store.loadConversation("u-assistant", "care-assistant", "p-luca"),
+      ).resolves.toMatchObject([
+        {
+          id: responseId,
+          executionStatus: "locally-accepted",
+          proposalLifecycle: { revision: 1, status: "consumed" },
+        },
+      ]);
       await expect(
         store.loadIntentAuthority({
           tokenHash,
@@ -219,23 +233,25 @@ describe.runIf(Boolean(databaseUrl))("atomic local command acceptance", () => {
           leaseDurationMs: 30_000,
         }),
       ).resolves.toEqual([]);
-      const leaseStart = new Date(Date.now() + 10_000);
       const abandonedProjection = await store.claimClinicalProjection({
         workerId: "crashed-clinical-worker",
         leaseDurationMs: 1_000,
-        now: leaseStart,
       });
       await expect(
         store.claimClinicalProjection({
           workerId: "too-early-clinical-worker",
           leaseDurationMs: 1_000,
-          now: new Date(leaseStart.getTime() + 500),
         }),
       ).resolves.toBeNull();
+      await inspection.query(
+        `UPDATE clinical_projection_outbox
+         SET lease_expires_at=clock_timestamp()-interval '1 second'
+         WHERE id=$1`,
+        [abandonedProjection!.id],
+      );
       const claimedProjection = await store.claimClinicalProjection({
         workerId: "recovered-clinical-worker",
         leaseDurationMs: 30_000,
-        now: new Date(leaseStart.getTime() + 2_000),
       });
       expect(claimedProjection?.id).toBe(abandonedProjection?.id);
       expect(claimedProjection?.attempts).toBe(2);

@@ -242,21 +242,42 @@ export function createConversationLlm(input: {
       ].join("\u001f");
       const commandId = await deterministicOperationId(operationEnvelope);
       const voice = input.submissionChannel.take(prompt, commandId);
-      return authenticatedFetch("/api/v1/assistant/query/stream", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          ...requestHeaders(input.userId, true, commandId),
+      const response = await authenticatedFetch(
+        "/api/v1/assistant/query/stream",
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            ...requestHeaders(input.userId, true, commandId),
+          },
+          body: JSON.stringify({
+            prompt,
+            patientId: input.patientId,
+            purpose: input.purpose,
+            inputModality: voice?.inputModality ?? "typed",
+            ...(voice ?? {}),
+          }),
+          signal,
         },
-        body: JSON.stringify({
-          prompt,
-          patientId: input.patientId,
-          purpose: input.purpose,
-          inputModality: voice?.inputModality ?? "typed",
-          ...(voice ?? {}),
-        }),
-        signal,
-      });
+      );
+      if (!response.ok) {
+        const failure = (await response.json().catch(() => null)) as {
+          error?: string;
+          message?: string;
+          requestId?: string;
+        } | null;
+        const trustedServerMessage =
+          typeof failure?.error === "string" &&
+          typeof failure.requestId === "string" &&
+          typeof failure.message === "string"
+            ? failure.message
+            : null;
+        throw new Error(
+          trustedServerMessage ??
+            "Das Gespräch konnte nicht fortgesetzt werden. Bitte aktualisiere den Arbeitskontext und versuche es erneut.",
+        );
+      }
+      return response;
     },
   };
 }

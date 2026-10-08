@@ -7,6 +7,7 @@ import {
 import { runtimeSitePack } from "../src/core/runtime-instructions.js";
 import { PflegehelferService } from "../src/core/service.js";
 import { deterministicAssistantProposal } from "../src/ai/assistant-proposal.js";
+import { buildSourceReadSetV1 } from "../src/core/source-read-set.js";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -719,6 +720,119 @@ describe("runtime-guided assistant agent", () => {
     const sourceRemoved = structuredClone(response.evidence[0]!);
     delete sourceRemoved.sourceDigest;
     expect(verifyAssistantEvidenceDigest(sourceRemoved)).toBe(false);
+  });
+
+  it("keeps positive selector rows at their provenance paths when coverage is incomplete", async () => {
+    let preservedTaskPath = false;
+    let markedIncomplete = false;
+    let introducedPositiveResultsWrapper = false;
+    const gateway = fixtureGateway((turn, request) => {
+      if (turn === 0)
+        return {
+          kind: "tool-call",
+          toolName: "get_open_tasks",
+          input: {},
+          text: null,
+          draftReferenceId: null,
+          sourceReferenceIds: [],
+        };
+      const body = JSON.parse(request) as {
+        input: Array<{ content: Array<{ text?: string }> }>;
+      };
+      const prompt = body.input.at(-1)?.content[0]?.text ?? "";
+      const toolResult = prompt.slice(
+        Math.max(0, prompt.indexOf("UNTRUSTED_TOOL_DATA") - 100),
+      );
+      preservedTaskPath = toolResult.includes('\\"tasks\\":[{');
+      markedIncomplete = toolResult.includes('\\"coverage\\":\\"incomplete\\"');
+      introducedPositiveResultsWrapper = toolResult.includes(
+        '\\"positiveResults\\"',
+      );
+      const reference = evidenceHandle(request, "get_open_tasks");
+      return {
+        kind: "clarification-needed",
+        toolName: null,
+        input: null,
+        text: "Soll ich den sichtbaren Treffer öffnen?",
+        draftReferenceId: null,
+        sourceReferenceIds: reference ? [reference] : [],
+        evidenceClaims: [],
+      };
+    });
+    const response = await new AssistantService(
+      new PflegehelferService(),
+      gateway,
+      undefined,
+      {
+        captureSourceReadSet: (sourceReadSet) =>
+          Promise.resolve(
+            buildSourceReadSetV1({
+              ...(({ digest, ...content }) => {
+                void digest;
+                return content;
+              })(sourceReadSet),
+              capturedAt: new Date().toISOString(),
+              selectors: sourceReadSet.selectors.map((selector) => ({
+                ...selector,
+                complete: false,
+                absenceObserved: false,
+              })),
+            }),
+          ),
+      },
+    ).query("u-nurse", {
+      prompt: "Was steht bei Luca an?",
+      patientId: "p-luca",
+      workingContext: workingContext(),
+    });
+
+    expect(response.components[0]).toEqual({
+      type: "AssistantText",
+      message: "Soll ich den sichtbaren Treffer öffnen?",
+    });
+    expect(preservedTaskPath).toBe(true);
+    expect(markedIncomplete).toBe(true);
+    expect(introducedPositiveResultsWrapper).toBe(false);
+  });
+
+  it("stops before the first agent model turn when native preflight fails", async () => {
+    const requests: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: string, init?: RequestInit) => {
+        requests.push(typeof init?.body === "string" ? init.body : "");
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              output_text: JSON.stringify({ intent: "unknown" }),
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        );
+      }),
+    );
+    const gateway = new ModelGateway({
+      PFH_AI_MODE: "hosted-test",
+      PFH_DEMO_MODE: "true",
+      PFH_LLM_DATA_CLASSIFICATION: "synthetic-only",
+      PFH_ALLOW_EXTERNAL_AI: "true",
+      PFH_LLM_API_KEY: syntheticCredential,
+      PFH_LLM_BASE_URL: "https://synthetic-model.example.invalid/v1",
+      PFH_LLM_MODEL: "fixture-agent",
+    });
+    await expect(
+      new AssistantService(new PflegehelferService(), gateway, undefined, {
+        captureSourceReadSet: () =>
+          Promise.reject(new Error("SOURCE_READ_CONTENT_DIGEST_MISMATCH")),
+      }).query("u-nurse", {
+        prompt: "Was steht bei Luca an?",
+        patientId: "p-luca",
+        workingContext: workingContext(),
+      }),
+    ).rejects.toThrow("SOURCE_READ_CONTENT_DIGEST_MISMATCH");
+    expect(
+      requests.filter((body) => body.includes('"name":"assistant_agent_v1"')),
+    ).toHaveLength(0);
   });
 
   it("binds a task-state assertion to the selected task row in the assistant caller", async () => {

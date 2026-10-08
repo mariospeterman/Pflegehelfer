@@ -96,4 +96,68 @@ describe("OpenUI assistant request identity", () => {
     expect(first).toMatch(/^[0-9a-f-]{36}$/i);
     expect(second).toBe(first);
   });
+
+  it("surfaces the localized recovery message instead of an internal error code", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockResolvedValue(
+        Response.json(
+          {
+            error: "VERSION_CONFLICT",
+            message: "Die Quelldaten haben sich geändert. Bitte erneut prüfen.",
+            requestId: "synthetic-request-id",
+          },
+          { status: 409 },
+        ),
+      ),
+    );
+    const llm = createConversationLlm({
+      userId: "u-assistant",
+      patientId: "p-anna",
+      purpose: "direct-care",
+      submissionChannel: { take: () => null },
+    });
+    const messages = [
+      {
+        id: "client-user-message-stale",
+        role: "user" as const,
+        content: [{ type: "text" as const, text: "Was ist noch offen?" }],
+      },
+    ];
+
+    await expect(
+      llm.send({ messages } as Parameters<typeof llm.send>[0]),
+    ).rejects.toThrow("Die Quelldaten haben sich geändert");
+  });
+
+  it("does not expose an untrusted upstream JSON error message", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(
+          Response.json(
+            { message: "upstream gateway implementation detail" },
+            { status: 502 },
+          ),
+        ),
+    );
+    const llm = createConversationLlm({
+      userId: "u-assistant",
+      patientId: "p-anna",
+      purpose: "direct-care",
+      submissionChannel: { take: () => null },
+    });
+    await expect(
+      llm.send({
+        messages: [
+          {
+            id: "client-user-message-upstream",
+            role: "user" as const,
+            content: [{ type: "text" as const, text: "Was ist noch offen?" }],
+          },
+        ],
+      } as Parameters<typeof llm.send>[0]),
+    ).rejects.toThrow("Das Gespräch konnte nicht fortgesetzt werden");
+  });
 });

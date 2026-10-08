@@ -40,6 +40,100 @@ function command(key: string, id = randomUUID()): CanonicalClinicalCommand {
 describe.runIf(Boolean(databaseUrl))(
   "PostgreSQL provider delivery worker",
   () => {
+    it("blocks only an older unresolved write to the same provider resource", async () => {
+      const store = new PostgresOperationalStore(databaseUrl!);
+      const inspection = new Pool({
+        connectionString: databaseUrl,
+        options: "-c pfh.organization_id=org-demo",
+      });
+      const targetId = randomUUID();
+      const ids: string[] = [];
+      try {
+        await store.initialize();
+        const first = await store.enqueueProviderCommand({
+          provider: "device-gateway",
+          profile: "synthetic-simulator",
+          command: command(`ordered-first-${randomUUID()}`, targetId),
+        });
+        ids.push(first.id);
+        const blocked = await store.enqueueProviderCommand({
+          provider: "device-gateway",
+          profile: "synthetic-simulator",
+          command: command(`ordered-second-${randomUUID()}`, targetId),
+        });
+        const independent = await store.enqueueProviderCommand({
+          provider: "device-gateway",
+          profile: "synthetic-simulator",
+          command: command(`ordered-independent-${randomUUID()}`),
+        });
+        ids.push(blocked.id, independent.id);
+        await inspection.query(
+          `UPDATE provider_outbox SET created_at='2026-10-08T00:00:00.000Z'
+           WHERE id=ANY($1::uuid[])`,
+          [[first.id, blocked.id]],
+        );
+        const ordering = await inspection.query<{
+          id: string;
+          enqueue_sequence: string;
+        }>(
+          `SELECT id::text,enqueue_sequence::text FROM provider_outbox
+           WHERE id=ANY($1::uuid[]) ORDER BY enqueue_sequence`,
+          [[first.id, blocked.id]],
+        );
+        expect(ordering.rows.map(({ id }) => id)).toEqual([
+          first.id,
+          blocked.id,
+        ]);
+        const [firstLease] = await store.claimProviderCommands({
+          workerId: "ordering-first",
+          profile: "synthetic-simulator",
+          limit: 1,
+          leaseDurationMs: 30_000,
+        });
+        expect(firstLease?.id).toBe(first.id);
+        await store.failProviderDelivery({
+          jobId: first.id,
+          workerId: "ordering-first",
+          errorCode: "SYNTHETIC_MANUAL_HOLD",
+          errorClassification: "version-conflict",
+          retryAt: null,
+        });
+
+        const [independentLease] = await store.claimProviderCommands({
+          workerId: "ordering-independent",
+          profile: "synthetic-simulator",
+          limit: 1,
+          leaseDurationMs: 30_000,
+        });
+        expect(independentLease?.id).toBe(independent.id);
+        await store.failProviderDelivery({
+          jobId: independent.id,
+          workerId: "ordering-independent",
+          errorCode: "SYNTHETIC_CLEANUP_HOLD",
+          errorClassification: "version-conflict",
+          retryAt: null,
+        });
+        await expect(
+          store.claimProviderCommands({
+            workerId: "ordering-blocked",
+            profile: "synthetic-simulator",
+            limit: 1,
+            leaseDurationMs: 30_000,
+          }),
+        ).resolves.toEqual([]);
+      } finally {
+        await inspection.query(
+          `DELETE FROM provider_receipts WHERE outbox_id=ANY($1::uuid[])`,
+          [ids],
+        );
+        await inspection.query(
+          `DELETE FROM provider_outbox WHERE id=ANY($1::uuid[])`,
+          [ids],
+        );
+        await Promise.all([store.close(), inspection.end()]);
+      }
+    });
+
     it("leases one job to only one worker and rejects an idempotency collision", async () => {
       const store = new PostgresOperationalStore(databaseUrl!);
       const inspection = new Pool({
@@ -138,7 +232,6 @@ describe.runIf(Boolean(databaseUrl))(
         options: "-c pfh.organization_id=org-demo",
       });
       const registry = createSyntheticProviderRegistry();
-      const base = new Date(Date.now() + 10_000);
       const ids: string[] = [];
       try {
         await store.initialize();
@@ -159,20 +252,29 @@ describe.runIf(Boolean(databaseUrl))(
           profile: "synthetic-simulator",
           limit: 2,
           leaseDurationMs: 1_000,
-          now: base,
         });
         expect(abandoned).toHaveLength(2);
+        await inspection.query(
+          `UPDATE provider_outbox
+           SET lease_expires_at=clock_timestamp()-interval '1 second'
+           WHERE id=ANY($1::uuid[])`,
+          [ids],
+        );
         const recovery = new ProviderDeliveryWorker(store, registry, {
           workerId: "recovery-worker",
           profile: "synthetic-simulator",
-          now: () => new Date(base.getTime() + 2_000),
           authorizeDelivery,
         });
-        await expect(recovery.runOnce()).resolves.toMatchObject({
-          claimed: 2,
-          delivered: 1,
-          manual: 1,
-        });
+        const recovered = [await recovery.runOnce(), await recovery.runOnce()];
+        expect(recovered.reduce((total, item) => total + item.claimed, 0)).toBe(
+          2,
+        );
+        expect(
+          recovered.reduce((total, item) => total + item.delivered, 0),
+        ).toBe(1);
+        expect(recovered.reduce((total, item) => total + item.manual, 0)).toBe(
+          1,
+        );
         const states = await inspection.query<{ id: string; state: string }>(
           `SELECT id::text,state FROM provider_outbox WHERE id=ANY($1::uuid[])
            ORDER BY id`,
@@ -207,7 +309,6 @@ describe.runIf(Boolean(databaseUrl))(
       const key = `pending-receipt-${randomUUID()}`;
       const poisonId = randomUUID();
       const ids: string[] = [poisonId];
-      const start = new Date(Date.now() + 10_000);
       try {
         await store.initialize();
         const valid = await store.enqueueProviderCommand({
@@ -219,16 +320,17 @@ describe.runIf(Boolean(databaseUrl))(
         ids.push(valid.id);
         await inspection.query(
           `INSERT INTO provider_outbox
-             (organization_id,id,provider_id,profile_id,operation,idempotency_key,payload,state,next_attempt_at)
+             (organization_id,id,provider_id,profile_id,operation,idempotency_key,payload,state,next_attempt_at,target_key)
            SELECT organization_id,$2,'device-gateway','synthetic-simulator',
-                  'Observation.write',$3,$4,'pending',$5
+                  'Observation.write',$3,$4,'pending',$5,$6
            FROM provider_outbox WHERE id=$1`,
           [
             valid.id,
             poisonId,
             `poison-${randomUUID()}`,
             { invalid: true },
-            start,
+            new Date(Date.now() + 10_000),
+            `invalid:${poisonId}`,
           ],
         );
         await registry.setSimulatorMode("device-gateway", "delay");
@@ -236,7 +338,6 @@ describe.runIf(Boolean(databaseUrl))(
           workerId: "pending-worker",
           profile: "synthetic-simulator",
           retryBaseMs: 1_000,
-          now: () => start,
           authorizeDelivery,
         });
         await expect(first.runOnce()).resolves.toMatchObject({
@@ -244,16 +345,28 @@ describe.runIf(Boolean(databaseUrl))(
           retrying: 1,
         });
         await registry.setSimulatorMode("device-gateway", "normal");
+        await inspection.query(
+          `UPDATE provider_outbox
+           SET next_attempt_at=clock_timestamp()-interval '1 second'
+           WHERE id=$1`,
+          [valid.id],
+        );
         const second = new ProviderDeliveryWorker(store, registry, {
           workerId: "receipt-poller",
           profile: "synthetic-simulator",
-          now: () => new Date(start.getTime() + 2_000),
           authorizeDelivery,
         });
         await expect(second.runOnce()).resolves.toMatchObject({
           claimed: 1,
           delivered: 1,
         });
+        await inspection.query(
+          `UPDATE provider_outbox
+           SET next_attempt_at=clock_timestamp()-interval '1 second'
+           WHERE id=$1`,
+          [poisonId],
+        );
+        await expect(second.runOnce()).resolves.toMatchObject({ claimed: 0 });
         const states = await inspection.query<{
           id: string;
           state: string;
