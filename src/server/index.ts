@@ -74,6 +74,8 @@ else if (!demoMode)
   throw new Error(
     "RESOURCE_NATIVE_CUTOVER_RECEIPT_REQUIRED: normal startup will not infer authorization or clinical authority from an unverified FHIR inventory",
   );
+const durableAuditEntries = await operationalStore.loadAuditEntries();
+if (durableAuditEntries.length > 0) service.audit.restore(durableAuditEntries);
 if (demoMode) installDemoScenarioRuntime(service.checkpoint().state);
 // Historical Provenance/AuditEvent resources are already append-only in
 // Medplum and must not be rewritten on every boot. The active synthetic

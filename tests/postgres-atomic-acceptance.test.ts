@@ -4,6 +4,10 @@ import { describe, expect, it } from "vitest";
 import { AuditChain } from "../src/core/audit.js";
 import { users } from "../src/core/seed.js";
 import { siteConfiguration } from "../src/core/site-config.js";
+import { scenarioRunContentDigest } from "../src/core/demo-scenario.js";
+import { fhirResourceId } from "../src/core/fhir-resource-set.js";
+import { PflegehelferService } from "../src/core/service.js";
+import { PostgresDemoScenarioStore } from "../src/infrastructure/demo-scenario-store.js";
 import { PostgresOperationalStore } from "../src/infrastructure/operational-store.js";
 import { sourceReadSetFixture } from "./source-read-set-fixture.js";
 
@@ -11,6 +15,465 @@ const databaseUrl = process.env.PFH_OPERATIONAL_DATABASE_URL;
 const { Pool } = pg;
 
 describe.runIf(Boolean(databaseUrl))("atomic local command acceptance", () => {
+  it("clears a conversation in the same transaction as its receipt", async () => {
+    const store = new PostgresOperationalStore(databaseUrl!);
+    const scenarios = new PostgresDemoScenarioStore(databaseUrl!);
+    const inspection = new Pool({
+      connectionString: databaseUrl,
+      options: "-c pfh.organization_id=org-demo",
+    });
+    try {
+      await store.initialize();
+      await store.resetDemoState();
+      await inspection.query(
+        `DELETE FROM demo_scenario_runs WHERE organization_id=$1`,
+        [siteConfiguration.institutionId],
+      );
+      const scenario = await scenarios.initialize();
+      const context = await store.bindAssistantContext(
+        "u-assistant",
+        "care-assistant",
+        randomUUID(),
+        "p-luca",
+        "enc-luca-2026",
+      );
+      const makeInput = (key: string, expectedDigest: string) => {
+        const resultPayload = { cleared: true, expiresAt: null };
+        const requestHash = createHash("sha256").update(key).digest("hex");
+        return {
+          receipt: {
+            key,
+            requestHash,
+            statusCode: 200,
+            payload: JSON.stringify(resultPayload),
+            authorization: {
+              actorId: "u-assistant",
+              actorRole: "care-assistant" as const,
+              siteId: siteConfiguration.siteId,
+              departmentId: siteConfiguration.department.id,
+              route: "/api/v1/assistant/conversation/clear",
+              purpose: "direct-care" as const,
+              actions: ["patient:read" as const],
+              patientId: "p-luca",
+              encounterId: "enc-luca-2026",
+              patientScopes: [
+                { patientId: "p-luca", encounterId: "enc-luca-2026" },
+              ],
+              workdayAuthority: null,
+            },
+          },
+          actorId: "u-assistant",
+          actorRole: "care-assistant" as const,
+          purpose: "direct-care" as const,
+          policyVersion: "test-policy-v1",
+          resultPayload,
+          auditEntries: [],
+          clinicalResources: [],
+          removedReferences: [],
+          clinicalExpectedVersions: {},
+          demoScenarioState: scenario.state,
+          demoScenarioWorkspace: scenario.workspace,
+          demoScenarioExpectedDigest: expectedDigest,
+          conversationClear: {
+            actorId: "u-assistant",
+            actorRole: "care-assistant" as const,
+            context,
+          },
+          providerCommands: [],
+        };
+      };
+      const rejected = makeInput(
+        `conversation-clear-rejected-${randomUUID()}`,
+        "0".repeat(64),
+      );
+      await expect(
+        store.acceptApplicationCommand(rejected),
+      ).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+      await expect(
+        store.resolveAssistantContext(
+          "u-assistant",
+          "care-assistant",
+          context.clientContextId,
+        ),
+      ).resolves.toMatchObject({
+        threadId: context.threadId,
+        contextRevision: context.contextRevision,
+      });
+
+      const input = makeInput(
+        `conversation-clear-${randomUUID()}`,
+        scenarioRunContentDigest(scenario),
+      );
+      const accepted = await store.acceptApplicationCommand(input);
+      const cleared = await store.resolveAssistantContext(
+        "u-assistant",
+        "care-assistant",
+        context.clientContextId,
+      );
+      expect(cleared?.threadId).not.toBe(context.threadId);
+      expect(cleared?.contextRevision).toBe(context.contextRevision + 1);
+      await expect(
+        store.acceptApplicationCommand(input),
+      ).resolves.toMatchObject({ id: accepted.id, replayed: true });
+      await expect(
+        store.resolveAssistantContext(
+          "u-assistant",
+          "care-assistant",
+          context.clientContextId,
+        ),
+      ).resolves.toMatchObject({
+        threadId: cleared?.threadId,
+        contextRevision: cleared?.contextRevision,
+      });
+    } finally {
+      await store.resetDemoState();
+      await inspection.query(
+        `DELETE FROM demo_scenario_runs WHERE organization_id=$1`,
+        [siteConfiguration.institutionId],
+      );
+      await Promise.all([store.close(), scenarios.close(), inspection.end()]);
+    }
+  });
+
+  it("rolls a workday mutation back with a failed application acceptance", async () => {
+    const store = new PostgresOperationalStore(databaseUrl!);
+    const scenarios = new PostgresDemoScenarioStore(databaseUrl!);
+    const inspection = new Pool({
+      connectionString: databaseUrl,
+      options: "-c pfh.organization_id=org-demo",
+    });
+    try {
+      await store.initialize();
+      await store.resetDemoState();
+      await inspection.query(
+        `DELETE FROM demo_scenario_runs WHERE organization_id=$1`,
+        [siteConfiguration.institutionId],
+      );
+      const scenario = await scenarios.initialize();
+      const before = await store.getWorkday("u-assistant", "care-assistant");
+      const assistantContext = await store.bindAssistantContext(
+        "u-assistant",
+        "care-assistant",
+        randomUUID(),
+        "p-luca",
+        "enc-luca-2026",
+      );
+      const command = {
+        type: "start-episode" as const,
+        patientId: "p-luca",
+        encounterId: "enc-luca-2026",
+        kind: "spontaneous" as const,
+        title: "Atomarer Testbesuch",
+      };
+      const makeInput = (commandKey: string, expectedDigest: string) => {
+        const requestHash = createHash("sha256")
+          .update(commandKey)
+          .digest("hex");
+        const resultPayload = { ...before, providerState: "external-gated" };
+        return {
+          receipt: {
+            key: commandKey,
+            requestHash,
+            statusCode: 200,
+            payload: JSON.stringify(resultPayload),
+            authorization: {
+              actorId: "u-assistant",
+              actorRole: "care-assistant" as const,
+              siteId: siteConfiguration.siteId,
+              departmentId: siteConfiguration.department.id,
+              route: "/api/v1/workday",
+              purpose: "direct-care" as const,
+              actions: [
+                "patient:read" as const,
+                "task:update" as const,
+                "note:approve" as const,
+              ],
+              patientId: "p-luca",
+              encounterId: "enc-luca-2026",
+              patientScopes: [
+                { patientId: "p-luca", encounterId: "enc-luca-2026" },
+              ],
+              workdayAuthority: {
+                sessionId: before.sessionId,
+                handoverId: before.handover.id,
+                handoverVersion: before.handover.version,
+                handoverContentHash: before.handover.contentHash,
+              },
+            },
+          },
+          actorId: "u-assistant",
+          actorRole: "care-assistant" as const,
+          purpose: "direct-care" as const,
+          policyVersion: "test-policy-v1",
+          resultPayload,
+          auditEntries: [],
+          clinicalResources: [],
+          removedReferences: [],
+          clinicalExpectedVersions: {},
+          demoScenarioState: scenario.state,
+          demoScenarioWorkspace: scenario.workspace,
+          demoScenarioExpectedDigest: expectedDigest,
+          workdayCommand: {
+            actorId: "u-assistant",
+            actorRole: "care-assistant" as const,
+            sessionId: before.sessionId,
+            command,
+          },
+          voiceAuthority: {
+            tokenHash: createHash("sha256")
+              .update(`voice-${commandKey}`)
+              .digest("hex"),
+            record: {
+              clientContextId: assistantContext.clientContextId,
+              actorId: "u-assistant",
+              patientId: "p-luca",
+              encounterId: "enc-luca-2026",
+              purpose: "direct-care" as const,
+              original: {
+                transcript: "Synthetischer atomarer Sprachbeleg",
+                transcriptHash: createHash("sha256")
+                  .update("Synthetischer atomarer Sprachbeleg")
+                  .digest("hex"),
+                capturedAt: new Date().toISOString(),
+                source: {
+                  kind: "asr" as const,
+                  mode: "browser-demo" as const,
+                  model: "synthetic-asr-v1",
+                  language: "de",
+                  confidence: null,
+                  confidenceState: "unknown" as const,
+                  audioRetained: false as const,
+                },
+              },
+              sessionId: assistantContext.sessionId,
+              threadId: assistantContext.threadId,
+              contextRevision: assistantContext.contextRevision,
+              expiresAt: Date.now() + 60_000,
+            },
+          },
+          providerCommands: [
+            {
+              provider: "carecoach" as const,
+              profile: "synthetic-simulator" as const,
+              retrySafety: "idempotent-provider" as const,
+              command: {
+                commandId: randomUUID(),
+                operation: "NursingNote.write" as const,
+                patientReference: `Patient/${fhirResourceId("Patient", "p-luca")}`,
+                encounterReference: `Encounter/${fhirResourceId("Encounter", "enc-luca-2026")}`,
+                resource: {
+                  resourceType: "DocumentReference" as const,
+                  id: randomUUID(),
+                  body: {
+                    patientId: fhirResourceId("Patient", "p-luca"),
+                    encounterId: fhirResourceId("Encounter", "enc-luca-2026"),
+                    status: "final",
+                    structuredText: "Synthetischer atomarer Workday-Beleg",
+                  },
+                },
+                expectedProviderVersion: null,
+                mappingVersion: "synthetic-v1",
+                correlationId: randomUUID(),
+                causationId: randomUUID(),
+                idempotencyKey: randomUUID(),
+                approvedAt: new Date().toISOString(),
+              },
+            },
+          ],
+        };
+      };
+
+      const rejectedKey = `workday-rollback-${randomUUID()}`;
+      const rejectedInput = makeInput(rejectedKey, "0".repeat(64));
+      await expect(
+        store.acceptApplicationCommand(rejectedInput),
+      ).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+      await expect(
+        store.loadVoiceAuthority(rejectedInput.voiceAuthority.tokenHash),
+      ).resolves.toBeNull();
+      expect(
+        (await store.getWorkday("u-assistant", "care-assistant")).episodes,
+      ).toHaveLength(0);
+      const rejectedEvidence = await inspection.query<{ count: number }>(
+        `SELECT count(*)::int AS count FROM accepted_commands WHERE command_key=$1`,
+        [rejectedKey],
+      );
+      expect(rejectedEvidence.rows[0]?.count).toBe(0);
+
+      const acceptedKey = `workday-accepted-${randomUUID()}`;
+      const input = makeInput(acceptedKey, scenarioRunContentDigest(scenario));
+      const accepted = await store.acceptApplicationCommand(input);
+      await expect(
+        store.loadVoiceAuthority(input.voiceAuthority.tokenHash),
+      ).resolves.toMatchObject({ actorId: "u-assistant" });
+      const payload = JSON.parse(accepted.receipt.payload) as {
+        activeEpisode: { patientId: string } | null;
+      };
+      expect(payload.activeEpisode?.patientId).toBe("p-luca");
+      await expect(
+        inspection.query(
+          `UPDATE accepted_commands SET session_id=$2
+           WHERE organization_id=$3 AND id=$1`,
+          [accepted.id, randomUUID(), siteConfiguration.institutionId],
+        ),
+      ).rejects.toMatchObject({
+        constraint: "accepted_commands_authority_shape",
+      });
+      await expect(
+        store.acceptApplicationCommand(input),
+      ).resolves.toMatchObject({ id: accepted.id, replayed: true });
+      await expect(
+        store.claimProviderCommands({
+          workerId: "provider-only-acceptance",
+          profile: "synthetic-simulator",
+          limit: 1,
+          leaseDurationMs: 30_000,
+        }),
+      ).resolves.toMatchObject([
+        {
+          acceptedCommandId: accepted.id,
+          authorityEnvelope: {
+            patientId: "p-luca",
+            encounterId: "enc-luca-2026",
+          },
+        },
+      ]);
+      expect(
+        (await store.getWorkday("u-assistant", "care-assistant")).episodes,
+      ).toHaveLength(1);
+    } finally {
+      await store.resetDemoState();
+      await inspection.query(
+        `DELETE FROM demo_scenario_runs WHERE organization_id=$1`,
+        [siteConfiguration.institutionId],
+      );
+      await Promise.all([store.close(), scenarios.close(), inspection.end()]);
+    }
+  });
+
+  it("atomically accepts a typed application command and its clinical delta", async () => {
+    const store = new PostgresOperationalStore(databaseUrl!);
+    const scenarios = new PostgresDemoScenarioStore(databaseUrl!);
+    const inspection = new Pool({
+      connectionString: databaseUrl,
+      options: "-c pfh.organization_id=org-demo",
+    });
+    try {
+      await store.initialize();
+      await store.resetDemoState();
+      await inspection.query(
+        `DELETE FROM demo_scenario_runs WHERE organization_id=$1`,
+        [siteConfiguration.institutionId],
+      );
+      const scenario = await scenarios.initialize();
+      const patientResource = new PflegehelferService()
+        .fhirResources()
+        .find(
+          (resource) =>
+            resource.resourceType === "Patient" &&
+            resource.id === fhirResourceId("Patient", "p-luca"),
+        );
+      if (!patientResource) throw new Error("patient resource missing");
+      const commandKey = `application-command-${randomUUID()}`;
+      const requestHash = createHash("sha256").update(commandKey).digest("hex");
+      const resultPayload = { accepted: true };
+      const acceptedScenarioState = structuredClone(scenario.state);
+      acceptedScenarioState.tasks[0]!.title = "Atomic application command";
+      const receipt = {
+        key: commandKey,
+        requestHash,
+        statusCode: 200,
+        payload: JSON.stringify(resultPayload),
+        authorization: {
+          actorId: "u-assistant",
+          actorRole: "care-assistant" as const,
+          siteId: siteConfiguration.siteId,
+          departmentId: siteConfiguration.department.id,
+          route: "/api/v1/tasks",
+          purpose: "direct-care" as const,
+          actions: ["task:create" as const],
+          patientId: "p-luca",
+          encounterId: "enc-luca-2026",
+          patientScopes: [
+            { patientId: "p-luca", encounterId: "enc-luca-2026" },
+          ],
+          workdayAuthority: null,
+        },
+      };
+      const input = {
+        receipt,
+        actorId: "u-assistant",
+        actorRole: "care-assistant" as const,
+        purpose: "direct-care" as const,
+        policyVersion: "test-policy-v1",
+        resultPayload,
+        auditEntries: [],
+        clinicalResources: [patientResource],
+        removedReferences: [],
+        clinicalExpectedVersions: {
+          [`Patient/${patientResource.id}`]: null,
+        },
+        demoScenarioState: acceptedScenarioState,
+        demoScenarioWorkspace: scenario.workspace,
+        demoScenarioExpectedDigest: scenarioRunContentDigest(scenario),
+        providerCommands: [],
+      };
+      const accepted = await store.acceptApplicationCommand(input);
+      const replayed = await store.acceptApplicationCommand(input);
+      expect(accepted.replayed).toBe(false);
+      expect(replayed).toMatchObject({ id: accepted.id, replayed: true });
+      await expect(
+        store.loadApplicationCommandReceipt(commandKey, requestHash),
+      ).resolves.toEqual(receipt);
+      await expect(
+        store.claimClinicalProjection({
+          workerId: "application-command-worker",
+          leaseDurationMs: 30_000,
+        }),
+      ).resolves.toMatchObject({ acceptedCommandId: accepted.id });
+      const evidence = await inspection.query<{
+        authorityKind: string;
+        receipts: number;
+        projections: number;
+      }>(
+        `SELECT authority_kind AS "authorityKind",
+                (SELECT count(*)::int FROM command_receipts WHERE command_key=$2) receipts,
+                (SELECT count(*)::int FROM clinical_projection_outbox
+                  WHERE accepted_command_id=$1) projections
+         FROM accepted_commands WHERE id=$1`,
+        [accepted.id, commandKey],
+      );
+      expect(evidence.rows[0]).toEqual({
+        authorityKind: "application-command",
+        receipts: 1,
+        projections: 1,
+      });
+      const staleKey = `application-command-${randomUUID()}`;
+      await expect(
+        store.acceptApplicationCommand({
+          ...input,
+          receipt: {
+            ...receipt,
+            key: staleKey,
+            requestHash: createHash("sha256").update(staleKey).digest("hex"),
+          },
+        }),
+      ).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+      const rolledBack = await inspection.query<{ count: number }>(
+        `SELECT count(*)::int AS count FROM accepted_commands WHERE command_key=$1`,
+        [staleKey],
+      );
+      expect(rolledBack.rows[0]?.count).toBe(0);
+    } finally {
+      await store.resetDemoState();
+      await inspection.query(
+        `DELETE FROM demo_scenario_runs WHERE organization_id=$1`,
+        [siteConfiguration.institutionId],
+      );
+      await Promise.all([store.close(), scenarios.close(), inspection.end()]);
+    }
+  });
+
   it("consumes authority, stores receipt/audit/projection and replays once", async () => {
     const store = new PostgresOperationalStore(databaseUrl!);
     const inspection = new Pool({
@@ -67,6 +530,7 @@ describe.runIf(Boolean(databaseUrl))("atomic local command acceptance", () => {
         reviewItems: [{ id: "action-1", kind: "note" }],
       });
       const audit = new AuditChain();
+      audit.restore(await store.loadAuditEntries());
       const auditEntry = audit.append({
         actor: users.find((user) => user.id === "u-assistant")!,
         action: "assistant:intent-executed",
@@ -236,6 +700,15 @@ describe.runIf(Boolean(databaseUrl))("atomic local command acceptance", () => {
         projectionContainsCheckpoint: false,
         projectionSite: siteConfiguration.siteId,
       });
+      const restartedStore = new PostgresOperationalStore(databaseUrl!);
+      try {
+        await restartedStore.initialize();
+        const restoredAudit = new AuditChain();
+        restoredAudit.restore(await restartedStore.loadAuditEntries());
+        expect(restoredAudit.snapshot().at(-1)?.hash).toBe(auditEntry.hash);
+      } finally {
+        await restartedStore.close();
+      }
       await expect(
         store.claimProviderCommands({
           workerId: "too-early-provider",

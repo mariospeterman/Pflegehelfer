@@ -57,6 +57,7 @@ describe("immutable migration ledger", () => {
         name: "028_resource_scoped_clinical_projection.sql",
       },
       { version: 29, name: "029_site_scoped_provider_delivery.sql" },
+      { version: 30, name: "030_common_application_command_boundary.sql" },
     ]);
     expect(
       migrations.every(({ checksum }) => /^[a-f0-9]{64}$/.test(checksum)),

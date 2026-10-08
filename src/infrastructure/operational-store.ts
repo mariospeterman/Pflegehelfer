@@ -13,7 +13,7 @@ import {
   archiveAssistantResponse,
   type AssistantResponse,
 } from "../core/assistant-service.js";
-import type { WorkflowState } from "../core/service.js";
+import type { CommandReceipt, WorkflowState } from "../core/service.js";
 import { scenarioRunContentDigest } from "../core/demo-scenario.js";
 import {
   providerIdSchema,
@@ -59,6 +59,7 @@ import type {
 } from "../core/voice-provenance.js";
 import {
   assertCanonicalManagedResourceOwnership,
+  fhirResourceId,
   managedProjectionTag,
   tenantTag,
   tenantTagSystem,
@@ -88,6 +89,37 @@ export type {
 const { Pool } = pg;
 const organizationId = siteConfiguration.institutionId;
 const departmentId = siteConfiguration.department.id;
+
+const applicationReceiptAuthorizationSchema = z
+  .object({
+    actorId: z.string().min(1),
+    actorRole: z.custom<Role>(),
+    siteId: z.string().min(1),
+    departmentId: z.string().min(1),
+    route: z.string().min(1),
+    purpose: z.custom<Purpose>(),
+    actions: z.array(actionSchema).min(1),
+    patientId: z.string().min(1).nullable(),
+    encounterId: z.string().min(1).nullable(),
+    patientScopes: z.array(
+      z
+        .object({
+          patientId: z.string().min(1),
+          encounterId: z.string().min(1),
+        })
+        .strict(),
+    ),
+    workdayAuthority: z
+      .object({
+        sessionId: z.string().min(1),
+        handoverId: z.string().min(1),
+        handoverVersion: z.number().int().positive(),
+        handoverContentHash: z.string().min(1),
+      })
+      .strict()
+      .nullable(),
+  })
+  .strict();
 const sessionTtlMs = siteConfiguration.sessionTtlHours * 60 * 60_000;
 
 function canonicalJson(value: unknown): string {
@@ -423,6 +455,44 @@ export interface LocalIntentAcceptance {
   }>;
 }
 
+export interface ApplicationCommandAcceptance {
+  receipt: CommandReceipt;
+  actorId: string;
+  actorRole: Role;
+  purpose: Purpose;
+  policyVersion: string;
+  resultPayload: unknown;
+  auditEntries: AuditEntry[];
+  clinicalResources: Resource[];
+  removedReferences: string[];
+  clinicalExpectedVersions: Record<string, string | null>;
+  demoScenarioState: WorkflowState;
+  demoScenarioWorkspace: DemoWorkspaceSnapshot;
+  demoScenarioExpectedDigest: string;
+  workdayCommand?: {
+    actorId: string;
+    actorRole: Role;
+    sessionId: string;
+    command: WorkdayCommand;
+  };
+  voiceAuthority?: {
+    tokenHash: string;
+    record: DurableVoiceAuthority;
+  };
+  conversationClear?: {
+    actorId: string;
+    actorRole: Role;
+    context: AssistantContextBinding;
+  };
+  providerCommands: LocalIntentAcceptance["providerCommands"];
+}
+
+export interface ApplicationCommandReceipt {
+  id: string;
+  receipt: CommandReceipt;
+  replayed: boolean;
+}
+
 export interface ClinicalProjectionJob {
   id: string;
   acceptedCommandId: string;
@@ -625,6 +695,7 @@ export interface OperationalStore {
     role: Role,
     command: WorkdayCommand,
   ): Promise<WorkdayView>;
+  loadAuditEntries(): Promise<AuditEntry[]>;
   appendAudit(entry: AuditEntry): Promise<void>;
   appendUiInvalidation(
     actorId: string,
@@ -651,6 +722,13 @@ export interface OperationalStore {
   acceptIntentCommand(
     input: LocalIntentAcceptance,
   ): Promise<AcceptedCommandReceipt>;
+  acceptApplicationCommand(
+    input: ApplicationCommandAcceptance,
+  ): Promise<ApplicationCommandReceipt>;
+  loadApplicationCommandReceipt(
+    commandKey: string,
+    requestHash: string,
+  ): Promise<CommandReceipt | null>;
   loadAcceptedCommandReceipt(
     commandKey: string,
     requestHash: string,
@@ -815,6 +893,7 @@ export class InMemoryOperationalStore implements OperationalStore {
   >();
   private readonly transfers: ResponsibilityTransferView[] = [];
   private readonly uiEvents: Array<DurableUiEvent & { actorId: string }> = [];
+  private readonly auditEntries: AuditEntry[] = [];
   private readonly handoverClinical = new Map<
     string,
     HandoverClinicalSnapshotItem[]
@@ -846,6 +925,10 @@ export class InMemoryOperationalStore implements OperationalStore {
   private readonly acceptedCommands = new Map<
     string,
     { requestHash: string; receipt: AcceptedCommandReceipt }
+  >();
+  private readonly applicationCommands = new Map<
+    string,
+    { requestHash: string; id: string; receipt: CommandReceipt }
   >();
   private readonly workspaceCommandReceipts = new Map<
     string,
@@ -1711,8 +1794,12 @@ export class InMemoryOperationalStore implements OperationalStore {
       )
       .sort((left, right) => right.startedAt.localeCompare(left.startedAt))[0];
   }
+  loadAuditEntries(): Promise<AuditEntry[]> {
+    return Promise.resolve(structuredClone(this.auditEntries));
+  }
   appendAudit(entry: AuditEntry): Promise<void> {
-    void entry;
+    if (!this.auditEntries.some((candidate) => candidate.hash === entry.hash))
+      this.auditEntries.push(structuredClone(entry));
     return Promise.resolve();
   }
   appendUiInvalidation(
@@ -1957,6 +2044,61 @@ export class InMemoryOperationalStore implements OperationalStore {
       ...structuredClone(prior.receipt),
       replayed: true,
     });
+  }
+  acceptApplicationCommand(
+    input: ApplicationCommandAcceptance,
+  ): Promise<ApplicationCommandReceipt> {
+    const prior = this.applicationCommands.get(input.receipt.key);
+    if (prior) {
+      if (prior.requestHash !== input.receipt.requestHash)
+        return Promise.reject(new Error("COMMAND_ID_PAYLOAD_MISMATCH"));
+      return Promise.resolve({
+        id: prior.id,
+        receipt: structuredClone(prior.receipt),
+        replayed: true,
+      });
+    }
+    const id = randomUUID();
+    this.applicationCommands.set(input.receipt.key, {
+      requestHash: input.receipt.requestHash,
+      id,
+      receipt: structuredClone(input.receipt),
+    });
+    if (input.clinicalResources.length || input.removedReferences.length)
+      this.clinicalProjectionJobs.push({
+        id: randomUUID(),
+        acceptedCommandId: id,
+        idempotencyKey: `clinical:${id}`,
+        resources: structuredClone(input.clinicalResources),
+        removedReferences: [...input.removedReferences],
+        expectedVersions: structuredClone(input.clinicalExpectedVersions),
+        payloadSchemaVersion: 2,
+        targetKeys: clinicalProjectionTargetKeys(
+          input.clinicalResources,
+          input.removedReferences,
+          id,
+        ),
+        attempts: 0,
+        state: "pending",
+        leaseOwner: null,
+        lastErrorCode: null,
+        createdAt: new Date().toISOString(),
+      });
+    return Promise.resolve({
+      id,
+      receipt: structuredClone(input.receipt),
+      replayed: false,
+    });
+  }
+  loadApplicationCommandReceipt(
+    commandKey: string,
+    requestHash: string,
+  ): Promise<CommandReceipt | null> {
+    const prior = this.applicationCommands.get(commandKey);
+    if (!prior) return Promise.resolve(null);
+    if (prior.requestHash !== requestHash)
+      return Promise.reject(new Error("COMMAND_ID_PAYLOAD_MISMATCH"));
+    return Promise.resolve(structuredClone(prior.receipt));
   }
   isAcceptedCommandReceiptCurrent(
     authorization: AcceptedCommandAuthorization,
@@ -2667,10 +2809,12 @@ export class InMemoryOperationalStore implements OperationalStore {
     this.clientContexts.clear();
     this.transfers.splice(0, this.transfers.length);
     this.uiEvents.splice(0, this.uiEvents.length);
+    this.auditEntries.splice(0, this.auditEntries.length);
     this.handoverClinical.clear();
     this.authorities.clear();
     this.voiceAuthorities.clear();
     this.acceptedCommands.clear();
+    this.applicationCommands.clear();
     this.workspaceCommandReceipts.clear();
     this.clinicalProjectionJobs.splice(0, this.clinicalProjectionJobs.length);
     this.workspaceComments.clear();
@@ -3889,12 +4033,20 @@ export class PostgresOperationalStore
   }
   async getWorkday(actorId: string, role: Role): Promise<WorkdayView> {
     const session = await this.getOrStartSession(actorId, role);
+    return this.getWorkdayForSession(actorId, role, session, this.pool);
+  }
+  private async getWorkdayForSession(
+    actorId: string,
+    role: Role,
+    session: WorkingSessionView,
+    queryable: Pick<pg.Pool, "query">,
+  ): Promise<WorkdayView> {
     const configuredWorkday = workdayConfiguration(
       actorId,
       role,
       session.startedAt,
     );
-    await this.pool.query(
+    await queryable.query(
       `INSERT INTO handover_snapshots
          (organization_id,id,department_id,shift_key,version,patient_ids,cutoff_at,source_hash,status,owner_actor_id,created_by,content,content_hash)
        VALUES ($1,$2,$3,$4,1,$5,now(),$6,'open',$7,$7,$8::jsonb,$6)
@@ -3915,7 +4067,7 @@ export class PostgresOperationalStore
         JSON.stringify(handoverContent(configuredWorkday.patientIds)),
       ],
     );
-    const handoverResult = await this.pool.query(
+    const handoverResult = await queryable.query(
       `SELECT * FROM handover_snapshots
        WHERE organization_id=$1 AND department_id=$2
          AND content IS NOT NULL AND content_hash=source_hash
@@ -3945,17 +4097,17 @@ export class PostgresOperationalStore
       clinical_bound: boolean;
       status: "open" | "transferred" | "acknowledged";
     };
-    const acknowledgements = await this.pool.query<{ patient_id: string }>(
+    const acknowledgements = await queryable.query<{ patient_id: string }>(
       `SELECT patient_id FROM handover_acknowledgements
        WHERE organization_id=$1 AND handover_id=$2 AND actor_id=$3 AND status='acknowledged'`,
       [organizationId, handover.id, actorId],
     );
-    const episodeResult = await this.pool.query(
+    const episodeResult = await queryable.query(
       `SELECT * FROM work_episodes WHERE organization_id=$1 AND session_id=$2
        ORDER BY started_at ASC`,
       [organizationId, session.id],
     );
-    const transferResult = await this.pool.query(
+    const transferResult = await queryable.query(
       `SELECT * FROM responsibility_transfers
        WHERE organization_id=$1 AND (from_actor_id=$2 OR to_actor_id=$2)
        ORDER BY created_at ASC`,
@@ -4177,19 +4329,25 @@ export class PostgresOperationalStore
     actorId: string,
     role: Role,
     command: WorkdayCommand,
+    transaction?: {
+      client: pg.PoolClient;
+      session: WorkingSessionView;
+    },
   ): Promise<WorkdayView> {
     if (!["care-assistant", "registered-nurse"].includes(role))
       throw new Error("WORKDAY_ROLE_DENIED");
-    const session = await this.getOrStartSession(actorId, role);
+    const session =
+      transaction?.session ?? (await this.getOrStartSession(actorId, role));
     if (session.status === "completed") throw new Error("SHIFT_ALREADY_CLOSED");
     const configuredWorkday = workdayConfiguration(
       actorId,
       role,
       session.startedAt,
     );
-    const client = await this.pool.connect();
+    const client = transaction?.client ?? (await this.pool.connect());
+    const ownsTransaction = !transaction;
     try {
-      await client.query("BEGIN");
+      if (ownsTransaction) await client.query("BEGIN");
       const lockedSession = await client.query<{ status: string }>(
         `SELECT status FROM working_sessions WHERE organization_id=$1 AND id=$2 FOR UPDATE`,
         [organizationId, session.id],
@@ -4638,25 +4796,55 @@ export class PostgresOperationalStore
           { command: command.type },
         ],
       );
-      await client.query("COMMIT");
+      const result = await this.getWorkdayForSession(
+        actorId,
+        role,
+        session,
+        client,
+      );
+      if (ownsTransaction) await client.query("COMMIT");
+      return result;
     } catch (error) {
-      await client.query("ROLLBACK");
+      if (ownsTransaction) await client.query("ROLLBACK");
       throw error;
     } finally {
-      client.release();
+      if (ownsTransaction) client.release();
     }
-    return this.getWorkday(actorId, role);
   }
-  async appendAudit(entry: AuditEntry): Promise<void> {
-    await this.pool.query(
+  private async appendAuditEntry(
+    client: pg.PoolClient,
+    entry: AuditEntry,
+  ): Promise<void> {
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+      [`${organizationId}:audit-chain:v2`],
+    );
+    const existing = await client.query(
+      `SELECT 1 FROM audit_entries
+       WHERE organization_id=$1 AND entry_hash=$2`,
+      [organizationId, entry.hash],
+    );
+    if (existing.rowCount) return;
+    const head = await client.query<{ entry_hash: string }>(
+      `SELECT entry_hash FROM audit_entries
+       WHERE organization_id=$1 AND audit_entry_id IS NOT NULL
+       ORDER BY id DESC LIMIT 1`,
+      [organizationId],
+    );
+    if (entry.previousHash !== (head.rows[0]?.entry_hash ?? "GENESIS"))
+      throw new Error("AUDIT_CHAIN_STALE");
+    await client.query(
       `INSERT INTO audit_entries
-         (organization_id,actor_id,actor_role,action,outcome,patient_id,purpose,detail,previous_hash,entry_hash,occurred_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+         (organization_id,audit_entry_id,actor_id,actor_role,actor_type,action,
+          outcome,patient_id,purpose,detail,previous_hash,entry_hash,occurred_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
        ON CONFLICT (organization_id,entry_hash) DO NOTHING`,
       [
         organizationId,
+        entry.id,
         entry.actorId,
         entry.actorRole,
+        entry.actorType ?? "human",
         entry.action,
         entry.outcome,
         entry.patientId,
@@ -4667,6 +4855,59 @@ export class PostgresOperationalStore
         entry.occurredAt,
       ],
     );
+  }
+  async loadAuditEntries(): Promise<AuditEntry[]> {
+    const result = await this.pool.query<{
+      audit_entry_id: string;
+      actor_id: string;
+      actor_role: Role;
+      actor_type: "human" | "system";
+      action: string;
+      outcome: AuditEntry["outcome"];
+      patient_id: string | null;
+      purpose: Purpose;
+      detail: AuditEntry["detail"];
+      previous_hash: string;
+      entry_hash: string;
+      occurred_at: Date | string;
+    }>(
+      `SELECT audit_entry_id::text,actor_id,actor_role,actor_type,action,outcome,
+              patient_id,purpose,detail,previous_hash,entry_hash,occurred_at
+       FROM audit_entries
+       WHERE organization_id=$1 AND audit_entry_id IS NOT NULL
+       ORDER BY id`,
+      [organizationId],
+    );
+    return result.rows.map((row) => ({
+      id: row.audit_entry_id,
+      occurredAt:
+        row.occurred_at instanceof Date
+          ? row.occurred_at.toISOString()
+          : String(row.occurred_at),
+      actorId: row.actor_id,
+      actorRole: row.actor_role,
+      actorType: row.actor_type,
+      action: row.action,
+      patientId: row.patient_id,
+      purpose: row.purpose,
+      outcome: row.outcome,
+      detail: row.detail,
+      previousHash: row.previous_hash,
+      hash: row.entry_hash,
+    }));
+  }
+  async appendAudit(entry: AuditEntry): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await this.appendAuditEntry(client, entry);
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
   async appendUiInvalidation(
     actorId: string,
@@ -5257,8 +5498,9 @@ export class PostgresOperationalStore
       );
       await client.query(
         `INSERT INTO command_receipts
-           (organization_id,command_key,request_hash,status_code,result_ref,expires_at)
-         VALUES ($1,$2,$3,$4,$5,now()+interval '30 days')`,
+           (organization_id,command_key,request_hash,status_code,result_ref,
+            accepted_command_id,expires_at)
+         VALUES ($1,$2,$3,$4,$5,$6,now()+interval '30 days')`,
         [
           organizationId,
           input.commandKey,
@@ -5269,29 +5511,11 @@ export class PostgresOperationalStore
             payload: input.resultPayload,
             authorization: authorityEnvelope,
           }),
+          acceptedCommandId,
         ],
       );
       for (const entry of input.auditEntries)
-        await client.query(
-          `INSERT INTO audit_entries
-             (organization_id,actor_id,actor_role,action,outcome,patient_id,purpose,
-              detail,previous_hash,entry_hash,occurred_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-           ON CONFLICT (organization_id,entry_hash) DO NOTHING`,
-          [
-            organizationId,
-            entry.actorId,
-            entry.actorRole,
-            entry.action,
-            entry.outcome,
-            entry.patientId,
-            entry.purpose,
-            entry.detail,
-            entry.previousHash,
-            entry.hash,
-            entry.occurredAt,
-          ],
-        );
+        await this.appendAuditEntry(client, entry);
       await client.query(
         `INSERT INTO domain_events
            (organization_id,aggregate_type,aggregate_id,event_type,audience,payload)
@@ -5429,6 +5653,28 @@ export class PostgresOperationalStore
         input.removedReferences,
         acceptedCommandId,
       );
+      if (input.clinicalResources.length || input.removedReferences.length) {
+        for (const target of [...clinicalTargetKeys].sort())
+          await client.query(
+            "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+            [
+              `${organizationId}:${siteConfiguration.siteId}:clinical-target:${target}`,
+            ],
+          );
+        const overlapping = await client.query(
+          `SELECT 1 FROM clinical_projection_outbox
+           WHERE organization_id=$1 AND site_id=$2 AND state <> 'delivered'
+             AND target_keys && $3::text[]
+           LIMIT 1 FOR UPDATE`,
+          [organizationId, siteConfiguration.siteId, clinicalTargetKeys],
+        );
+        if (overlapping.rowCount)
+          throw new DomainError(
+            "VERSION_CONFLICT",
+            "Eine frühere Änderung derselben klinischen Ressource wird noch projiziert. Bitte nach der Zustellung erneut versuchen.",
+            409,
+          );
+      }
       await client.query(
         `INSERT INTO clinical_projection_outbox
            (organization_id,site_id,id,accepted_command_id,idempotency_key,
@@ -5556,6 +5802,574 @@ export class PostgresOperationalStore
     } finally {
       client.release();
     }
+  }
+  async acceptApplicationCommand(
+    input: ApplicationCommandAcceptance,
+  ): Promise<ApplicationCommandReceipt> {
+    const authorization = applicationReceiptAuthorizationSchema.parse(
+      input.receipt.authorization,
+    );
+    if (
+      authorization.actorId !== input.actorId ||
+      authorization.actorRole !== input.actorRole ||
+      authorization.purpose !== input.purpose ||
+      authorization.siteId !== siteConfiguration.siteId ||
+      authorization.departmentId !== departmentId ||
+      input.receipt.payload !== JSON.stringify(input.resultPayload)
+    )
+      throw new Error("APPLICATION_COMMAND_RECEIPT_BINDING_INVALID");
+    let effectiveAuthorization = authorization;
+    let effectiveResultPayload = input.resultPayload;
+    let effectiveReceipt = input.receipt;
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+        [`${organizationId}:accepted-command:${input.receipt.key}`],
+      );
+      const prior = await client.query<{
+        id: string;
+        request_hash: string;
+        status_code: number;
+        result_ref: {
+          payload?: unknown;
+          authorization?: unknown;
+        };
+      }>(
+        `SELECT a.id::text,a.request_hash,r.status_code,r.result_ref
+         FROM accepted_commands a
+         JOIN command_receipts r
+           ON r.organization_id=a.organization_id AND r.command_key=a.command_key
+          AND r.accepted_command_id=a.id
+         WHERE a.organization_id=$1 AND a.command_key=$2
+           AND a.site_id=$3 AND a.authority_kind='application-command'
+           AND r.result_ref->>'acceptedCommandId'=a.id::text
+           AND r.result_ref->'payload'=a.result_payload
+           AND r.result_ref->'authorization'->>'actorId'=a.actor_id
+           AND r.result_ref->'authorization'->>'actorRole'=a.actor_role
+           AND r.result_ref->'authorization'->>'siteId'=a.site_id
+           AND r.result_ref->'authorization'->>'departmentId'=a.department_id
+           AND r.result_ref->'authorization'->>'purpose'=a.purpose
+           AND (r.result_ref->'authorization'->>'patientId')
+                 IS NOT DISTINCT FROM a.patient_id
+           AND (r.result_ref->'authorization'->>'encounterId')
+                 IS NOT DISTINCT FROM a.encounter_id
+         FOR UPDATE OF a,r`,
+        [organizationId, input.receipt.key, siteConfiguration.siteId],
+      );
+      if (prior.rows[0]) {
+        const row = prior.rows[0];
+        if (row.request_hash !== input.receipt.requestHash)
+          throw new DomainError(
+            "INVALID_STATE",
+            "Befehls-ID wurde bereits mit einem anderen Inhalt verwendet.",
+            409,
+          );
+        const priorAuthorization = applicationReceiptAuthorizationSchema.parse(
+          row.result_ref.authorization,
+        );
+        await client.query("COMMIT");
+        return {
+          id: row.id,
+          replayed: true,
+          receipt: {
+            key: input.receipt.key,
+            requestHash: row.request_hash,
+            statusCode: row.status_code,
+            payload: JSON.stringify(row.result_ref.payload),
+            authorization: priorAuthorization,
+          },
+        };
+      }
+      if (input.workdayCommand) {
+        const workdayInput = input.workdayCommand;
+        if (
+          workdayInput.actorId !== input.actorId ||
+          workdayInput.actorRole !== input.actorRole
+        )
+          throw new Error("APPLICATION_WORKDAY_ACTOR_BINDING_INVALID");
+        const sessionResult = await client.query(
+          `SELECT s.*,t.context_revision,t.patient_id,t.subject_encounter_id,
+                  v.definition,w.name AS workflow_name
+           FROM working_sessions s
+           JOIN assistant_threads t
+             ON t.organization_id=s.organization_id AND t.id=s.assistant_thread_id
+           JOIN workflow_template_versions v
+             ON v.organization_id=s.organization_id
+            AND v.template_id=s.workflow_template_id
+            AND v.version=s.workflow_version
+           JOIN workflow_templates w
+             ON w.organization_id=s.organization_id
+            AND w.id=s.workflow_template_id
+           WHERE s.organization_id=$1 AND s.id=$2 AND s.actor_id=$3
+             AND s.effective_role=$4 AND s.department_id=$5
+             AND t.site_id=$6
+           FOR UPDATE OF s`,
+          [
+            organizationId,
+            workdayInput.sessionId,
+            workdayInput.actorId,
+            workdayInput.actorRole,
+            departmentId,
+            siteConfiguration.siteId,
+          ],
+        );
+        const sessionRow = sessionResult.rows[0] as
+          Record<string, unknown> | undefined;
+        if (!sessionRow) throw new Error("APPLICATION_WORKDAY_SESSION_STALE");
+        const workday = await this.applyWorkdayCommand(
+          workdayInput.actorId,
+          workdayInput.actorRole,
+          workdayInput.command,
+          { client, session: this.toView(sessionRow) },
+        );
+        const scopedPatientReferences = workday.handover.patientIds.map(
+          (patientId) => `Patient/${fhirResourceId("Patient", patientId)}`,
+        );
+        const deliveryStates =
+          scopedPatientReferences.length === 0
+            ? []
+            : (
+                await client.query<{ state: string }>(
+                  `SELECT DISTINCT state FROM provider_outbox
+                   WHERE organization_id=$1 AND site_id=$3
+                     AND payload->'command'->>'patientReference'=ANY($2::text[])`,
+                  [
+                    organizationId,
+                    scopedPatientReferences,
+                    siteConfiguration.siteId,
+                  ],
+                )
+              ).rows;
+        const providerState =
+          input.providerCommands.length > 0 ||
+          deliveryStates.some((row) =>
+            ["pending", "leased", "retry", "manual"].includes(row.state),
+          )
+            ? "pending"
+            : deliveryStates.length > 0 &&
+                deliveryStates.every((row) => row.state === "delivered")
+              ? "simulated-acknowledged"
+              : "external-gated";
+        effectiveResultPayload = { ...workday, providerState };
+        effectiveAuthorization = applicationReceiptAuthorizationSchema.parse({
+          ...authorization,
+          workdayAuthority: {
+            sessionId: workday.sessionId,
+            handoverId: workday.handover.id,
+            handoverVersion: workday.handover.version,
+            handoverContentHash: workday.handover.contentHash,
+          },
+        });
+        effectiveReceipt = {
+          ...input.receipt,
+          payload: JSON.stringify(effectiveResultPayload),
+          authorization: effectiveAuthorization,
+        };
+      }
+      if (input.voiceAuthority) {
+        const { tokenHash, record } = input.voiceAuthority;
+        if (record.actorId !== input.actorId)
+          throw new Error("APPLICATION_VOICE_ACTOR_BINDING_INVALID");
+        await client.query(
+          `INSERT INTO safety_authority
+             (organization_id,token_hash,authority_type,actor_id,session_id,
+              thread_id,context_revision,patient_id,binding,expires_at,
+              client_context_id)
+           VALUES ($1,$2,'voice',$3,$4,$5,$6,$7,$8,$9,$10)
+           ON CONFLICT (organization_id,token_hash) DO NOTHING`,
+          [
+            organizationId,
+            tokenHash,
+            record.actorId,
+            record.sessionId,
+            record.threadId,
+            record.contextRevision,
+            record.patientId,
+            record,
+            new Date(record.expiresAt),
+            record.clientContextId,
+          ],
+        );
+      }
+      if (input.conversationClear) {
+        const clear = input.conversationClear;
+        if (
+          clear.actorId !== input.actorId ||
+          clear.actorRole !== input.actorRole
+        )
+          throw new Error("APPLICATION_CONVERSATION_ACTOR_BINDING_INVALID");
+        const nextThreadId = randomUUID();
+        const copied = await client.query(
+          `INSERT INTO assistant_threads
+             (organization_id,id,actor_id,effective_role,department_id,site_id,
+              thread_type,patient_id,subject_encounter_id,title,audience,membership,
+              retention_class,pinned,expires_at)
+           SELECT $1,$2,$3,$4,$5,$6,thread_type,patient_id,subject_encounter_id,
+                  title,audience,membership,retention_class,pinned,$7
+           FROM assistant_threads
+           WHERE organization_id=$1 AND id=$8 AND actor_id=$3
+             AND effective_role=$4 AND site_id=$6 AND department_id=$5
+           RETURNING id`,
+          [
+            organizationId,
+            nextThreadId,
+            clear.actorId,
+            clear.actorRole,
+            departmentId,
+            siteConfiguration.siteId,
+            new Date(Date.now() + sessionTtlMs),
+            clear.context.threadId,
+          ],
+        );
+        if (copied.rowCount !== 1) throw new Error("ASSISTANT_CONTEXT_STALE");
+        const rebound = await client.query(
+          `UPDATE assistant_client_contexts
+           SET thread_id=$4,context_revision=context_revision+1,updated_at=now()
+           WHERE organization_id=$1 AND id=$2 AND actor_id=$3
+             AND session_id=$5 AND thread_id=$6 AND context_revision=$7`,
+          [
+            organizationId,
+            clear.context.clientContextId,
+            clear.actorId,
+            nextThreadId,
+            clear.context.sessionId,
+            clear.context.threadId,
+            clear.context.contextRevision,
+          ],
+        );
+        if (rebound.rowCount !== 1) throw new Error("ASSISTANT_CONTEXT_STALE");
+        const session = await client.query(
+          `UPDATE working_sessions
+           SET assistant_thread_id=$4,row_version=row_version+1,updated_at=now()
+           WHERE organization_id=$1 AND id=$2 AND actor_id=$3
+             AND effective_role=$5 AND assistant_thread_id=$6
+           RETURNING id`,
+          [
+            organizationId,
+            clear.context.sessionId,
+            clear.actorId,
+            nextThreadId,
+            clear.actorRole,
+            clear.context.threadId,
+          ],
+        );
+        if (session.rowCount !== 1) throw new Error("ASSISTANT_CONTEXT_STALE");
+        await client.query(
+          `INSERT INTO domain_events
+             (organization_id,aggregate_type,aggregate_id,event_type,audience,payload)
+           VALUES ($1,'working-session',$2,'ConversationSegmentStarted',$3,$4)`,
+          [
+            organizationId,
+            clear.context.sessionId,
+            { actorId: clear.actorId },
+            {
+              previousThreadId: clear.context.threadId,
+              nextThreadId,
+            },
+          ],
+        );
+      }
+      const acceptedCommandId = randomUUID();
+      const hasClinicalProjection =
+        input.clinicalResources.length > 0 ||
+        input.removedReferences.length > 0;
+      const hasProviderDelivery = input.providerCommands.length > 0;
+      const acceptedState =
+        hasClinicalProjection || hasProviderDelivery
+          ? "delivery-pending"
+          : "delivered";
+      await client.query(
+        `INSERT INTO accepted_commands
+           (organization_id,id,command_key,request_hash,actor_id,actor_role,site_id,
+            department_id,purpose,patient_id,encounter_id,session_id,thread_id,
+            context_revision,workflow_template_id,workflow_version,policy_version,
+            proposal_revision_id,proposal_hash,selected_action_ids,source_read_set,
+            result_payload,status_code,state,authority_kind)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NULL,NULL,NULL,
+                 'direct-api',1,$12,NULL,NULL,'[]'::jsonb,'[]'::jsonb,$13,$14,$15,
+                 'application-command')`,
+        [
+          organizationId,
+          acceptedCommandId,
+          input.receipt.key,
+          input.receipt.requestHash,
+          input.actorId,
+          input.actorRole,
+          siteConfiguration.siteId,
+          departmentId,
+          input.purpose,
+          effectiveAuthorization.patientId,
+          effectiveAuthorization.encounterId,
+          input.policyVersion,
+          JSON.stringify(effectiveResultPayload),
+          effectiveReceipt.statusCode,
+          acceptedState,
+        ],
+      );
+      await client.query(
+        `INSERT INTO command_receipts
+           (organization_id,command_key,request_hash,status_code,result_ref,
+            accepted_command_id,expires_at)
+         VALUES ($1,$2,$3,$4,$5,$6,now()+interval '30 days')`,
+        [
+          organizationId,
+          input.receipt.key,
+          effectiveReceipt.requestHash,
+          effectiveReceipt.statusCode,
+          JSON.stringify({
+            acceptedCommandId,
+            payload: effectiveResultPayload,
+            authorization: effectiveAuthorization,
+          }),
+          acceptedCommandId,
+        ],
+      );
+      for (const entry of input.auditEntries)
+        await this.appendAuditEntry(client, entry);
+      await client.query(
+        `INSERT INTO domain_events
+           (organization_id,aggregate_type,aggregate_id,event_type,audience,payload)
+         VALUES ($1,'accepted-command',$2,'ApplicationCommandLocallyAccepted',$3,$4)`,
+        [
+          organizationId,
+          acceptedCommandId,
+          JSON.stringify({ actorIds: [input.actorId] }),
+          JSON.stringify({
+            acceptedCommandId,
+            route: authorization.route,
+          }),
+        ],
+      );
+      const scenario = await client.query<{
+        run_id: string;
+        workspace: DemoWorkspaceSnapshot;
+        state_digest: string;
+      }>(
+        `SELECT run_id::text,workspace,state_digest FROM demo_scenario_runs
+         WHERE organization_id=$1 AND active=true FOR UPDATE`,
+        [organizationId],
+      );
+      const active = scenario.rows[0];
+      if (!active) throw new Error("DEMO_SCENARIO_ACTIVE_RUN_MISSING");
+      if (active.state_digest !== input.demoScenarioExpectedDigest)
+        throw new DomainError(
+          "VERSION_CONFLICT",
+          "Der aktive Demo-Szenariostand wurde parallel geändert.",
+          409,
+        );
+      const state = structuredClone({ ...input.demoScenarioState, outbox: [] });
+      const stateDigest = scenarioRunContentDigest({
+        state,
+        workspace: input.demoScenarioWorkspace,
+      });
+      const updatedScenario = await client.query(
+        `UPDATE demo_scenario_runs
+         SET state=$3,workspace=$4,state_digest=$5,updated_at=now()
+         WHERE organization_id=$1 AND run_id=$2 AND active=true
+           AND state_digest=$6`,
+        [
+          organizationId,
+          active.run_id,
+          state,
+          input.demoScenarioWorkspace,
+          stateDigest,
+          input.demoScenarioExpectedDigest,
+        ],
+      );
+      if (updatedScenario.rowCount !== 1)
+        throw new DomainError(
+          "VERSION_CONFLICT",
+          "Der aktive Demo-Szenariostand wurde parallel geändert.",
+          409,
+        );
+      if (hasClinicalProjection) {
+        const clinicalPayload = clinicalProjectionPayloadV2({
+          acceptedCommandId,
+          resources: input.clinicalResources,
+          removedReferences: input.removedReferences,
+          expectedVersions: input.clinicalExpectedVersions,
+        });
+        const clinicalTargetKeys = clinicalProjectionTargetKeys(
+          input.clinicalResources,
+          input.removedReferences,
+          acceptedCommandId,
+        );
+        for (const target of [...clinicalTargetKeys].sort())
+          await client.query(
+            "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+            [
+              `${organizationId}:${siteConfiguration.siteId}:clinical-target:${target}`,
+            ],
+          );
+        const overlapping = await client.query(
+          `SELECT 1 FROM clinical_projection_outbox
+           WHERE organization_id=$1 AND site_id=$2 AND state <> 'delivered'
+             AND target_keys && $3::text[]
+           LIMIT 1 FOR UPDATE`,
+          [organizationId, siteConfiguration.siteId, clinicalTargetKeys],
+        );
+        if (overlapping.rowCount)
+          throw new DomainError(
+            "VERSION_CONFLICT",
+            "Eine frühere Änderung derselben klinischen Ressource wird noch projiziert. Bitte nach der Zustellung erneut versuchen.",
+            409,
+          );
+        await client.query(
+          `INSERT INTO clinical_projection_outbox
+             (organization_id,site_id,id,accepted_command_id,idempotency_key,
+              payload,payload_schema_version,target_keys,state)
+           VALUES ($1,$2,$3,$4,$5,$6,2,$7,'pending')`,
+          [
+            organizationId,
+            siteConfiguration.siteId,
+            randomUUID(),
+            acceptedCommandId,
+            `clinical:${acceptedCommandId}`,
+            JSON.stringify(clinicalPayload),
+            clinicalTargetKeys,
+          ],
+        );
+      }
+      for (const pending of input.providerCommands) {
+        const providerScope = [
+          ...effectiveAuthorization.patientScopes,
+          ...(effectiveAuthorization.patientId &&
+          effectiveAuthorization.encounterId
+            ? [
+                {
+                  patientId: effectiveAuthorization.patientId,
+                  encounterId: effectiveAuthorization.encounterId,
+                },
+              ]
+            : []),
+        ].find(
+          (scope) =>
+            fhirResourceId("Patient", scope.patientId) ===
+              pending.command.patientReference.slice("Patient/".length) &&
+            fhirResourceId("Encounter", scope.encounterId) ===
+              pending.command.encounterReference.slice("Encounter/".length),
+        );
+        if (!providerScope)
+          throw new Error("PROVIDER_COMMAND_SCOPE_NOT_AUTHORIZED");
+        const authorityEnvelope = {
+          kind: "application-command",
+          acceptedCommandId,
+          organizationId,
+          ...effectiveAuthorization,
+          patientId: providerScope.patientId,
+          encounterId: providerScope.encounterId,
+          policyVersion: input.policyVersion,
+          acceptedAt: new Date().toISOString(),
+        };
+        const payload = providerOutboxPayloadSchema.parse({
+          schemaVersion: 1,
+          command: pending.command,
+          retrySafety: pending.retrySafety,
+        });
+        const inserted = await client.query(
+          `INSERT INTO provider_outbox
+             (organization_id,site_id,id,provider_id,profile_id,operation,idempotency_key,
+              payload,state,accepted_command_id,authority_envelope,target_key)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending',$9,$10,$11)
+           ON CONFLICT (organization_id,site_id,provider_id,profile_id,idempotency_key)
+           DO NOTHING RETURNING id`,
+          [
+            organizationId,
+            siteConfiguration.siteId,
+            randomUUID(),
+            pending.provider,
+            pending.profile,
+            pending.command.operation,
+            pending.command.idempotencyKey,
+            payload,
+            acceptedCommandId,
+            authorityEnvelope,
+            `${pending.provider}:${pending.profile}:${pending.command.resource.resourceType}/${pending.command.resource.id}`,
+          ],
+        );
+        if (!inserted.rowCount) {
+          const existing = await client.query<{ payload: unknown }>(
+            `SELECT payload FROM provider_outbox
+             WHERE organization_id=$1 AND site_id=$5
+               AND provider_id=$2 AND profile_id=$3 AND idempotency_key=$4`,
+            [
+              organizationId,
+              pending.provider,
+              pending.profile,
+              pending.command.idempotencyKey,
+              siteConfiguration.siteId,
+            ],
+          );
+          if (
+            canonicalJson(existing.rows[0]?.payload) !== canonicalJson(payload)
+          )
+            throw new Error("IDEMPOTENCY_KEY_PAYLOAD_MISMATCH");
+        }
+      }
+      await client.query("COMMIT");
+      return {
+        id: acceptedCommandId,
+        receipt: structuredClone(effectiveReceipt),
+        replayed: false,
+      };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+  async loadApplicationCommandReceipt(
+    commandKey: string,
+    requestHash: string,
+  ): Promise<CommandReceipt | null> {
+    const result = await this.pool.query<{
+      request_hash: string;
+      status_code: number;
+      result_ref: { payload?: unknown; authorization?: unknown };
+    }>(
+      `SELECT receipt.request_hash,receipt.status_code,receipt.result_ref
+       FROM command_receipts receipt
+       JOIN accepted_commands accepted
+         ON accepted.organization_id=receipt.organization_id
+        AND accepted.id=receipt.accepted_command_id
+        AND accepted.command_key=receipt.command_key
+       WHERE receipt.organization_id=$1 AND receipt.command_key=$2
+         AND receipt.expires_at > now()
+         AND accepted.site_id=$3
+         AND accepted.authority_kind='application-command'
+         AND receipt.result_ref->>'acceptedCommandId'=accepted.id::text
+         AND receipt.result_ref->'payload'=accepted.result_payload
+         AND receipt.result_ref->'authorization'->>'actorId'=accepted.actor_id
+         AND receipt.result_ref->'authorization'->>'actorRole'=accepted.actor_role
+         AND receipt.result_ref->'authorization'->>'siteId'=accepted.site_id
+         AND receipt.result_ref->'authorization'->>'departmentId'=accepted.department_id
+         AND receipt.result_ref->'authorization'->>'purpose'=accepted.purpose
+         AND (receipt.result_ref->'authorization'->>'patientId')
+               IS NOT DISTINCT FROM accepted.patient_id
+         AND (receipt.result_ref->'authorization'->>'encounterId')
+               IS NOT DISTINCT FROM accepted.encounter_id`,
+      [organizationId, commandKey, siteConfiguration.siteId],
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    if (row.request_hash !== requestHash)
+      throw new DomainError(
+        "INVALID_STATE",
+        "Befehls-ID wurde bereits mit einem anderen Inhalt verwendet.",
+        409,
+      );
+    return {
+      key: commandKey,
+      requestHash,
+      statusCode: row.status_code,
+      payload: JSON.stringify(row.result_ref.payload),
+      authorization: applicationReceiptAuthorizationSchema.parse(
+        row.result_ref.authorization,
+      ),
+    };
   }
   async loadAcceptedCommandReceipt(
     commandKey: string,
@@ -5688,7 +6502,7 @@ export class PostgresOperationalStore
          AND t.patient_id=$8 AND t.subject_encounter_id=$9
          AND t.context_revision >= $10 AND t.expires_at > now()
          AND s.actor_id=$4 AND s.effective_role=$5 AND s.department_id=$7
-         AND s.assistant_thread_id=t.id AND s.status='active'`,
+         AND s.status='active'`,
       [
         organizationId,
         authorization.sessionId,
@@ -6122,35 +6936,18 @@ export class PostgresOperationalStore
       };
       await client.query(
         `INSERT INTO command_receipts
-           (organization_id,command_key,request_hash,status_code,result_ref,expires_at)
-         VALUES ($1,$2,$3,200,$4,now()+interval '30 days')`,
+           (organization_id,command_key,request_hash,status_code,result_ref,
+            accepted_command_id,expires_at)
+         VALUES ($1,$2,$3,200,$4,$5,now()+interval '30 days')`,
         [
           organizationId,
           input.commandKey,
           input.requestHash,
           JSON.stringify({ payload: receipt }),
+          row.accepted_command_id,
         ],
       );
-      await client.query(
-        `INSERT INTO audit_entries
-           (organization_id,actor_id,actor_role,action,outcome,patient_id,purpose,
-            detail,previous_hash,entry_hash,occurred_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-         ON CONFLICT (organization_id,entry_hash) DO NOTHING`,
-        [
-          organizationId,
-          input.auditEntry.actorId,
-          input.auditEntry.actorRole,
-          input.auditEntry.action,
-          input.auditEntry.outcome,
-          input.auditEntry.patientId,
-          input.auditEntry.purpose,
-          input.auditEntry.detail,
-          input.auditEntry.previousHash,
-          input.auditEntry.hash,
-          input.auditEntry.occurredAt,
-        ],
-      );
+      await this.appendAuditEntry(client, input.auditEntry);
       await client.query(
         `INSERT INTO domain_events
            (organization_id,aggregate_type,aggregate_id,event_type,audience,payload)
@@ -6180,7 +6977,9 @@ export class PostgresOperationalStore
     patientIds: readonly string[],
   ): Promise<"pending" | "simulated-acknowledged" | "external-gated"> {
     if (patientIds.length === 0) return "external-gated";
-    const references = patientIds.map((id) => `Patient/${id}`);
+    const references = patientIds.map(
+      (id) => `Patient/${fhirResourceId("Patient", id)}`,
+    );
     const result = await this.pool.query<{ state: string; count: number }>(
       `SELECT state,count(*)::int count FROM provider_outbox
        WHERE organization_id=$1 AND site_id=$3
@@ -6203,7 +7002,9 @@ export class PostgresOperationalStore
     patientIds: readonly string[],
   ): Promise<{ unresolved: number; conflicts: number }> {
     if (patientIds.length === 0) return { unresolved: 0, conflicts: 0 };
-    const references = patientIds.map((id) => `Patient/${id}`);
+    const references = patientIds.map(
+      (id) => `Patient/${fhirResourceId("Patient", id)}`,
+    );
     const result = await this.pool.query<{
       unresolved: number;
       conflicts: number;
@@ -7002,6 +7803,17 @@ export class PostgresOperationalStore
            WHERE organization_id=$1 AND site_id=$6 AND profile_id=$2
              AND (
                accepted_command_id IS NULL OR EXISTS (
+                 SELECT 1 FROM accepted_commands accepted
+                 WHERE accepted.organization_id=provider_outbox.organization_id
+                   AND accepted.site_id=provider_outbox.site_id
+                   AND accepted.id=provider_outbox.accepted_command_id
+                   AND NOT EXISTS (
+                     SELECT 1 FROM clinical_projection_outbox any_clinical
+                     WHERE any_clinical.organization_id=accepted.organization_id
+                       AND any_clinical.site_id=accepted.site_id
+                       AND any_clinical.accepted_command_id=accepted.id
+                   )
+               ) OR EXISTS (
                  SELECT 1 FROM clinical_projection_outbox clinical
                  WHERE clinical.organization_id=provider_outbox.organization_id
                    AND clinical.site_id=provider_outbox.site_id
@@ -7440,11 +8252,11 @@ export class PostgresOperationalStore
         [organizationId],
       );
       await client.query(
-        `DELETE FROM accepted_commands WHERE organization_id=$1`,
+        `DELETE FROM command_receipts WHERE organization_id=$1`,
         [organizationId],
       );
       await client.query(
-        `DELETE FROM command_receipts WHERE organization_id=$1`,
+        `DELETE FROM accepted_commands WHERE organization_id=$1`,
         [organizationId],
       );
       await client.query(
@@ -7503,6 +8315,12 @@ export class PostgresOperationalStore
         [organizationId],
       );
       await client.query(`DELETE FROM domain_events WHERE organization_id=$1`, [
+        organizationId,
+      ]);
+      // This method is reachable only from explicit isolated synthetic reset
+      // flows and test fixtures. Integrated-demo reset is rejected by the API;
+      // normal retention never truncates the immutable audit ledger.
+      await client.query(`DELETE FROM audit_entries WHERE organization_id=$1`, [
         organizationId,
       ]);
       await client.query(

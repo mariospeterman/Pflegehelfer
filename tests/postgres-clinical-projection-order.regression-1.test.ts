@@ -105,8 +105,6 @@ describe.runIf(Boolean(databaseUrl))(
         await store.initialize();
         await store.resetDemoState();
         const first = await acceptSyntheticCommand(store, 1);
-        await new Promise((resolve) => setTimeout(resolve, 10));
-        const second = await acceptSyntheticCommand(store, 2);
 
         const older = await store.claimClinicalProjection({
           workerId: "ordering-worker",
@@ -118,6 +116,10 @@ describe.runIf(Boolean(databaseUrl))(
           workerId: "ordering-worker",
           errorCode: "SYNTHETIC_MANUAL_HOLD",
           retryAt: null,
+        });
+
+        await expect(acceptSyntheticCommand(store, 2)).rejects.toMatchObject({
+          code: "VERSION_CONFLICT",
         });
 
         await expect(
@@ -138,7 +140,9 @@ describe.runIf(Boolean(databaseUrl))(
         const requestHash = createHash("sha256")
           .update("recover-first-projection")
           .digest("hex");
-        const audit = new AuditChain().append({
+        const auditChain = new AuditChain();
+        auditChain.restore(await store.loadAuditEntries());
+        const audit = auditChain.append({
           actor: new PflegehelferService().user("u-it"),
           action: "clinical-projection:retry",
           patientId: null,
@@ -196,6 +200,7 @@ describe.runIf(Boolean(databaseUrl))(
           jobId: retried!.id,
           workerId: "retry-head-in-order",
         });
+        const second = await acceptSyntheticCommand(store, 2);
         await expect(
           store.claimClinicalProjection({
             workerId: "next-in-order",

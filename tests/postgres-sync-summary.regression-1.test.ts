@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import pg from "pg";
 import { describe, expect, it } from "vitest";
 import type { CanonicalClinicalCommand } from "../src/core/provider-integration/index.js";
+import { fhirResourceId } from "../src/core/fhir-resource-set.js";
 import { PostgresOperationalStore } from "../src/infrastructure/operational-store.js";
 
 const databaseUrl = process.env.PFH_OPERATIONAL_DATABASE_URL;
@@ -12,14 +13,14 @@ function command(patientId: string, key: string): CanonicalClinicalCommand {
   return {
     commandId: id,
     operation: "Observation.write",
-    patientReference: `Patient/${patientId}`,
-    encounterReference: `Encounter/enc-${patientId}`,
+    patientReference: `Patient/${fhirResourceId("Patient", patientId)}`,
+    encounterReference: `Encounter/${fhirResourceId("Encounter", `enc-${patientId}`)}`,
     resource: {
       resourceType: "Observation",
       id,
       body: {
-        patientId,
-        encounterId: `enc-${patientId}`,
+        patientId: fhirResourceId("Patient", patientId),
+        encounterId: fhirResourceId("Encounter", `enc-${patientId}`),
         status: "final",
         valueQuantity: { value: 150, code: "mL" },
       },

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { ProviderOutboxJob } from "../src/core/provider-integration/index.js";
 import { runtimeSitePack } from "../src/core/runtime-instructions.js";
 import { PflegehelferService } from "../src/core/service.js";
+import { fhirResourceId } from "../src/core/fhir-resource-set.js";
 import { siteConfiguration } from "../src/core/site-config.js";
 import { authorizeProviderDispatch } from "../src/server/app.js";
 
@@ -27,14 +28,14 @@ function job(
       command: {
         commandId,
         operation: "Observation.write",
-        patientReference: "Patient/p-anna",
-        encounterReference: "Encounter/enc-anna-2026",
+        patientReference: `Patient/${fhirResourceId("Patient", "p-anna")}`,
+        encounterReference: `Encounter/${fhirResourceId("Encounter", "enc-anna-2026")}`,
         resource: {
           resourceType: "Observation",
           id: commandId,
           body: {
-            patientId: "p-anna",
-            encounterId: "enc-anna-2026",
+            patientId: fhirResourceId("Patient", "p-anna"),
+            encounterId: fhirResourceId("Encounter", "enc-anna-2026"),
             status: "final",
             valueQuantity: { value: 37.2, code: "Cel" },
           },
@@ -92,4 +93,44 @@ describe("provider dispatch authorization", () => {
       ),
     ).toEqual({ allowed: false, reason: "permission-revoked" });
   });
+
+  it.each(["task:create", "task:update", "round:decide"] as const)(
+    "accepts a Task write derived from %s authority",
+    (action) => {
+      const base = job({
+        actions: [action],
+        ...(action === "round:decide"
+          ? { actorId: "u-physician", actorRole: "physician" }
+          : {}),
+      });
+      const taskJob: ProviderOutboxJob = {
+        ...base,
+        operation: "Task.write",
+        payload: {
+          ...base.payload,
+          command: {
+            ...base.payload.command,
+            operation: "Task.write",
+            resource: {
+              resourceType: "Task",
+              id: base.payload.command.commandId,
+              body: {
+                patientId: fhirResourceId("Patient", "p-anna"),
+                encounterId: fhirResourceId("Encounter", "enc-anna-2026"),
+                status: "requested",
+                title: "Synthetischer Auftrag",
+              },
+            },
+          },
+        },
+      };
+      expect(
+        authorizeProviderDispatch(
+          new PflegehelferService(),
+          runtimeSitePack.packDigest,
+          taskJob,
+        ),
+      ).toEqual({ allowed: true });
+    },
+  );
 });

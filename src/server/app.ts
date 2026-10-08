@@ -55,7 +55,7 @@ import {
   voiceTranscriptOriginalSchema,
   type VoiceTranscriptProvenance,
 } from "../core/voice-provenance.js";
-import { DomainError, type Purpose } from "../core/types.js";
+import { DomainError, type Purpose, type Role } from "../core/types.js";
 import type { AssistantComponent } from "../core/assistant.js";
 import {
   createProductionProviderRegistry,
@@ -322,9 +322,9 @@ export function authorizeProviderDispatch(
     envelope.organizationId !== siteConfiguration.institutionId ||
     envelope.siteId !== siteConfiguration.siteId ||
     envelope.departmentId !== siteConfiguration.department.id ||
-    envelope.patientId !==
+    fhirResourceId("Patient", String(envelope.patientId)) !==
       job.payload.command.patientReference.slice("Patient/".length) ||
-    envelope.encounterId !==
+    fhirResourceId("Encounter", String(envelope.encounterId)) !==
       job.payload.command.encounterReference.slice("Encounter/".length)
   )
     return { allowed: false, reason: "acceptance-envelope-invalid" };
@@ -341,24 +341,29 @@ export function authorizeProviderDispatch(
       return { allowed: false, reason: "care-relationship-revoked" };
     if (patient.encounterId !== envelope.encounterId)
       return { allowed: false, reason: "encounter-relationship-revoked" };
-    const actionByOperation: Record<string, Action> = {
-      "Observation.write": "observation:approve",
-      "NursingNote.write": "note:approve",
-      "Task.write": "task:update",
-      "Communication.write": "communication:create",
+    const actionsByOperation: Record<string, Action[]> = {
+      "Observation.write": ["observation:approve"],
+      "NursingNote.write": ["note:approve"],
+      "Task.write": [
+        "task:create",
+        "task:update",
+        "round:decide",
+        "intake:update",
+      ],
+      "Communication.write": ["communication:create", "communication:respond"],
     };
-    const action = actionByOperation[job.operation];
-    if (
-      !action ||
-      !Array.isArray(envelope.actions) ||
-      !envelope.actions.includes(action) ||
-      !decide(
-        currentActor,
-        action,
-        String(envelope.purpose) as Purpose,
-        patient,
-      ).allow
-    )
+    const authorizedAction = actionsByOperation[job.operation]?.find(
+      (action) =>
+        Array.isArray(envelope.actions) &&
+        envelope.actions.includes(action) &&
+        decide(
+          currentActor,
+          action,
+          String(envelope.purpose) as Purpose,
+          patient,
+        ).allow,
+    );
+    if (!authorizedAction)
       return { allowed: false, reason: "permission-revoked" };
   } catch {
     return { allowed: false, reason: "actor-revoked" };
@@ -787,12 +792,16 @@ export function buildApp(
     body: AssistantQueryBody,
   ): AssistantRequestIdentity => {
     const commandId = request.headers["x-command-id"];
-    if (typeof commandId !== "string" || !z.uuid().safeParse(commandId).success)
+    if (
+      typeof commandId !== "string" ||
+      !z.uuid().safeParse(commandId).success
+    ) {
       throw new DomainError(
         "VALIDATION",
         "Assistenzanfragen benötigen eine stabile Befehls-ID.",
         400,
       );
+    }
     return {
       commandId,
       requestHash: createHash("sha256")
@@ -878,23 +887,6 @@ export function buildApp(
     }
     return [...actions];
   };
-  const assertPatientReceiptReadable = (
-    actorId: string,
-    purpose: Purpose,
-    patientId: string,
-    encounterId: string,
-  ) => {
-    const snapshot = service.snapshot(actorId, purpose);
-    const patient = snapshot.patients.find(
-      (candidate) => candidate.id === patientId,
-    );
-    if (!patient || patient.encounterId !== encounterId)
-      throw new DomainError(
-        "AUTH_DENIED",
-        "Die aktuelle Patienten- oder Fallbeziehung für diesen Beleg fehlt.",
-        403,
-      );
-  };
   const assertAcceptedReceiptReadable = async (
     actorId: string,
     authorization: AcceptedCommandAuthorization,
@@ -919,17 +911,14 @@ export function buildApp(
         "Sitzung, Gespräch oder Zielgruppe dieses Belegs ist nicht mehr aktuell freigegeben.",
         403,
       );
-    assertPatientReceiptReadable(
-      actorId,
-      authorization.purpose,
-      authorization.patientId,
-      authorization.encounterId,
+    const patient = await persistReadAudit(() =>
+      service
+        .snapshot(actorId, authorization.purpose)
+        .patients.find((candidate) => candidate.id === authorization.patientId),
     );
-    const patient = service
-      .snapshot(actorId, authorization.purpose)
-      .patients.find((candidate) => candidate.id === authorization.patientId);
     if (
       !patient ||
+      patient.encounterId !== authorization.encounterId ||
       authorization.actions.length === 0 ||
       authorization.actions.some(
         (action) =>
@@ -1110,6 +1099,8 @@ export function buildApp(
         service.audit.snapshot().slice(before.audit.length),
       );
     else if (route === "/api/v1/workday") actions = ["task:update"];
+    else if (route === "/api/v1/assistant/transcribe")
+      actions = ["patient:read"];
     else if (route === "/api/v1/assistant/conversation/clear")
       actions = ["patient:read"];
     else if (
@@ -1121,6 +1112,28 @@ export function buildApp(
     )
       actions = ["provider:operate"];
     else throw new Error(`COMMAND_RECEIPT_AUTHORIZATION_UNMAPPED:${route}`);
+    if (
+      [
+        "/api/v1/tasks",
+        "/api/v1/tasks/:id/:transition",
+        "/api/v1/observations/drafts",
+        "/api/v1/notes/drafts",
+        "/api/v1/:type/:id/approve",
+        "/api/v1/communications",
+        "/api/v1/communications/:id/:transition",
+        "/api/v1/intake/:id/review",
+        "/api/v1/round-actions",
+        "/api/v1/workday",
+      ].includes(route)
+    )
+      actions = [
+        ...new Set([
+          ...actions,
+          ...receiptActionsForAudit(
+            service.audit.snapshot().slice(before.audit.length),
+          ),
+        ]),
+      ];
     return {
       actorId,
       actorRole: actor.role,
@@ -1138,6 +1151,7 @@ export function buildApp(
   const assertCommandReceiptReadable = async (
     request: FastifyRequest,
     receipt: CommandReceipt,
+    alreadySerialized = false,
   ) => {
     const actorId = userId(request);
     const actor = service.user(actorId);
@@ -1155,7 +1169,9 @@ export function buildApp(
         "Die aktuelle Rollen- oder Vorgangsberechtigung für diesen Beleg fehlt.",
         403,
       );
-    const snapshot = service.snapshot(actorId, authorization.purpose);
+    const snapshot = await (
+      alreadySerialized ? persistReadAuditNow : persistReadAudit
+    )(() => service.snapshot(actorId, authorization.purpose));
     if (
       authorization.actions.some(
         (action) => !decide(actor, action, authorization.purpose).allow,
@@ -1215,14 +1231,44 @@ export function buildApp(
         );
     }
   };
+  const reloadIntegratedAuthority = async (): Promise<void> => {
+    if (runtime.profile !== "integrated-demo") return;
+    const [activeScenario, auditEntries] = await Promise.all([
+      scenarioStore.active(),
+      operationalStore.loadAuditEntries(),
+    ]);
+    const checkpoint = service.checkpoint();
+    service.restoreCheckpoint({
+      ...checkpoint,
+      state: activeScenario.state,
+      audit: auditEntries,
+    });
+    installDemoScenarioRuntime(service.checkpoint().state);
+    durableResources = service.fhirResources();
+  };
   const persist = <T>(
     operation: () => T | Promise<T>,
     request?: FastifyRequest,
     statusCode = 200,
     publishChange = false,
+    workdayCommand?: {
+      actorId: string;
+      actorRole: Role;
+      sessionId: string;
+      command: WorkdayCommand;
+    },
+    voiceAuthority?: {
+      tokenHash: string;
+      record: DurableVoiceAuthority;
+    },
+    conversationClear?: {
+      actorId: string;
+      actorRole: Role;
+      context: AssistantContextBinding;
+    },
   ): Promise<T> => {
     const pending = persistenceQueue.then(async () => {
-      const command = request ? requestCommandKeys.get(request) : undefined;
+      let command = request ? requestCommandKeys.get(request) : undefined;
       let committed =
         command && committedCommandKeys.has(command.key)
           ? service.commandReceipt(command.key)
@@ -1232,7 +1278,13 @@ export function buildApp(
         // receipt. Treat the durable Binary as authoritative rather than
         // leaving the auxiliary committed-key index stale.
         committedCommandKeys.delete(command.key);
-        const durableReceipt = await workspace.loadCommandReceipt(command.key);
+        const durableReceipt =
+          runtime.profile === "integrated-demo"
+            ? await operationalStore.loadApplicationCommandReceipt(
+                command.key,
+                command.requestHash,
+              )
+            : await workspace.loadCommandReceipt(command.key);
         if (durableReceipt) {
           service.recordCommandReceipt(durableReceipt);
           committedCommandKeys.add(command.key);
@@ -1252,7 +1304,8 @@ export function buildApp(
             "Der Beleg kann ohne gebundenen Anfragekontext nicht gelesen werden.",
             403,
           );
-        await assertCommandReceiptReadable(request, committed);
+        await reloadIntegratedAuthority();
+        await assertCommandReceiptReadable(request, committed, true);
         return JSON.parse(committed.payload) as T;
       }
       const scenarioBefore =
@@ -1260,23 +1313,32 @@ export function buildApp(
           ? await scenarioStore.active()
           : null;
       const before = service.checkpoint();
+      const priorProviderKeys = new Set(
+        service
+          .pendingProviderCommands()
+          .map((pending) => pending.command.idempotencyKey),
+      );
       if (
         scenarioBefore &&
         scenarioDigest({ ...before.state, outbox: [] }) !==
           scenarioDigest(scenarioBefore.state)
-      )
+      ) {
+        await reloadIntegratedAuthority();
         throw new DomainError(
           "VERSION_CONFLICT",
           "Der lokale Demo-Szenariostand ist nicht mehr aktuell. Bitte neu laden.",
           409,
         );
+      }
       let writeAttempted = false;
       let scenarioCommitted = scenarioBefore === null;
       try {
         const result = await operation();
-        const payload = JSON.stringify(result);
+        let committedResult = result as T;
+        const persistedResult = result === undefined ? null : result;
+        const payload = JSON.stringify(persistedResult);
         let stagedReceipt: Parameters<ClinicalWorkspace["synchronize"]>[3];
-        if (command && payload !== undefined)
+        if (command)
           stagedReceipt = {
             ...command,
             statusCode,
@@ -1292,6 +1354,45 @@ export function buildApp(
         const nextResources = service.fhirResources();
         const stateChanged =
           JSON.stringify(nextCheckpoint) !== JSON.stringify(before);
+        if (
+          runtime.profile === "integrated-demo" &&
+          !request &&
+          stateChanged &&
+          scenarioBefore
+        ) {
+          const transitionDigest = createHash("sha256")
+            .update(
+              canonicalJson({
+                before: scenarioRunContentDigest(scenarioBefore),
+                after: scenarioDigest({ ...nextCheckpoint.state, outbox: [] }),
+                operation: "deadline-sweep-v1",
+              }),
+            )
+            .digest("hex");
+          command = {
+            key: `${siteConfiguration.institutionId}:${siteConfiguration.siteId}:system:deadline-engine:v2:INTERNAL:deadline-sweep:${transitionDigest}`,
+            requestHash: transitionDigest,
+          };
+          stagedReceipt = {
+            ...command,
+            statusCode,
+            payload,
+            authorization: {
+              actorId: "system:deadline-engine",
+              actorRole: "it",
+              siteId: siteConfiguration.siteId,
+              departmentId: siteConfiguration.department.id,
+              route: "internal:deadline-sweep",
+              purpose: "operations",
+              actions: ["task:update", "communication:respond"],
+              patientId: null,
+              encounterId: null,
+              patientScopes: [],
+              workdayAuthority: null,
+            },
+          };
+        }
+        if (stagedReceipt) service.recordCommandReceipt(stagedReceipt);
         if (!stateChanged && !stagedReceipt) return result;
         const previousByReference = new Map(
           durableResources.map((resource) => [
@@ -1323,21 +1424,85 @@ export function buildApp(
         const removedReferences = [...previousByReference.keys()].filter(
           (reference) =>
             !reference.startsWith("Provenance/") &&
+            !reference.startsWith("AuditEvent/") &&
             !nextReferences.has(reference),
         );
         writeAttempted = true;
-        await workspace.synchronize(
-          changedResources,
-          nextCheckpoint,
-          removedReferences,
-          stagedReceipt,
-        );
-        if (scenarioBefore)
-          await scenarioStore.updateActiveState(
-            nextCheckpoint.state,
-            await operationalStore.exportDemoWorkspace(),
-            scenarioRunContentDigest(scenarioBefore),
+        if (runtime.profile === "integrated-demo") {
+          if (!command || !stagedReceipt || !scenarioBefore)
+            throw new Error("APPLICATION_COMMAND_ACCEPTANCE_CONTEXT_REQUIRED");
+          if (!workspace.loadResourceVersions)
+            throw new Error("CLINICAL_VERSION_READ_NOT_AVAILABLE");
+          const clinicalReferences = [
+            ...changedResources.map(
+              (resource) => `${resource.resourceType}/${resource.id}`,
+            ),
+            ...removedReferences,
+          ];
+          const clinicalExpectedVersions =
+            await workspace.loadResourceVersions(clinicalReferences);
+          const providerCommands = service
+            .pendingProviderCommands()
+            .filter(
+              (pending) =>
+                !priorProviderKeys.has(pending.command.idempotencyKey),
+            );
+          const acceptedState = structuredClone(nextCheckpoint.state);
+          acceptedState.outbox = acceptedState.outbox.filter(
+            (pending) =>
+              !providerCommands.some(
+                (accepted) =>
+                  accepted.command.idempotencyKey === pending.idempotencyKey,
+              ),
           );
+          const acceptance = await operationalStore.acceptApplicationCommand({
+            receipt: stagedReceipt,
+            actorId: stagedReceipt.authorization.actorId,
+            actorRole: stagedReceipt.authorization.actorRole,
+            purpose: stagedReceipt.authorization.purpose,
+            policyVersion: runtimeSitePack.packDigest,
+            resultPayload: persistedResult,
+            auditEntries: service.audit.slice(before.audit.length),
+            clinicalResources: changedResources,
+            removedReferences,
+            clinicalExpectedVersions,
+            demoScenarioState: acceptedState,
+            demoScenarioWorkspace: await operationalStore.exportDemoWorkspace(),
+            demoScenarioExpectedDigest:
+              scenarioRunContentDigest(scenarioBefore),
+            ...(workdayCommand ? { workdayCommand } : {}),
+            ...(voiceAuthority ? { voiceAuthority } : {}),
+            ...(conversationClear ? { conversationClear } : {}),
+            providerCommands,
+          });
+          if (acceptance.replayed) {
+            await reloadIntegratedAuthority();
+            if (request)
+              await assertCommandReceiptReadable(
+                request,
+                acceptance.receipt,
+                true,
+              );
+            service.recordCommandReceipt(acceptance.receipt);
+            committedCommandKeys.add(command.key);
+            return (
+              request ? JSON.parse(acceptance.receipt.payload) : result
+            ) as T;
+          }
+          service.recordCommandReceipt(acceptance.receipt);
+          committedCommandKeys.add(command.key);
+          committedResult = JSON.parse(acceptance.receipt.payload) as T;
+          service.retireAcceptedProviderCommands(
+            providerCommands.map((pending) => pending.command.idempotencyKey),
+          );
+        } else {
+          await workspace.synchronize(
+            changedResources,
+            nextCheckpoint,
+            removedReferences,
+            stagedReceipt,
+          );
+        }
         scenarioCommitted = true;
         committedCommandKeys.clear();
         for (const key of service.commandReceiptKeys())
@@ -1350,7 +1515,7 @@ export function buildApp(
           );
           publishInvalidation(revision);
         } else if (publishChange && stateChanged) publishInvalidation();
-        return result;
+        return committedResult;
       } catch (error) {
         const rejectedEntries = service.audit
           .snapshot()
@@ -1362,8 +1527,11 @@ export function buildApp(
         service.restoreCheckpoint(before);
         if (writeAttempted) {
           try {
-            const latest = await workspace.loadCheckpoint();
-            if (latest) {
+            if (runtime.profile === "integrated-demo")
+              await reloadIntegratedAuthority();
+            else {
+              const latest = await workspace.loadCheckpoint();
+              if (!latest) throw new Error("WORKSPACE_CHECKPOINT_MISSING");
               service.restoreCheckpoint(latest);
               durableResources = service.fhirResources();
               committedCommandKeys.clear();
@@ -1378,7 +1546,12 @@ export function buildApp(
         if (command && scenarioCommitted) {
           const recovered =
             service.commandReceipt(command.key) ??
-            (await workspace.loadCommandReceipt(command.key));
+            (runtime.profile === "integrated-demo"
+              ? await operationalStore.loadApplicationCommandReceipt(
+                  command.key,
+                  command.requestHash,
+                )
+              : await workspace.loadCommandReceipt(command.key));
           if (recovered && recovered.requestHash === command.requestHash) {
             if (!request)
               throw new DomainError(
@@ -1386,14 +1559,14 @@ export function buildApp(
                 "Der Beleg kann ohne gebundenen Anfragekontext nicht gelesen werden.",
                 403,
               );
-            await assertCommandReceiptReadable(request, recovered);
+            await assertCommandReceiptReadable(request, recovered, true);
             service.recordCommandReceipt(recovered);
             committedCommandKeys.add(command.key);
             if (request?.method === "POST") publishInvalidation();
             return JSON.parse(recovered.payload) as T;
           }
         }
-        for (const entry of rejectedEntries) {
+        const failureAuditEntries = rejectedEntries.map((entry) =>
           service.audit.append({
             actor: service.user(entry.actorId),
             action: entry.action,
@@ -1402,20 +1575,36 @@ export function buildApp(
             outcome: entry.outcome,
             detail: entry.detail,
             occurredAt: entry.occurredAt,
-          });
-        }
+          }),
+        );
         if (writeAttempted && request) {
           const actorId = userId(request);
-          service.audit.append({
-            actor: service.user(actorId),
-            action: "persistence:command-rejected",
-            patientId: null,
-            purpose: "operations",
-            outcome: "failure",
-            detail: { reason: "atomic-workspace-write-failed" },
-          });
+          failureAuditEntries.push(
+            service.audit.append({
+              actor: service.user(actorId),
+              action: "persistence:command-rejected",
+              patientId: null,
+              purpose: "operations",
+              outcome: "failure",
+              detail: { reason: "atomic-workspace-write-failed" },
+            }),
+          );
         }
-        if (rejectedEntries.length && !writeAttempted) {
+        if (
+          failureAuditEntries.length &&
+          runtime.profile === "integrated-demo"
+        ) {
+          try {
+            for (const entry of failureAuditEntries)
+              await operationalStore.appendAudit(entry);
+          } catch {
+            // The failed command remains rejected even when its follow-up
+            // failure evidence cannot be stored. Re-align the in-process hash
+            // chain with PostgreSQL so a later command cannot inherit an
+            // unpersisted audit head.
+            await reloadIntegratedAuthority().catch(() => undefined);
+          }
+        } else if (rejectedEntries.length && !writeAttempted) {
           try {
             await workspace.synchronize([], service.checkpoint());
           } catch {
@@ -1492,34 +1681,33 @@ export function buildApp(
     return context;
   };
   const requireMigratedClinicalMutation = (): void => {
-    if (runtime.profile === "integrated-demo")
-      throw new DomainError(
-        "INVALID_STATE",
-        "Diese Detailaktion ist im integrierten Profil nur über die geprüfte Assistenzfreigabe verfügbar.",
-        409,
-      );
+    // Typed routes and the conversational path now converge at the same
+    // PostgreSQL acceptance/outbox boundary in the integrated profile.
   };
-  const persistReadAudit = <T>(operation: () => T): Promise<T> => {
-    const pending = persistenceQueue.then(async () => {
-      const beforeAuditLength = service.audit.length;
-      try {
-        const result = operation();
-        const entries = service.audit.snapshot().slice(beforeAuditLength);
-        for (const entry of entries) await operationalStore.appendAudit(entry);
-        // Operational PostgreSQL is authoritative for access events. Track the
-        // equivalent FHIR projection as already accounted for so the next
-        // clinical mutation does not batch historical read events back into a
-        // Medplum transaction.
-        durableResources = [
-          ...durableResources,
-          ...service.fhirAuditResourcesSince(beforeAuditLength),
-        ];
-        return result;
-      } catch (error) {
-        service.audit.truncate(beforeAuditLength);
-        throw error;
-      }
-    });
+  const persistReadAuditNow = async <T>(
+    operation: () => T | Promise<T>,
+  ): Promise<T> => {
+    const beforeAuditLength = service.audit.length;
+    try {
+      const result = await operation();
+      const entries = service.audit.snapshot().slice(beforeAuditLength);
+      for (const entry of entries) await operationalStore.appendAudit(entry);
+      // Operational PostgreSQL is authoritative for access events. Track the
+      // equivalent FHIR projection as already accounted for so the next
+      // clinical mutation does not batch historical read events back into a
+      // Medplum transaction.
+      durableResources = [
+        ...durableResources,
+        ...service.fhirAuditResourcesSince(beforeAuditLength),
+      ];
+      return result;
+    } catch (error) {
+      service.audit.truncate(beforeAuditLength);
+      throw error;
+    }
+  };
+  const persistReadAudit = <T>(operation: () => T | Promise<T>): Promise<T> => {
+    const pending = persistenceQueue.then(() => persistReadAuditNow(operation));
     persistenceQueue = pending.then(
       () => undefined,
       () => undefined,
@@ -1693,12 +1881,25 @@ export function buildApp(
               workerId: `api-provider-${workerGeneration}`,
               profile: service.providerProfile,
               batchSize: 1,
-              authorizeDelivery: (job) =>
-                authorizeProviderDispatch(
-                  service,
+              authorizeDelivery: async (job) => {
+                if (runtime.profile !== "integrated-demo")
+                  return authorizeProviderDispatch(
+                    service,
+                    runtimeSitePack.packDigest,
+                    job,
+                  );
+                const authoritativeScenario = await scenarioStore.active();
+                const authorizationService = new PflegehelferService(
+                  new InMemoryReferenceStatePort(authoritativeScenario.state),
+                  service.providerRegistry,
+                  service.providerProfile,
+                );
+                return authorizeProviderDispatch(
+                  authorizationService,
                   runtimeSitePack.packDigest,
                   job,
-                ),
+                );
+              },
             },
           )
         : null;
@@ -1917,12 +2118,16 @@ export function buildApp(
     )
       return;
     const commandId = request.headers["x-command-id"];
-    if (typeof commandId !== "string" || !z.uuid().safeParse(commandId).success)
+    if (
+      typeof commandId !== "string" ||
+      !z.uuid().safeParse(commandId).success
+    ) {
       throw new DomainError(
         "VALIDATION",
         "Mutierende Aufrufe benötigen eine eindeutige Befehls-ID.",
         400,
       );
+    }
     const actorId = userId(request);
     service.user(actorId);
     // v2 receipts deliberately do not alias the unsafe legacy key format.
@@ -3871,7 +4076,7 @@ export function buildApp(
         "Der klinische Arbeitstag ist nur für zugewiesene Pflegerollen verfügbar.",
         403,
       );
-    const workday = await boundClinicalWorkday(actorId);
+    const workday = await persistReadAudit(() => boundClinicalWorkday(actorId));
     const providerState =
       runtime.profile === "integrated-demo"
         ? await operationalStore.providerDeliveryState(
@@ -3963,11 +4168,39 @@ export function buildApp(
         z.object({ type: z.literal("close-shift") }).strict(),
       ])
       .parse(request.body) as WorkdayCommand;
-    await boundClinicalWorkday(actorId);
+    const commandIdentity = requestCommandKeys.get(request);
+    if (commandIdentity) {
+      const priorReceipt =
+        service.commandReceipt(commandIdentity.key) ??
+        (runtime.profile === "integrated-demo"
+          ? await operationalStore.loadApplicationCommandReceipt(
+              commandIdentity.key,
+              commandIdentity.requestHash,
+            )
+          : await workspace.loadCommandReceipt(commandIdentity.key));
+      if (priorReceipt) {
+        if (priorReceipt.requestHash !== commandIdentity.requestHash)
+          throw new DomainError(
+            "INVALID_STATE",
+            "Befehls-ID wurde bereits mit einem anderen Inhalt verwendet.",
+            409,
+          );
+        await reloadIntegratedAuthority();
+        await assertCommandReceiptReadable(request, priorReceipt);
+        service.recordCommandReceipt(priorReceipt);
+        committedCommandKeys.add(commandIdentity.key);
+        return JSON.parse(priorReceipt.payload);
+      }
+    }
+    const boundWorkday = await persistReadAudit(() =>
+      boundClinicalWorkday(actorId),
+    );
     if ("patientId" in command) {
-      const allowedPatient = service
-        .snapshot(actorId, actor.defaultPurpose)
-        .patients.find((patient) => patient.id === command.patientId);
+      const allowedPatient = await persistReadAudit(() =>
+        service
+          .snapshot(actorId, actor.defaultPurpose)
+          .patients.find((patient) => patient.id === command.patientId),
+      );
       if (!allowedPatient)
         throw new DomainError(
           "AUTH_DENIED",
@@ -4002,8 +4235,7 @@ export function buildApp(
         422,
       );
     if (command.type === "complete-episode") {
-      const workday = await operationalStore.getWorkday(actorId, actor.role);
-      const episode = workday.episodes.find(
+      const episode = boundWorkday.episodes.find(
         (candidate) => candidate.id === command.episodeId,
       );
       if (!episode)
@@ -4037,77 +4269,97 @@ export function buildApp(
           422,
         );
     }
-    return persist(async () => {
-      try {
-        const result = await operationalStore.applyWorkdayCommand(
-          actorId,
-          actor.role,
-          command,
-        );
-        if (command.type === "complete-episode") {
-          const episode = result.episodes.find(
-            (candidate) => candidate.id === command.episodeId,
-          );
-          if (!episode)
-            throw new DomainError(
-              "INVALID_STATE",
-              "Die abgeschlossene Arbeitsepisode ist nicht mehr verfügbar.",
-              409,
-            );
-          service.runAtomically(() => {
-            const patient = service
-              .snapshot(actorId, actor.defaultPurpose)
-              .patients.find((candidate) => candidate.id === episode.patientId);
-            if (!patient)
-              throw new DomainError(
-                "AUTH_DENIED",
-                "Der Patientenkontext der Arbeitsepisode ist nicht freigegeben.",
-                403,
-              );
-            const draft = service.createNoteDraft(actorId, {
-              patientId: patient.id,
-              encounterId: patient.encounterId,
-              structuredText: command.evidence,
-              purpose: actor.defaultPurpose,
-            });
-            service.approve(actorId, "note", draft.id, {
-              expectedVersion: draft.version,
-              patientMrn: patient.mrn,
-              patientBirthDate: patient.birthDate,
-              reviewedDiff: true,
-              purpose: actor.defaultPurpose,
-            });
-          });
-        }
-        if (
-          ["start-episode", "interrupt-and-start", "resume-episode"].includes(
-            command.type,
-          )
-        ) {
-          assistant.revokeActorIntents(actorId);
-          revokeVoiceReceipts(actorId);
-          await operationalStore.revokeActorAuthorities(actorId);
-        }
-        publishInvalidation();
-        return {
-          ...result,
-          providerState:
+    try {
+      const result = await persist(
+        async () => {
+          const result =
             runtime.profile === "integrated-demo"
-              ? await operationalStore.providerDeliveryState(
-                  result.handover.patientIds,
-                )
-              : service.providerSyncState(result.handover.patientIds),
-        };
-      } catch (error) {
-        throw new DomainError(
-          "INVALID_STATE",
-          error instanceof Error
-            ? error.message
-            : "Arbeitstag-Aktion fehlgeschlagen.",
-          409,
-        );
+              ? boundWorkday
+              : await operationalStore.applyWorkdayCommand(
+                  actorId,
+                  actor.role,
+                  command,
+                );
+          if (command.type === "complete-episode") {
+            const episode = boundWorkday.episodes.find(
+              (candidate) => candidate.id === command.episodeId,
+            );
+            if (!episode)
+              throw new DomainError(
+                "INVALID_STATE",
+                "Die abgeschlossene Arbeitsepisode ist nicht mehr verfügbar.",
+                409,
+              );
+            service.runAtomically(() => {
+              const patient = service
+                .snapshot(actorId, actor.defaultPurpose)
+                .patients.find(
+                  (candidate) => candidate.id === episode.patientId,
+                );
+              if (!patient)
+                throw new DomainError(
+                  "AUTH_DENIED",
+                  "Der Patientenkontext der Arbeitsepisode ist nicht freigegeben.",
+                  403,
+                );
+              const draft = service.createNoteDraft(actorId, {
+                patientId: patient.id,
+                encounterId: patient.encounterId,
+                structuredText: command.evidence,
+                purpose: actor.defaultPurpose,
+              });
+              service.approve(actorId, "note", draft.id, {
+                expectedVersion: draft.version,
+                patientMrn: patient.mrn,
+                patientBirthDate: patient.birthDate,
+                reviewedDiff: true,
+                purpose: actor.defaultPurpose,
+              });
+            });
+          }
+          return {
+            ...result,
+            providerState:
+              runtime.profile === "integrated-demo"
+                ? await operationalStore.providerDeliveryState(
+                    result.handover.patientIds,
+                  )
+                : service.providerSyncState(result.handover.patientIds),
+          };
+        },
+        request,
+        200,
+        false,
+        runtime.profile === "integrated-demo"
+          ? {
+              actorId,
+              actorRole: actor.role,
+              sessionId: boundWorkday.sessionId,
+              command,
+            }
+          : undefined,
+      );
+      if (
+        ["start-episode", "interrupt-and-start", "resume-episode"].includes(
+          command.type,
+        )
+      ) {
+        assistant.revokeActorIntents(actorId);
+        revokeVoiceReceipts(actorId);
+        await operationalStore.revokeActorAuthorities(actorId);
       }
-    }, request);
+      publishInvalidation();
+      return result;
+    } catch (error) {
+      if (isDomainError(error)) throw error;
+      throw new DomainError(
+        "INVALID_STATE",
+        error instanceof Error
+          ? error.message
+          : "Arbeitstag-Aktion fehlgeschlagen.",
+        409,
+      );
+    }
   });
 
   app.post("/api/v1/assistant/context", async (request) => {
@@ -4119,9 +4371,11 @@ export function buildApp(
       .strict()
       .parse(request.body);
     const selectedPatient = body.patientId
-      ? service
-          .snapshot(actorId, actor.defaultPurpose)
-          .patients.find((patient) => patient.id === body.patientId)
+      ? await persistReadAudit(() =>
+          service
+            .snapshot(actorId, actor.defaultPurpose)
+            .patients.find((patient) => patient.id === body.patientId),
+        )
       : undefined;
     if (body.patientId) {
       if (!selectedPatient)
@@ -4157,8 +4411,8 @@ export function buildApp(
     const actorId = userId(request);
     const actor = service.user(actorId);
     const context = await requireAssistantContext(request);
-    await persist(
-      () =>
+    const result = await persist(
+      () => {
         service.audit.append({
           actor,
           action: "assistant:conversation-cleared",
@@ -4166,11 +4420,21 @@ export function buildApp(
           purpose: actor.defaultPurpose,
           outcome: "success",
           detail: { retentionClass: "shift-session" },
-        }),
+        });
+        return { cleared: true, expiresAt: null };
+      },
       request,
+      200,
+      false,
+      undefined,
+      undefined,
+      runtime.profile === "integrated-demo"
+        ? { actorId, actorRole: actor.role, context }
+        : undefined,
     );
-    await operationalStore.clearConversation(actorId, actor.role, context);
-    return { cleared: true, expiresAt: null };
+    if (runtime.profile !== "integrated-demo")
+      await operationalStore.clearConversation(actorId, actor.role, context);
+    return result;
   });
 
   app.post("/api/v1/assistant/transcribe", async (request) => {
@@ -4229,7 +4493,60 @@ export function buildApp(
       fileBuffer.byteOffset,
       fileBuffer.byteLength,
     );
+    const commandId = request.headers["x-command-id"];
+    if (
+      typeof commandId !== "string" ||
+      !z.uuid().safeParse(commandId).success
+    ) {
+      fileBuffer.fill(0);
+      throw new DomainError(
+        "VALIDATION",
+        "Sprachtranskription benötigt eine eindeutige Befehls-ID.",
+        400,
+      );
+    }
+    const route = "/api/v1/assistant/transcribe";
+    const commandKey = `${siteConfiguration.institutionId}:${siteConfiguration.siteId}:${actorId}:v2:POST:${route}:${commandId}`;
+    const requestHash = createHash("sha256")
+      .update(
+        canonicalJson({
+          organizationId: siteConfiguration.institutionId,
+          siteId: siteConfiguration.siteId,
+          actorId,
+          route,
+          clientContextId: assistantContext.clientContextId,
+          sessionId: assistantContext.sessionId,
+          threadId: assistantContext.threadId,
+          contextRevision: assistantContext.contextRevision,
+          patientId: context.patientId,
+          encounterId: assistantContext.encounterId,
+          purpose: context.purpose,
+          mimetype: file.mimetype,
+          contentHash: createHash("sha256").update(bytes).digest("hex"),
+        }),
+      )
+      .digest("hex");
+    requestCommandKeys.set(request, { key: commandKey, requestHash });
     try {
+      const priorReceipt =
+        service.commandReceipt(commandKey) ??
+        (runtime.profile === "integrated-demo"
+          ? await operationalStore.loadApplicationCommandReceipt(
+              commandKey,
+              requestHash,
+            )
+          : await workspace.loadCommandReceipt(commandKey));
+      if (priorReceipt) {
+        if (priorReceipt.requestHash !== requestHash)
+          throw new DomainError(
+            "INVALID_STATE",
+            "Befehls-ID wurde bereits mit einem anderen Audioinhalt verwendet.",
+            409,
+          );
+        await reloadIntegratedAuthority();
+        await assertCommandReceiptReadable(request, priorReceipt);
+        return JSON.parse(priorReceipt.payload);
+      }
       const transcription = await asr.transcribe(
         bytes,
         file.mimetype,
@@ -4263,22 +4580,41 @@ export function buildApp(
         contextRevision: assistantContext.contextRevision,
         expiresAt: Date.now() + 5 * 60_000,
       };
-      voiceReceipts.set(receiptId, voiceAuthority);
-      await operationalStore.storeVoiceAuthority(
-        authorityHash(receiptId),
-        voiceAuthority,
+      const result = await persist(
+        () => {
+          service.audit.append({
+            actor,
+            action: "assistant:voice-transcribed",
+            patientId: context.patientId,
+            purpose: context.purpose,
+            outcome: "success",
+            detail: {
+              asrMode: asr.mode,
+              model: asr.model,
+              audioRetained: false,
+            },
+          });
+          return {
+            transcription,
+            voiceReceiptId: receiptId,
+            asr: asr.status(),
+          };
+        },
+        request,
+        200,
+        false,
+        undefined,
+        runtime.profile === "integrated-demo"
+          ? { tokenHash: authorityHash(receiptId), record: voiceAuthority }
+          : undefined,
       );
-      return persist(() => {
-        service.audit.append({
-          actor,
-          action: "assistant:voice-transcribed",
-          patientId: context.patientId,
-          purpose: context.purpose,
-          outcome: "success",
-          detail: { asrMode: asr.mode, model: asr.model, audioRetained: false },
-        });
-        return { transcription, voiceReceiptId: receiptId, asr: asr.status() };
-      });
+      if (runtime.profile !== "integrated-demo")
+        await operationalStore.storeVoiceAuthority(
+          authorityHash(receiptId),
+          voiceAuthority,
+        );
+      voiceReceipts.set(receiptId, voiceAuthority);
+      return result;
     } finally {
       fileBuffer.fill(0);
     }
@@ -4335,9 +4671,11 @@ export function buildApp(
     await contextTransitions.get(`${actorId}:${clientContextId}`);
     const context = await requireAssistantContext(request);
     const selectedPatient = body.patientId
-      ? service
-          .snapshot(actorId, body.purpose ?? actor.defaultPurpose)
-          .patients.find((patient) => patient.id === body.patientId)
+      ? await persistReadAudit(() =>
+          service
+            .snapshot(actorId, body.purpose ?? actor.defaultPurpose)
+            .patients.find((patient) => patient.id === body.patientId),
+        )
       : null;
     if (
       context.patientId !== body.patientId ||
@@ -4387,10 +4725,8 @@ export function buildApp(
               context.threadId,
             )
           : null;
-      const workingContext = await assistantWorkingContext(
-        actorId,
-        context,
-        previousCarePlan,
+      const workingContext = await persistReadAudit(() =>
+        assistantWorkingContext(actorId, context, previousCarePlan),
       );
       const response = await runAssistantQuery(() =>
         assistant.query(userId(request), {
@@ -4523,9 +4859,11 @@ export function buildApp(
     await contextTransitions.get(`${actorId}:${clientContextId}`);
     const context = await requireAssistantContext(request);
     const selectedPatient = body.patientId
-      ? service
-          .snapshot(actorId, body.purpose ?? actor.defaultPurpose)
-          .patients.find((patient) => patient.id === body.patientId)
+      ? await persistReadAudit(() =>
+          service
+            .snapshot(actorId, body.purpose ?? actor.defaultPurpose)
+            .patients.find((patient) => patient.id === body.patientId),
+        )
       : null;
     if (
       context.patientId !== body.patientId ||
@@ -4589,10 +4927,8 @@ export function buildApp(
                 context.threadId,
               )
             : null;
-        workingContext = await assistantWorkingContext(
-          actorId,
-          context,
-          previousCarePlan,
+        workingContext = await persistReadAudit(() =>
+          assistantWorkingContext(actorId, context, previousCarePlan),
         );
       }
     } catch (error) {
@@ -4824,9 +5160,11 @@ export function buildApp(
               reviewedSourceReadSet,
               durableResources,
             )
-          : assistant.refreshMemorySourceReadSet(
-              actorId,
-              reviewedSourceReadSet,
+          : await persistReadAudit(() =>
+              assistant.refreshMemorySourceReadSet(
+                actorId,
+                reviewedSourceReadSet,
+              ),
             );
     } catch (error) {
       if (
@@ -5003,6 +5341,7 @@ export function buildApp(
             const removedReferences = [...previousByReference.keys()].filter(
               (reference) =>
                 !reference.startsWith("Provenance/") &&
+                !reference.startsWith("AuditEvent/") &&
                 !nextReferences.has(reference),
             );
             const clinicalReferences = [
@@ -5031,6 +5370,9 @@ export function buildApp(
                 ),
             );
             const acceptedAuditEntries = service.audit.slice(beforeAuditLength);
+            const canonicalResultPayload = JSON.parse(
+              canonicalJson(result),
+            ) as unknown;
             const receipt = await operationalStore.acceptIntentCommand({
               tokenHash,
               actorId,
@@ -5046,7 +5388,7 @@ export function buildApp(
               commandKey: command.key,
               requestHash: command.requestHash,
               statusCode: 200,
-              resultPayload: result,
+              resultPayload: canonicalResultPayload,
               selectedActionIds: execution.reviewedActionIds ?? [],
               authorizationActions:
                 receiptActionsForAudit(acceptedAuditEntries),
@@ -5346,12 +5688,15 @@ export function buildApp(
       receivedAt: occurredAt,
       syncedAt: occurredAt,
     });
-    const persistScenarioState = async () => {
+    const currentScenarioState = async () => {
+      const current = await scenarioStore.active();
+      if (runtime.profile === "integrated-demo") return current;
       const state = service.checkpoint().state;
       installDemoScenarioRuntime(state);
       return scenarioStore.updateActiveState(
         state,
         await operationalStore.exportDemoWorkspace(),
+        scenarioRunContentDigest(current),
       );
     };
     const patientFixtureSchema = z
@@ -5417,7 +5762,7 @@ export function buildApp(
     app.get("/api/v1/admin/demo", async (request) => {
       requireDemoAdministrator(request);
       await ensureScenarioReady();
-      const run = await persistScenarioState();
+      const run = await currentScenarioState();
       return {
         run: {
           runId: run.runId,
@@ -5438,7 +5783,7 @@ export function buildApp(
     app.get("/api/v1/admin/demo/export", async (request, reply) => {
       requireDemoAdministrator(request);
       await ensureScenarioReady();
-      const run = await persistScenarioState();
+      const run = await currentScenarioState();
       const bundle = {
         schemaVersion: 1,
         kind: "pflegehelfer-synthetic-scenario",
@@ -5489,7 +5834,7 @@ export function buildApp(
     app.post("/api/v1/admin/demo/runs", async (request, reply) => {
       requireDemoAdministrator(request);
       await ensureScenarioReady();
-      await persistScenarioState();
+      await currentScenarioState();
       const body = z
         .object({
           source: z.enum(["baseline", "current"]),
@@ -5556,7 +5901,7 @@ export function buildApp(
         201,
         true,
       );
-      await persistScenarioState();
+      await currentScenarioState();
       return reply.code(201).send(result);
     });
 
@@ -5629,7 +5974,7 @@ export function buildApp(
         201,
         true,
       );
-      await persistScenarioState();
+      await currentScenarioState();
       return reply.code(201).send(result);
     });
 
@@ -5702,7 +6047,7 @@ export function buildApp(
         201,
         true,
       );
-      await persistScenarioState();
+      await currentScenarioState();
       return reply.code(201).send(result);
     });
 
@@ -5807,7 +6152,7 @@ export function buildApp(
         201,
         true,
       );
-      await persistScenarioState();
+      await currentScenarioState();
       return reply.code(201).send(result);
     });
 
@@ -5860,7 +6205,7 @@ export function buildApp(
         200,
         true,
       );
-      await persistScenarioState();
+      await currentScenarioState();
       return result;
     });
 
@@ -5892,7 +6237,7 @@ export function buildApp(
       requireDemoAdministrator(request);
       const { runId } = z.object({ runId: z.uuid() }).parse(request.params);
       const [current, target] = await Promise.all([
-        persistScenarioState(),
+        currentScenarioState(),
         scenarioStore.get(runId),
       ]);
       if (!target)
