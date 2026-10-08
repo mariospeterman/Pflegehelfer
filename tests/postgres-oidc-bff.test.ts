@@ -1,22 +1,42 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { PostgresOidcBff } from "../src/server/oidc-bff.js";
+import { provisionOidcMemberships } from "../src/server/oidc-membership.js";
 
 const databaseUrl = process.env.PFH_OPERATIONAL_DATABASE_URL;
+const migrationDatabaseUrl = process.env.PFH_MIGRATION_DATABASE_URL;
 const issuer = process.env.PFH_TEST_OIDC_ISSUER;
+const redirectUri =
+  process.env.PFH_TEST_OIDC_REDIRECT_URI ??
+  "http://127.0.0.1:4173/api/v1/auth/callback";
+const logoutRedirectUri =
+  process.env.PFH_TEST_OIDC_POST_LOGOUT_REDIRECT_URI ??
+  "http://127.0.0.1:4173/api/v1/auth/logout/callback";
 const instances: PostgresOidcBff[] = [];
 afterEach(async () =>
   Promise.all(instances.splice(0).map((instance) => instance.close())),
 );
 
-describe.runIf(Boolean(databaseUrl && issuer))(
+describe.runIf(Boolean(databaseUrl && migrationDatabaseUrl && issuer))(
   "PostgreSQL-backed OIDC authorization-code flow",
   () => {
     it("binds PKCE, state, nonce, issuer, audience and a revocable session", async () => {
+      await provisionOidcMemberships(migrationDatabaseUrl!, [
+        {
+          organizationId: "org-demo",
+          issuer: issuer!,
+          subject: "synthetic-org-demo-nora",
+          actorId: "u-nurse",
+          membershipVersion: 1,
+          policyVersion: "directory-v2-test",
+          active: true,
+        },
+      ]);
       const bff = new PostgresOidcBff({
         issuer: issuer!,
         clientId: "pflegehelfer-test",
-        redirectUri: "http://127.0.0.1:4173/api/v1/auth/callback",
-        publicOrigin: "http://127.0.0.1:4173",
+        redirectUri,
+        logoutRedirectUri,
+        publicOrigin: new URL(redirectUri).origin,
         organizationId: "org-demo",
         databaseUrl: databaseUrl!,
         encryptionSecret: "synthetic-oidc-test-secret-material-000000000",
@@ -66,8 +86,42 @@ describe.runIf(Boolean(databaseUrl && issuer))(
         actorId: "u-nurse",
       });
 
-      await bff.logout(cookieHeader);
+      await provisionOidcMemberships(migrationDatabaseUrl!, [
+        {
+          organizationId: "org-demo",
+          issuer: issuer!,
+          subject: "synthetic-org-demo-nora",
+          actorId: "u-nurse",
+          membershipVersion: 2,
+          policyVersion: "directory-v2-test",
+          active: true,
+        },
+      ]);
       await expect(bff.authenticate(cookieHeader)).resolves.toBeNull();
+
+      const logout = await bff.logout(cookieHeader);
+      await expect(bff.authenticate(cookieHeader)).resolves.toBeNull();
+      expect(logout.mode).toBe("federated-redirect");
+      const logoutTarget = new URL(logout.redirectTo);
+      expect(logoutTarget.origin).toBe(new URL(issuer!).origin);
+      expect(logoutTarget.searchParams.get("post_logout_redirect_uri")).toBe(
+        logoutRedirectUri,
+      );
+      const state = logoutTarget.searchParams.get("state")!;
+      const logoutCookie = logout.cookies
+        .filter((entry) => entry.startsWith("pfh_logout="))
+        .at(-1)!
+        .split(";", 1)[0];
+      const upstream = await fetch(logoutTarget, { redirect: "manual" });
+      expect(upstream.status).toBe(303);
+      const logoutCallback = new URL(upstream.headers.get("location")!);
+      expect(logoutCallback.searchParams.get("state")).toBe(state);
+      await expect(
+        bff.completeLogout(state, logoutCookie),
+      ).resolves.toMatchObject({ redirectTo: "/" });
+      await expect(bff.completeLogout(state, logoutCookie)).rejects.toThrow(
+        /STATE/,
+      );
       await expect(
         bff.completeLogin(
           callback.searchParams.get("code")!,
@@ -81,8 +135,9 @@ describe.runIf(Boolean(databaseUrl && issuer))(
       const bff = new PostgresOidcBff({
         issuer: issuer!,
         clientId: "pflegehelfer-test",
-        redirectUri: "http://127.0.0.1:4173/api/v1/auth/callback",
-        publicOrigin: "http://127.0.0.1:4173",
+        redirectUri,
+        logoutRedirectUri,
+        publicOrigin: new URL(redirectUri).origin,
         organizationId: "org-demo",
         databaseUrl: databaseUrl!,
         encryptionSecret: "synthetic-oidc-test-secret-material-000000000",
@@ -103,7 +158,7 @@ describe.runIf(Boolean(databaseUrl && issuer))(
           callback.searchParams.get("state")!,
           loginCookie,
         ),
-      ).rejects.toThrow(/ORGANIZATION_MISMATCH/);
+      ).rejects.toThrow(/MEMBERSHIP_MISSING_OR_REVOKED/);
     });
   },
 );

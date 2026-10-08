@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { PostgresOperationalStore } from "../src/infrastructure/operational-store.js";
 import { patients } from "../src/core/seed.js";
+import { sourceReadSetFixture } from "./source-read-set-fixture.js";
 
 const databaseUrl = process.env.PFH_OPERATIONAL_DATABASE_URL;
 const { Pool } = pg;
@@ -110,6 +111,11 @@ describe.runIf(Boolean(databaseUrl))("PostgreSQL operational store", () => {
           purpose: "direct-care" as const,
           resourceVersion: 7,
           payload: { title: "Synthetischer Fence-Test" },
+          sourceReadSet: sourceReadSetFixture({
+            patientId: "p-anna",
+            encounterId: "enc-anna-2026",
+            version: 7,
+          }),
           expiresAt: Date.now() + 60_000,
         },
         sessionId: context.sessionId,
@@ -679,6 +685,11 @@ describe.runIf(Boolean(databaseUrl))("PostgreSQL operational store", () => {
         "enc-anna-2026",
       );
       const tokenHash = createHash("sha256").update("test-token").digest("hex");
+      const sourceReadSet = sourceReadSetFixture({
+        patientId: "p-anna",
+        encounterId: "enc-anna-2026",
+        version: 7,
+      });
       const record = {
         actorId: "u-nurse",
         actorRole: "registered-nurse" as const,
@@ -688,6 +699,7 @@ describe.runIf(Boolean(databaseUrl))("PostgreSQL operational store", () => {
         purpose: "direct-care" as const,
         resourceVersion: 7,
         payload: { title: "Kontrolle" },
+        sourceReadSet,
         expiresAt: Date.now() + 60_000,
       };
       await store.storeIntentAuthority({

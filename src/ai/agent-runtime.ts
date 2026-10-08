@@ -1,5 +1,9 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import type {
+  SourceReadResource,
+  SourceReadSelector,
+} from "../core/source-read-set.js";
 
 export type AgentTerminalStatus =
   | "conversation"
@@ -60,6 +64,11 @@ export interface AgentToolResult {
     effectiveAt?: string;
     provider?: string;
   }>;
+  /** Server-only record/query basis; this object is never sent to the model. */
+  sourceRead?: {
+    resources: SourceReadResource[];
+    selectors: SourceReadSelector[];
+  };
 }
 
 export interface AgentEvidenceRecord extends AgentToolResult {

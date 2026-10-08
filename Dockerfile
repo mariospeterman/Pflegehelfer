@@ -1,10 +1,11 @@
 FROM node:24.19.0-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS build
+ARG PFH_BUILD_SHA
 WORKDIR /app
 RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY . .
-RUN pnpm verify && pnpm prune --prod
+RUN node scripts/validate-build-sha.mjs && pnpm verify && pnpm prune --prod
 
 FROM node:24.19.0-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43
 ENV NODE_ENV=production PORT=4173 HOST=0.0.0.0

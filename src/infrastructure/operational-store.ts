@@ -4,6 +4,11 @@ import pg from "pg";
 import { workflowForRole, type WorkflowDefinition } from "../core/workflows.js";
 import type { DurableIntentRecord } from "../core/assistant.js";
 import {
+  parseSourceReadSetV1,
+  sourceReadSetMatches,
+  type SourceReadSetV1,
+} from "../core/source-read-set.js";
+import {
   archiveAssistantResponse,
   type AssistantResponse,
 } from "../core/assistant-service.js";
@@ -287,7 +292,7 @@ export interface LocalIntentAcceptance {
   resultPayload: unknown;
   selectedActionIds: string[];
   policyVersion: string;
-  sourceReadSet: unknown[];
+  sourceReadSet: SourceReadSetV1;
   auditEntries: AuditEntry[];
   clinicalResources: Resource[];
   removedReferences: string[];
@@ -1610,6 +1615,7 @@ export class InMemoryOperationalStore implements OperationalStore {
     );
   }
   storeIntentAuthority(input: IntentAuthorityWrite): Promise<void> {
+    const sourceReadSet = parseSourceReadSetV1(input.record.sourceReadSet);
     const session = this.sessions.get(input.record.actorId);
     const thread = this.memoryThreads.get(input.threadId);
     const clientContext = input.clientContextId
@@ -1646,7 +1652,7 @@ export class InMemoryOperationalStore implements OperationalStore {
       }
     if (!this.authorities.has(input.tokenHash))
       this.authorities.set(input.tokenHash, {
-        record: structuredClone(input.record),
+        record: structuredClone({ ...input.record, sourceReadSet }),
         sessionId: input.sessionId,
         threadId: input.threadId,
         contextRevision: input.contextRevision,
@@ -1743,6 +1749,12 @@ export class InMemoryOperationalStore implements OperationalStore {
         : authority.clientContextId !== null)
     )
       return Promise.reject(new Error("INTENT_AUTHORITY_INVALID"));
+    const reviewedSourceReadSet = parseSourceReadSetV1(
+      authority.record.sourceReadSet,
+    );
+    const acceptedSourceReadSet = parseSourceReadSetV1(input.sourceReadSet);
+    if (!sourceReadSetMatches(reviewedSourceReadSet, acceptedSourceReadSet))
+      return Promise.reject(new Error("SOURCE_READ_SET_ACCEPTANCE_MISMATCH"));
     for (const candidate of this.authorities.values())
       if (
         candidate.record.actorId === authority.record.actorId &&
@@ -3202,8 +3214,10 @@ export class PostgresOperationalStore
       review_items: Array<{ id: string; label: string; kind: string }>;
       source_response_id: string;
       effective_role: Role;
+      source_read_set: unknown;
     }>(
-      `SELECT p.payload,p.review_items,p.source_response_id,s.effective_role
+      `SELECT p.payload,p.review_items,p.source_response_id,s.effective_role,
+              p.source_read_set
        FROM assistant_proposal_revisions p
        JOIN working_sessions s
          ON s.organization_id=p.organization_id AND s.id=p.session_id
@@ -3224,6 +3238,7 @@ export class PostgresOperationalStore
         resourceVersion: row.payload.resourceVersion,
         command: row.payload.command,
         payload: row.payload.payload,
+        sourceReadSet: parseSourceReadSetV1(row.source_read_set),
         expiresAt: Date.now() + 120_000,
       },
       reviewItems: row.review_items,
@@ -4502,6 +4517,7 @@ export class PostgresOperationalStore
     input: IntentAuthorityWrite,
     transactionClient?: pg.PoolClient,
   ): Promise<void> {
+    const sourceReadSet = parseSourceReadSetV1(input.record.sourceReadSet);
     const client = transactionClient ?? (await this.pool.connect());
     const ownsTransaction = transactionClient === undefined;
     try {
@@ -4522,6 +4538,7 @@ export class PostgresOperationalStore
         purpose: input.record.purpose,
         reviewItems: input.reviewItems,
         clientContextId: input.clientContextId ?? null,
+        sourceReadSet,
       };
       const proposalHash = createHash("sha256")
         .update(JSON.stringify(proposalPayload))
@@ -4632,8 +4649,8 @@ export class PostgresOperationalStore
       if (!samePendingProposal)
         await client.query(
           `INSERT INTO assistant_proposal_revisions
-           (organization_id,id,actor_id,session_id,thread_id,context_revision,patient_id,encounter_id,source_response_id,revision,proposal_hash,payload,review_items,status,supersedes_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'pending',$14)`,
+           (organization_id,id,actor_id,session_id,thread_id,context_revision,patient_id,encounter_id,source_response_id,revision,proposal_hash,payload,review_items,status,supersedes_id,source_read_set,source_read_set_digest)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'pending',$14,$15,$16)`,
           [
             organizationId,
             proposalId,
@@ -4649,12 +4666,14 @@ export class PostgresOperationalStore
             proposalPayload,
             JSON.stringify(input.reviewItems),
             prior.rows[0]?.id ?? null,
+            JSON.stringify(sourceReadSet),
+            sourceReadSet.digest,
           ],
         );
       await client.query(
         `INSERT INTO safety_authority
-           (organization_id,token_hash,authority_type,actor_id,session_id,thread_id,context_revision,patient_id,binding,proposal_revision_id,proposal_hash,expires_at,client_context_id)
-         VALUES ($1,$2,'intent',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+           (organization_id,token_hash,authority_type,actor_id,session_id,thread_id,context_revision,patient_id,binding,proposal_revision_id,proposal_hash,expires_at,client_context_id,source_read_set,source_read_set_digest)
+         VALUES ($1,$2,'intent',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
          `,
         [
           organizationId,
@@ -4669,6 +4688,8 @@ export class PostgresOperationalStore
           proposalHash,
           new Date(input.record.expiresAt),
           input.clientContextId ?? null,
+          JSON.stringify(sourceReadSet),
+          sourceReadSet.digest,
         ],
       );
       if (ownsTransaction) await client.query("COMMIT");
@@ -4707,7 +4728,10 @@ export class PostgresOperationalStore
            )
          ))
          AND a.consumed_at IS NULL AND a.expires_at > now()
-         AND p.status='pending' AND p.proposal_hash=a.proposal_hash`,
+         AND p.status='pending' AND p.proposal_hash=a.proposal_hash
+         AND a.source_read_set IS NOT NULL
+         AND p.source_read_set=a.source_read_set
+         AND p.source_read_set_digest=a.source_read_set_digest`,
       [
         organizationId,
         input.tokenHash,
@@ -4825,9 +4849,12 @@ export class PostgresOperationalStore
         review_items: unknown;
         workflow_template_id: string;
         workflow_version: number;
+        source_read_set: unknown;
+        source_read_set_digest: string;
       }>(
         `SELECT a.binding,a.proposal_revision_id::text,a.proposal_hash,
-                p.review_items,s.workflow_template_id,s.workflow_version
+                p.review_items,s.workflow_template_id,s.workflow_version,
+                p.source_read_set,p.source_read_set_digest
          FROM safety_authority a
          JOIN assistant_proposal_revisions p
            ON p.organization_id=a.organization_id AND p.id=a.proposal_revision_id
@@ -4844,6 +4871,8 @@ export class PostgresOperationalStore
            AND a.binding->>'encounterId'=$8
            AND a.consumed_at IS NULL AND a.expires_at > now()
            AND p.status='pending' AND p.proposal_hash=a.proposal_hash
+           AND a.source_read_set=p.source_read_set
+           AND a.source_read_set_digest=p.source_read_set_digest
            AND s.status='active' AND s.actor_id=$3
            AND (
              ($9::uuid IS NOT NULL AND a.client_context_id=$9
@@ -4887,6 +4916,17 @@ export class PostgresOperationalStore
           "AUTH_DENIED",
           "Assistenzaktion ist ungültig, abgelaufen oder bereits verwendet.",
           403,
+        );
+      const boundSourceReadSet = parseSourceReadSetV1(bound.source_read_set);
+      const acceptedSourceReadSet = parseSourceReadSetV1(input.sourceReadSet);
+      if (
+        bound.source_read_set_digest !== boundSourceReadSet.digest ||
+        !sourceReadSetMatches(boundSourceReadSet, acceptedSourceReadSet)
+      )
+        throw new DomainError(
+          "VERSION_CONFLICT",
+          "Der freigegebene Quellenstand stimmt nicht mit dem geprüften Entwurf überein.",
+          409,
         );
       const reviewItems: unknown[] = Array.isArray(bound.review_items)
         ? (bound.review_items as unknown[])
@@ -4936,7 +4976,7 @@ export class PostgresOperationalStore
           bound.proposal_revision_id,
           bound.proposal_hash,
           JSON.stringify(input.selectedActionIds),
-          JSON.stringify(input.sourceReadSet),
+          JSON.stringify(boundSourceReadSet),
           JSON.stringify(input.resultPayload),
           input.statusCode,
         ],

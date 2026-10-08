@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { AuditChain } from "../src/core/audit.js";
 import { PflegehelferService } from "../src/core/service.js";
 import { PostgresOperationalStore } from "../src/infrastructure/operational-store.js";
+import { sourceReadSetFixture } from "./source-read-set-fixture.js";
 
 const databaseUrl = process.env.PFH_OPERATIONAL_DATABASE_URL;
 const { Pool } = pg;
@@ -22,6 +23,11 @@ async function acceptSyntheticCommand(
     "enc-luca-2026",
   );
   const tokenHash = createHash("sha256").update(token).digest("hex");
+  const sourceReadSet = sourceReadSetFixture({
+    patientId: "p-luca",
+    encounterId: "enc-luca-2026",
+    version: 4,
+  });
   await store.storeIntentAuthority({
     tokenHash,
     record: {
@@ -36,6 +42,7 @@ async function acceptSyntheticCommand(
         transcript: `Synthetische Notiz ${sequence}`,
         structuredText: `Synthetische Notiz ${sequence}`,
       },
+      sourceReadSet,
       expiresAt: Date.now() + 60_000,
     },
     sessionId: context.sessionId,
@@ -65,7 +72,7 @@ async function acceptSyntheticCommand(
     resultPayload: { sequence },
     selectedActionIds: ["action-1"],
     policyVersion: "test-policy-v1",
-    sourceReadSet: [{ reference: "Patient/p-luca", version: 4 }],
+    sourceReadSet,
     auditEntries: [],
     clinicalResources: [],
     removedReferences: [],

@@ -25,6 +25,12 @@ import {
 } from "../core/fhir-resource-set.js";
 import { siteConfiguration } from "../core/site-config.js";
 import type { CommandReceipt, ServiceCheckpoint } from "../core/service.js";
+import {
+  buildSourceReadSetV1,
+  parseSourceReadSetV1,
+  type SourceReadResource,
+  type SourceReadSetV1,
+} from "../core/source-read-set.js";
 
 const checkpointId = fhirResourceId("Binary", "workflow-control-plane-v1");
 const legacyCheckpointId = legacyFhirResourceId(
@@ -58,6 +64,17 @@ const transactionalClinicalResourceTypes: readonly ResourceType[] = [
 ];
 const dataClassificationSystem =
   "https://pflegehelfer.example.invalid/data-classification";
+const observationApprovalStateSystem =
+  "https://pflegehelfer.example.invalid/observation-approval-state";
+const communicationWorkflowStateSystem =
+  "https://pflegehelfer.example.invalid/communication-workflow-state";
+const domainIdentifierSystems: Record<string, string> = {
+  Patient: "https://pflegehelfer.example.invalid/patient-id",
+  Encounter: "https://pflegehelfer.example.invalid/encounter-id",
+  Task: "https://pflegehelfer.example.invalid/task-id",
+  Observation: "https://pflegehelfer.example.invalid/observation-id",
+  Communication: "https://pflegehelfer.example.invalid/communication-id",
+};
 const legacyResourceReferencePattern = new RegExp(
   `^(?:${managedClinicalResourceTypes.join("|")})/[A-Za-z0-9.-]{1,64}$`,
 );
@@ -475,6 +492,12 @@ export interface ClinicalWorkspace {
     resources: Resource[],
     removedReferences?: readonly string[],
   ): Promise<boolean>;
+  captureSourceReadSet(
+    sourceReadSet: SourceReadSetV1,
+  ): Promise<SourceReadSetV1>;
+  refreshSourceReadSet(
+    sourceReadSet: SourceReadSetV1,
+  ): Promise<SourceReadSetV1>;
   loadCheckpoint(): Promise<ServiceCheckpoint | null>;
   loadCommandReceipt(key: string): Promise<CommandReceipt | null>;
   status(): Promise<ClinicalWorkspaceStatus>;
@@ -498,6 +521,19 @@ export class InMemoryClinicalWorkspace implements ClinicalWorkspace {
   }
   verifyProjection(): Promise<boolean> {
     return Promise.resolve(true);
+  }
+  captureSourceReadSet(
+    sourceReadSet: SourceReadSetV1,
+  ): Promise<SourceReadSetV1> {
+    const parsed = parseSourceReadSetV1(sourceReadSet);
+    if (parsed.evidenceAuthority !== "memory-demo-not-fhir-evident")
+      return Promise.reject(new Error("MEMORY_SOURCE_READ_AUTHORITY_INVALID"));
+    return Promise.resolve(parsed);
+  }
+  refreshSourceReadSet(
+    sourceReadSet: SourceReadSetV1,
+  ): Promise<SourceReadSetV1> {
+    return this.captureSourceReadSet(sourceReadSet);
   }
   loadCheckpoint(): Promise<ServiceCheckpoint | null> {
     return Promise.resolve(null);
@@ -863,6 +899,225 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
       }
     }
     return versions;
+  }
+
+  private async readSourceReadSet(
+    input: SourceReadSetV1,
+    requireDraftMatch: boolean,
+  ): Promise<SourceReadSetV1> {
+    await this.connect();
+    const reviewed = parseSourceReadSetV1(input);
+    const physicalReference = (logicalReference: string): string => {
+      const [resourceType, domainId] = logicalReference.split("/");
+      if (!resourceType || !domainId)
+        throw new Error(
+          `INVALID_CLINICAL_RESOURCE_REFERENCE:${logicalReference}`,
+        );
+      return `${resourceType}/${fhirResourceId(resourceType, domainId)}`;
+    };
+    const tagCode = (resource: Resource, system: string) =>
+      resource.meta?.tag?.find((tag) => tag.system === system)?.code ?? null;
+    const referenceOf = (resource: Resource): string => {
+      if (!resource.id) throw new Error("SOURCE_READ_RESOURCE_ID_MISSING");
+      return `${resource.resourceType}/${resource.id}`;
+    };
+    const logicalReferenceOf = (resource: Resource): string => {
+      const system = domainIdentifierSystems[resource.resourceType];
+      const identified = resource as Resource & {
+        identifier?: Array<{ system?: string; value?: string }>;
+      };
+      const domainId = identified.identifier?.find(
+        (identifier) => identifier.system === system,
+      )?.value;
+      if (!domainId)
+        throw new Error(
+          `SOURCE_READ_DOMAIN_IDENTIFIER_MISSING:${referenceOf(resource)}`,
+        );
+      return `${resource.resourceType}/${domainId}`;
+    };
+    const expectedPhysicalByLogical = new Map(
+      reviewed.resources.map((resource) => [
+        resource.logicalReference,
+        physicalReference(resource.logicalReference),
+      ]),
+    );
+    const resourcesByReference = new Map<string, Resource>();
+    const selectorResults = [] as SourceReadSetV1["selectors"];
+    for (const selector of reviewed.selectors) {
+      const existing = await this.client.searchResources(
+        selector.resourceType,
+        `_tag=${encodeURIComponent(`${tenantTagSystem}|${tenantTag().code}`)}&_tag=${encodeURIComponent(`${managedProjectionTag.system}|${managedProjectionTag.code}`)}&_count=1000`,
+      );
+      if (existing.length >= 1_000)
+        throw new Error("SOURCE_READ_SELECTOR_LIMIT_EXCEEDED");
+      const patientReference = `Patient/${fhirResourceId("Patient", selector.patientId)}`;
+      const encounterReference = `Encounter/${fhirResourceId("Encounter", selector.encounterId)}`;
+      const matching = existing.filter((resource) => {
+        const candidate = resource as Resource & {
+          for?: { reference?: string };
+          subject?: { reference?: string };
+          encounter?: { reference?: string };
+          businessStatus?: { coding?: Array<{ code?: string }> };
+        };
+        const patientMatches =
+          (candidate.for?.reference ?? candidate.subject?.reference) ===
+          patientReference;
+        if (
+          !patientMatches ||
+          candidate.encounter?.reference !== encounterReference
+        )
+          return false;
+        if (selector.predicate === "task-open") {
+          const state = candidate.businessStatus?.coding?.find(({ code }) =>
+            Boolean(code),
+          )?.code;
+          if (!state)
+            throw new Error(
+              `SOURCE_READ_SELECTOR_STATE_MISSING:${referenceOf(resource)}`,
+            );
+          return state !== "completed";
+        }
+        if (selector.predicate === "observation-accepted") {
+          const state = tagCode(resource, observationApprovalStateSystem);
+          if (!state)
+            throw new Error(
+              `SOURCE_READ_SELECTOR_STATE_MISSING:${referenceOf(resource)}`,
+            );
+          return state === "accepted";
+        }
+        const state = tagCode(resource, communicationWorkflowStateSystem);
+        if (!state)
+          throw new Error(
+            `SOURCE_READ_SELECTOR_STATE_MISSING:${referenceOf(resource)}`,
+          );
+        return state !== "closed";
+      });
+      matching.sort((left, right) => {
+        const leftRecord = left as Resource & {
+          executionPeriod?: { end?: string };
+          effectiveDateTime?: string;
+          sent?: string;
+        };
+        const rightRecord = right as typeof leftRecord;
+        const leftValue =
+          selector.order === "due-asc"
+            ? (leftRecord.executionPeriod?.end ?? "9999")
+            : selector.order === "effective-desc"
+              ? (leftRecord.effectiveDateTime ?? "")
+              : (leftRecord.sent ?? "");
+        const rightValue =
+          selector.order === "due-asc"
+            ? (rightRecord.executionPeriod?.end ?? "9999")
+            : selector.order === "effective-desc"
+              ? (rightRecord.effectiveDateTime ?? "")
+              : (rightRecord.sent ?? "");
+        const direction = selector.order === "due-asc" ? 1 : -1;
+        return (
+          direction * leftValue.localeCompare(rightValue) ||
+          referenceOf(left).localeCompare(referenceOf(right))
+        );
+      });
+      for (const resource of matching)
+        resourcesByReference.set(referenceOf(resource), resource);
+      const orderedReferences = matching.map(referenceOf);
+      const membershipReferences = [...orderedReferences].sort();
+      const selectedReferences = orderedReferences.slice(0, selector.limit);
+      if (requireDraftMatch) {
+        const expectedMembership = selector.membershipReferences
+          .map((reference) =>
+            reviewed.evidenceAuthority === "fhir-meta-versionId"
+              ? reference
+              : physicalReference(reference),
+          )
+          .sort();
+        const expectedSelected = selector.selectedReferences.map((reference) =>
+          reviewed.evidenceAuthority === "fhir-meta-versionId"
+            ? reference
+            : physicalReference(reference),
+        );
+        if (
+          JSON.stringify(expectedMembership) !==
+            JSON.stringify(membershipReferences) ||
+          JSON.stringify(expectedSelected) !==
+            JSON.stringify(selectedReferences)
+        )
+          throw new Error(`SOURCE_READ_SET_DRAFT_STALE:${selector.id}`);
+      }
+      selectorResults.push({
+        ...selector,
+        totalCount: membershipReferences.length,
+        complete: membershipReferences.length <= selector.limit,
+        absenceObserved: membershipReferences.length === 0,
+        membershipReferences,
+        selectedReferences,
+      });
+    }
+    for (const reviewedResource of reviewed.resources) {
+      const reference =
+        reviewed.evidenceAuthority === "fhir-meta-versionId"
+          ? reviewedResource.reference
+          : expectedPhysicalByLogical.get(reviewedResource.logicalReference)!;
+      if (resourcesByReference.has(reference)) continue;
+      const [resourceType, id] = reference.split("/");
+      try {
+        const resource = await this.client.readResource(
+          resourceType as ResourceType,
+          id!,
+        );
+        resourcesByReference.set(reference, resource);
+      } catch (error) {
+        if (isNotFoundError(error))
+          throw new Error(`SOURCE_READ_RESOURCE_MISSING:${reference}`);
+        throw error;
+      }
+    }
+    const reviewedByLogical = new Map(
+      reviewed.resources.map((resource) => [
+        resource.logicalReference,
+        resource,
+      ]),
+    );
+    const resources: SourceReadResource[] = [
+      ...resourcesByReference.values(),
+    ].map((resource) => {
+      const reference = referenceOf(resource);
+      const logicalReference = logicalReferenceOf(resource);
+      const version = resource.meta?.versionId;
+      if (!version)
+        throw new Error(`MEDPLUM_RESOURCE_VERSION_MISSING:${reference}`);
+      const prior = reviewedByLogical.get(logicalReference);
+      return {
+        reference,
+        logicalReference,
+        version,
+        ...(prior?.patientId ? { patientId: prior.patientId } : {}),
+        ...(prior?.encounterId ? { encounterId: prior.encounterId } : {}),
+        claims: prior?.claims ?? [],
+      };
+    });
+    return buildSourceReadSetV1({
+      schemaVersion: 1,
+      evidenceAuthority: "fhir-meta-versionId",
+      capturedAt: new Date().toISOString(),
+      purpose: reviewed.purpose,
+      policyVersion: reviewed.policyVersion,
+      patientId: reviewed.patientId,
+      encounterId: reviewed.encounterId,
+      resources,
+      selectors: selectorResults,
+    });
+  }
+
+  captureSourceReadSet(
+    sourceReadSet: SourceReadSetV1,
+  ): Promise<SourceReadSetV1> {
+    return this.readSourceReadSet(sourceReadSet, true);
+  }
+
+  refreshSourceReadSet(
+    sourceReadSet: SourceReadSetV1,
+  ): Promise<SourceReadSetV1> {
+    return this.readSourceReadSet(sourceReadSet, false);
   }
 
   async verifyProjection(

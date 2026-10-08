@@ -15,6 +15,9 @@ const clientId = process.env.PFH_TEST_IDP_CLIENT_ID ?? "pflegehelfer-test";
 const redirectUri =
   process.env.PFH_TEST_IDP_REDIRECT_URI ??
   "http://127.0.0.1:4173/api/v1/auth/callback";
+const postLogoutRedirectUri =
+  process.env.PFH_TEST_IDP_POST_LOGOUT_REDIRECT_URI ??
+  "http://127.0.0.1:4173/api/v1/auth/logout/callback";
 
 const syntheticUsers = {
   "nora.nurse": {
@@ -54,6 +57,14 @@ const tokenBody = z
     code_verifier: z.string().min(43).max(128),
   })
   .passthrough();
+
+const logoutQuery = z
+  .object({
+    client_id: z.literal(clientId),
+    post_logout_redirect_uri: z.literal(postLogoutRedirectUri),
+    state: z.string().min(32).max(240),
+  })
+  .strict();
 
 interface AuthorizationCode {
   nonce: string;
@@ -173,7 +184,12 @@ app.post("/token", async (request, reply) => {
   };
 });
 
-app.get("/logout", (_request, reply) => reply.redirect("/", 303));
+app.get("/logout", (request, reply) => {
+  const query = logoutQuery.parse(request.query);
+  const target = new URL(query.post_logout_redirect_uri);
+  target.searchParams.set("state", query.state);
+  return reply.redirect(target.toString(), 303);
+});
 app.get("/health", () => ({ status: "ok", service: "pflegehelfer-test-idp" }));
 
 await app.listen({ port, host });

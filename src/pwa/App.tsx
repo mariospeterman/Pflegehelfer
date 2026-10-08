@@ -1532,9 +1532,17 @@ export function App() {
             });
             if (!response.ok && response.status !== 401)
               throw new Error("Abmeldung wurde nicht bestätigt.");
+            const result = response.ok
+              ? ((await response.json()) as { redirectTo?: unknown })
+              : null;
             purgeSensitiveBrowserState();
             publishAccessRevoked();
-            window.location.assign("/");
+            const redirectTo =
+              typeof result?.redirectTo === "string" ? result.redirectTo : "/";
+            const target = new URL(redirectTo, window.location.origin);
+            if (!["http:", "https:"].includes(target.protocol))
+              throw new Error("Abmeldeziel ist ungültig.");
+            window.location.assign(target.toString());
           } catch (failure) {
             setNotice(
               failure instanceof Error

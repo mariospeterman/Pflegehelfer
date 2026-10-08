@@ -5,6 +5,7 @@ import { AuditChain } from "../src/core/audit.js";
 import { users } from "../src/core/seed.js";
 import { PflegehelferService } from "../src/core/service.js";
 import { PostgresOperationalStore } from "../src/infrastructure/operational-store.js";
+import { sourceReadSetFixture } from "./source-read-set-fixture.js";
 
 const databaseUrl = process.env.PFH_OPERATIONAL_DATABASE_URL;
 const { Pool } = pg;
@@ -28,6 +29,11 @@ describe.runIf(Boolean(databaseUrl))("atomic local command acceptance", () => {
       const token = randomUUID();
       const tokenHash = createHash("sha256").update(token).digest("hex");
       const responseId = randomUUID();
+      const sourceReadSet = sourceReadSetFixture({
+        patientId: "p-luca",
+        encounterId: "enc-luca-2026",
+        version: 4,
+      });
       const record = {
         actorId: "u-assistant",
         actorRole: "care-assistant" as const,
@@ -37,6 +43,7 @@ describe.runIf(Boolean(databaseUrl))("atomic local command acceptance", () => {
         purpose: "direct-care" as const,
         resourceVersion: 4,
         payload: { plan: "{}" },
+        sourceReadSet,
         expiresAt: Date.now() + 60_000,
       };
       await store.appendConversationTurn("u-assistant", "care-assistant", {
@@ -86,7 +93,7 @@ describe.runIf(Boolean(databaseUrl))("atomic local command acceptance", () => {
         resultPayload: { accepted: true },
         selectedActionIds: ["action-1"],
         policyVersion: "test-policy-v1",
-        sourceReadSet: [{ reference: "Patient/p-luca", version: 4 }],
+        sourceReadSet,
         auditEntries: [auditEntry],
         clinicalResources: [],
         removedReferences: [],
@@ -121,6 +128,16 @@ describe.runIf(Boolean(databaseUrl))("atomic local command acceptance", () => {
           },
         ],
       };
+      await expect(
+        store.acceptIntentCommand({
+          ...input,
+          sourceReadSet: sourceReadSetFixture({
+            patientId: "p-luca",
+            encounterId: "enc-luca-2026",
+            version: 5,
+          }),
+        }),
+      ).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
       const accepted = await store.acceptIntentCommand(input);
       const replay = await store.acceptIntentCommand(input);
       expect(accepted.replayed).toBe(false);
@@ -129,6 +146,29 @@ describe.runIf(Boolean(databaseUrl))("atomic local command acceptance", () => {
         payload: { accepted: true },
         replayed: true,
       });
+      const persistedReadSet = await inspection.query<{
+        proposal_digest: string;
+        authority_digest: string;
+        accepted_digest: string;
+      }>(
+        `SELECT p.source_read_set_digest AS proposal_digest,
+                a.source_read_set_digest AS authority_digest,
+                c.source_read_set->>'digest' AS accepted_digest
+         FROM assistant_proposal_revisions p
+         JOIN safety_authority a
+           ON a.organization_id=p.organization_id AND a.proposal_revision_id=p.id
+         JOIN accepted_commands c
+           ON c.organization_id=p.organization_id AND c.proposal_revision_id=p.id
+         WHERE p.organization_id='org-demo' AND p.source_response_id=$1`,
+        [responseId],
+      );
+      expect(persistedReadSet.rows).toEqual([
+        {
+          proposal_digest: sourceReadSet.digest,
+          authority_digest: sourceReadSet.digest,
+          accepted_digest: sourceReadSet.digest,
+        },
+      ]);
       await expect(
         store.loadConversation("u-assistant", "care-assistant", "p-luca"),
       ).resolves.toMatchObject([

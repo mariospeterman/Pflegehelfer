@@ -34,8 +34,6 @@ const oidcClaimsSchema = z
     sub: z.string().min(1).max(240),
     nonce: z.string().min(32).max(240),
     sid: z.string().min(1).max(240).optional(),
-    pfh_user_id: z.string().min(1).max(80),
-    pfh_organization_id: z.string().min(1).max(120),
   })
   .passthrough();
 
@@ -43,6 +41,8 @@ export interface AuthenticatedIdentity {
   actorId: string;
   organizationId: string;
   subject: string;
+  membershipVersion: number;
+  policyVersion: string;
   sessionHash: string;
   csrfToken: string;
 }
@@ -61,6 +61,12 @@ export interface OidcCallbackResult {
 export interface OidcLogoutResult {
   redirectTo: string;
   cookies: string[];
+  mode: "local" | "federated-redirect";
+}
+
+export interface OidcLogoutCallbackResult {
+  redirectTo: string;
+  cookies: string[];
 }
 
 export interface IdentityAdapter {
@@ -76,6 +82,10 @@ export interface IdentityAdapter {
     cookieHeader: string | undefined,
   ): Promise<AuthenticatedIdentity | null>;
   logout(cookieHeader: string | undefined): Promise<OidcLogoutResult>;
+  completeLogout(
+    state: string,
+    cookieHeader: string | undefined,
+  ): Promise<OidcLogoutCallbackResult>;
   close?(): Promise<void>;
   assertRequestIntegrity(input: {
     identity: AuthenticatedIdentity;
@@ -90,6 +100,7 @@ export interface OidcBffConfiguration {
   clientId: string;
   clientSecret?: string | undefined;
   redirectUri: string;
+  logoutRedirectUri?: string | undefined;
   publicOrigin: string;
   organizationId: string;
   databaseUrl: string;
@@ -104,6 +115,7 @@ const configurationSchema = z
     clientId: z.string().min(3).max(240),
     clientSecret: z.string().min(16).max(1_000).optional(),
     redirectUri: z.url(),
+    logoutRedirectUri: z.url().optional(),
     publicOrigin: z.url(),
     organizationId: z.string().min(1).max(120),
     databaseUrl: z.string().min(1),
@@ -201,6 +213,9 @@ export function oidcConfigurationFromEnvironment(
       ? { clientSecret: env.PFH_OIDC_CLIENT_SECRET }
       : {}),
     redirectUri: env.PFH_OIDC_REDIRECT_URI,
+    ...(env.PFH_OIDC_POST_LOGOUT_REDIRECT_URI
+      ? { logoutRedirectUri: env.PFH_OIDC_POST_LOGOUT_REDIRECT_URI }
+      : {}),
     publicOrigin: env.PFH_PUBLIC_ORIGIN,
     organizationId,
     databaseUrl: env.PFH_OPERATIONAL_DATABASE_URL,
@@ -213,16 +228,36 @@ export function oidcConfigurationFromEnvironment(
   });
   const issuer = new URL(parsed.issuer);
   const redirect = new URL(parsed.redirectUri);
+  const logoutRedirect = parsed.logoutRedirectUri
+    ? new URL(parsed.logoutRedirectUri)
+    : null;
   const publicOrigin = new URL(parsed.publicOrigin);
   if (
     !parsed.allowInsecureHttp &&
-    [issuer, redirect, publicOrigin].some((url) => url.protocol !== "https:")
+    [
+      issuer,
+      redirect,
+      publicOrigin,
+      ...(logoutRedirect ? [logoutRedirect] : []),
+    ].some((url) => url.protocol !== "https:")
   )
     throw new Error(
       "OIDC issuer, redirect URI and public origin require HTTPS.",
     );
   if (redirect.origin !== publicOrigin.origin)
     throw new Error("OIDC redirect URI must use the configured public origin.");
+  if (
+    logoutRedirect &&
+    (logoutRedirect.origin !== publicOrigin.origin ||
+      logoutRedirect.pathname !== "/api/v1/auth/logout/callback" ||
+      logoutRedirect.search !== "" ||
+      logoutRedirect.hash !== "" ||
+      logoutRedirect.username !== "" ||
+      logoutRedirect.password !== "")
+  )
+    throw new Error(
+      "OIDC post-logout redirect URI must be the registered application callback.",
+    );
   return parsed;
 }
 
@@ -270,6 +305,9 @@ export class PostgresOidcBff implements IdentityAdapter {
       discovery.authorization_endpoint,
       discovery.token_endpoint,
       discovery.jwks_uri,
+      ...(discovery.end_session_endpoint
+        ? [discovery.end_session_endpoint]
+        : []),
     ]) {
       const url = new URL(endpoint);
       if (!this.config.allowInsecureHttp && url.protocol !== "https:")
@@ -437,15 +475,30 @@ export class PostgresOidcBff implements IdentityAdapter {
     });
     const claims = oidcClaimsSchema.parse(verified.payload);
     if (!safeEqual(claims.nonce, nonce)) throw new Error("OIDC_NONCE_MISMATCH");
-    if (claims.pfh_organization_id !== this.config.organizationId)
-      throw new Error("OIDC_ORGANIZATION_MISMATCH");
-
     const sessionToken = opaque(48);
     const csrfToken = opaque();
     const sessionHash = digest(sessionToken);
     const sessionClient = await this.pool.connect();
+    let actorId: string;
+    let membershipVersion: number;
+    let policyVersion: string;
     try {
       await sessionClient.query("BEGIN");
+      const membership = await sessionClient.query<{
+        actor_id: string;
+        membership_version: string;
+        policy_version: string;
+      }>(
+        `SELECT actor_id,membership_version::text,policy_version
+           FROM oidc_principal_memberships
+          WHERE organization_id=$1 AND issuer=$2 AND subject=$3 AND active`,
+        [this.config.organizationId, this.discovery.issuer, claims.sub],
+      );
+      const principal = membership.rows[0];
+      if (!principal) throw new Error("OIDC_MEMBERSHIP_MISSING_OR_REVOKED");
+      actorId = principal.actor_id;
+      membershipVersion = Number(principal.membership_version);
+      policyVersion = principal.policy_version;
       await sessionClient.query(
         `UPDATE oidc_sessions SET revoked_at=clock_timestamp(),
              revocation_reason='session-rotation'
@@ -456,16 +509,18 @@ export class PostgresOidcBff implements IdentityAdapter {
       await sessionClient.query(
         `INSERT INTO oidc_sessions
           (organization_id,session_hash,csrf_hash,issuer,subject,actor_id,
-           idp_session_id,expires_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,
-           clock_timestamp() + ($8 * interval '1 second'))`,
+           membership_version,policy_version,idp_session_id,expires_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,
+           clock_timestamp() + ($10 * interval '1 second'))`,
         [
           this.config.organizationId,
           sessionHash,
           digest(csrfToken),
           this.discovery.issuer,
           claims.sub,
-          claims.pfh_user_id,
+          principal.actor_id,
+          principal.membership_version,
+          principal.policy_version,
           claims.sid ?? null,
           this.config.sessionTtlSeconds,
         ],
@@ -478,9 +533,11 @@ export class PostgresOidcBff implements IdentityAdapter {
       sessionClient.release();
     }
     const identity = {
-      actorId: claims.pfh_user_id,
+      actorId,
       organizationId: this.config.organizationId,
       subject: claims.sub,
+      membershipVersion,
+      policyVersion,
       sessionHash,
       csrfToken,
     };
@@ -515,11 +572,24 @@ export class PostgresOidcBff implements IdentityAdapter {
       actor_id: string;
       subject: string;
       csrf_hash: string;
+      membership_version: string;
+      policy_version: string;
     }>(
-      `UPDATE oidc_sessions SET last_seen_at=clock_timestamp()
-        WHERE organization_id=$1 AND session_hash=$2
-          AND revoked_at IS NULL AND expires_at > clock_timestamp()
-      RETURNING actor_id,subject,csrf_hash`,
+      `UPDATE oidc_sessions AS session
+          SET last_seen_at=clock_timestamp()
+         FROM oidc_principal_memberships AS membership
+        WHERE session.organization_id=$1 AND session.session_hash=$2
+          AND session.revoked_at IS NULL
+          AND session.expires_at > clock_timestamp()
+          AND membership.organization_id=session.organization_id
+          AND membership.issuer=session.issuer
+          AND membership.subject=session.subject
+          AND membership.actor_id=session.actor_id
+          AND membership.membership_version=session.membership_version
+          AND membership.policy_version=session.policy_version
+          AND membership.active
+      RETURNING session.actor_id,session.subject,session.csrf_hash,
+                session.membership_version::text,session.policy_version`,
       [this.config.organizationId, sessionHash],
     );
     const row = result.rows[0];
@@ -528,6 +598,8 @@ export class PostgresOidcBff implements IdentityAdapter {
       actorId: row.actor_id,
       organizationId: this.config.organizationId,
       subject: row.subject,
+      membershipVersion: Number(row.membership_version),
+      policyVersion: row.policy_version,
       sessionHash,
       csrfToken,
     };
@@ -558,12 +630,69 @@ export class PostgresOidcBff implements IdentityAdapter {
           WHERE organization_id=$1 AND session_hash=$2 AND revoked_at IS NULL`,
         [this.config.organizationId, digest(sessionToken)],
       );
+    const localCookies = [
+      clearCookie("pfh_session", true, this.secureCookies),
+      clearCookie("pfh_csrf", false, this.secureCookies),
+      clearCookie("pfh_logout", true, this.secureCookies),
+    ];
+    if (!this.discovery?.end_session_endpoint || !this.config.logoutRedirectUri)
+      return { redirectTo: "/", cookies: localCookies, mode: "local" };
+
+    // The local session is already revoked above. Failure to prepare an
+    // optional upstream logout must never restore or retain local authority.
+    try {
+      const state = opaque();
+      const browserBinding = opaque(48);
+      await this.pool.query(
+        `INSERT INTO oidc_logout_attempts
+           (organization_id,state_hash,browser_binding_hash,return_path,expires_at)
+         VALUES ($1,$2,$3,'/',clock_timestamp() + interval '5 minutes')`,
+        [this.config.organizationId, digest(state), digest(browserBinding)],
+      );
+      const target = new URL(this.discovery.end_session_endpoint);
+      target.searchParams.set("client_id", this.config.clientId);
+      target.searchParams.set(
+        "post_logout_redirect_uri",
+        this.config.logoutRedirectUri,
+      );
+      target.searchParams.set("state", state);
+      return {
+        redirectTo: target.toString(),
+        mode: "federated-redirect",
+        cookies: [
+          ...localCookies,
+          cookie("pfh_logout", browserBinding, {
+            maxAge: 300,
+            httpOnly: true,
+            secure: this.secureCookies,
+          }),
+        ],
+      };
+    } catch {
+      return { redirectTo: "/", cookies: localCookies, mode: "local" };
+    }
+  }
+
+  async completeLogout(
+    state: string,
+    cookieHeader: string | undefined,
+  ): Promise<OidcLogoutCallbackResult> {
+    if (state.length > 240) throw new Error("OIDC_LOGOUT_STATE_INVALID");
+    const browserBinding = parseCookies(cookieHeader).get("pfh_logout");
+    if (!browserBinding) throw new Error("OIDC_LOGOUT_BROWSER_BINDING_MISSING");
+    const result = await this.pool.query<{ return_path: string }>(
+      `UPDATE oidc_logout_attempts
+          SET consumed_at=clock_timestamp()
+        WHERE organization_id=$1 AND state_hash=$2 AND browser_binding_hash=$3
+          AND consumed_at IS NULL AND expires_at > clock_timestamp()
+      RETURNING return_path`,
+      [this.config.organizationId, digest(state), digest(browserBinding)],
+    );
+    if (!result.rows[0])
+      throw new Error("OIDC_LOGOUT_STATE_INVALID_OR_EXPIRED");
     return {
-      redirectTo: "/",
-      cookies: [
-        clearCookie("pfh_session", true, this.secureCookies),
-        clearCookie("pfh_csrf", false, this.secureCookies),
-      ],
+      redirectTo: safeReturnPath(result.rows[0].return_path),
+      cookies: [clearCookie("pfh_logout", true, this.secureCookies)],
     };
   }
 

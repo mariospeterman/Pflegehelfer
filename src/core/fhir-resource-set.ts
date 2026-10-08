@@ -265,7 +265,16 @@ function communication(
         value: item.id,
       },
     ],
-    meta: { tag: sourceTags(item.source, dataClass) },
+    meta: {
+      tag: [
+        ...sourceTags(item.source, dataClass),
+        {
+          system:
+            "https://pflegehelfer.example.invalid/communication-workflow-state",
+          code: item.state,
+        },
+      ],
+    },
     status: communicationStatus[item.state],
     priority: item.priority === "elevated" ? "urgent" : item.priority,
     subject: { reference: ref("Patient", item.patientId) },
@@ -566,6 +575,11 @@ export function toFhirResourceSet(
               ...sourceTags(item.source, dataClass).filter(
                 (tag) => tag.system !== dataClassificationSystem,
               ),
+              {
+                system:
+                  "https://pflegehelfer.example.invalid/observation-approval-state",
+                code: item.approvedAt === null ? "pending" : "accepted",
+              },
             ],
           },
           identifier: [

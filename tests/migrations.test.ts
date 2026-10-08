@@ -45,6 +45,12 @@ describe("immutable migration ledger", () => {
         version: 23,
         name: "023_sanitize_legacy_assistant_messages.sql",
       },
+      {
+        version: 24,
+        name: "024_bind_proposals_to_source_read_set.sql",
+      },
+      { version: 25, name: "025_oidc_rp_initiated_logout.sql" },
+      { version: 26, name: "026_oidc_principal_memberships.sql" },
     ]);
     expect(
       migrations.every(({ checksum }) => /^[a-f0-9]{64}$/.test(checksum)),

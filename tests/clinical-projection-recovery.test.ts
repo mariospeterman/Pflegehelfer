@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { PflegehelferService } from "../src/core/service.js";
 import { buildApp } from "../src/server/app.js";
 import { InMemoryOperationalStore } from "../src/infrastructure/operational-store.js";
+import { sourceReadSetFixture } from "./source-read-set-fixture.js";
 
 const apps: ReturnType<typeof buildApp>[] = [];
 afterEach(async () => Promise.all(apps.splice(0).map((app) => app.close())));
@@ -18,6 +19,11 @@ async function queueSyntheticProjection(store: InMemoryOperationalStore) {
     "enc-luca-2026",
   );
   const tokenHash = createHash("sha256").update(token).digest("hex");
+  const sourceReadSet = sourceReadSetFixture({
+    patientId: "p-luca",
+    encounterId: "enc-luca-2026",
+    version: 4,
+  });
   await store.storeIntentAuthority({
     tokenHash,
     record: {
@@ -32,6 +38,7 @@ async function queueSyntheticProjection(store: InMemoryOperationalStore) {
         transcript: "Synthetische Notiz",
         structuredText: "Synthetische Notiz",
       },
+      sourceReadSet,
       expiresAt: Date.now() + 60_000,
     },
     sessionId: context.sessionId,
@@ -59,7 +66,7 @@ async function queueSyntheticProjection(store: InMemoryOperationalStore) {
     resultPayload: { queued: true },
     selectedActionIds: ["action-1"],
     policyVersion: "test-policy-v1",
-    sourceReadSet: [],
+    sourceReadSet,
     auditEntries: [],
     clinicalResources: [],
     removedReferences: [],

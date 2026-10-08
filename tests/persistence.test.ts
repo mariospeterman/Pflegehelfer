@@ -24,6 +24,7 @@ import {
   transcriptHash,
 } from "../src/core/voice-provenance.js";
 import { siteConfiguration } from "../src/core/site-config.js";
+import type { SourceReadSetV1 } from "../src/core/source-read-set.js";
 
 function canonicalJson(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
@@ -75,6 +76,14 @@ class RecordingWorkspace implements ClinicalWorkspace {
     } finally {
       this.activeWrites -= 1;
     }
+  }
+
+  captureSourceReadSet(value: SourceReadSetV1): Promise<SourceReadSetV1> {
+    return Promise.resolve(structuredClone(value));
+  }
+
+  refreshSourceReadSet(value: SourceReadSetV1): Promise<SourceReadSetV1> {
+    return Promise.resolve(structuredClone(value));
   }
 
   loadCheckpoint(): Promise<ServiceCheckpoint | null> {

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildApp } from "../src/server/app.js";
 import {
+  idTokenClaims,
   oidcConfigurationFromEnvironment,
   type AuthenticatedIdentity,
   type IdentityAdapter,
@@ -14,6 +15,8 @@ function fakeIdentity(actorId = "u-hr") {
     actorId,
     organizationId: "org-demo",
     subject: `subject-${actorId}`,
+    membershipVersion: 1,
+    policyVersion: "directory-v2-test",
     sessionHash: "session-hash",
     csrfToken: "csrf-token",
   };
@@ -42,6 +45,13 @@ function fakeIdentity(actorId = "u-hr") {
       Promise.resolve({
         redirectTo: "/",
         cookies: ["pfh_session=; Max-Age=0", "pfh_csrf=; Max-Age=0"],
+        mode: "local",
+      }),
+    ),
+    completeLogout: vi.fn<IdentityAdapter["completeLogout"]>(() =>
+      Promise.resolve({
+        redirectTo: "/",
+        cookies: ["pfh_logout=; Max-Age=0"],
       }),
     ),
     assertRequestIntegrity: vi.fn<IdentityAdapter["assertRequestIntegrity"]>(
@@ -58,6 +68,16 @@ function fakeIdentity(actorId = "u-hr") {
 }
 
 describe("OIDC BFF boundary", () => {
+  it("accepts standard identity claims without trusting private actor claims", () => {
+    expect(
+      idTokenClaims({
+        sub: "opaque-subject",
+        nonce: "n".repeat(32),
+        pfh_user_id: "caller-controlled-actor",
+        pfh_organization_id: "caller-controlled-tenant",
+      }),
+    ).toMatchObject({ sub: "opaque-subject" });
+  });
   it("fails closed on partial or insecure production configuration", () => {
     expect(
       oidcConfigurationFromEnvironment({
@@ -125,11 +145,58 @@ describe("OIDC BFF boundary", () => {
         "x-csrf-token": "csrf-token",
       },
     });
-    expect(accepted.statusCode).toBe(204);
+    expect(accepted.statusCode).toBe(200);
+    expect(accepted.json()).toEqual({
+      localLogout: true,
+      federatedLogout: false,
+      redirectTo: "/",
+    });
     expect(JSON.stringify(accepted.headers["set-cookie"])).toContain(
       "pfh_session=",
     );
     expect(identity.logout).toHaveBeenCalledOnce();
+  });
+
+  it("returns an explicit federated redirect and validates the public logout callback", async () => {
+    const identity = fakeIdentity("u-nurse");
+    identity.logout.mockResolvedValue({
+      redirectTo: "https://idp.example/logout?state=opaque",
+      cookies: [
+        "pfh_session=; Max-Age=0",
+        "pfh_csrf=; Max-Age=0",
+        "pfh_logout=browser-binding; HttpOnly",
+      ],
+      mode: "federated-redirect",
+    });
+    const app = buildApp(undefined, { demoMode: true, identity });
+    apps.push(app);
+
+    const accepted = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/logout",
+      headers: {
+        cookie: "pfh_session=valid; pfh_csrf=csrf-token",
+        origin: "https://pflege.example",
+        "x-csrf-token": "csrf-token",
+      },
+    });
+    expect(accepted.json()).toEqual({
+      localLogout: true,
+      federatedLogout: true,
+      redirectTo: "https://idp.example/logout?state=opaque",
+    });
+
+    const callback = await app.inject({
+      method: "GET",
+      url: `/api/v1/auth/logout/callback?state=${"s".repeat(32)}`,
+      headers: { cookie: "pfh_logout=browser-binding" },
+    });
+    expect(callback.statusCode).toBe(303);
+    expect(callback.headers.location).toBe("/");
+    expect(identity.completeLogout).toHaveBeenCalledWith(
+      "s".repeat(32),
+      "pfh_logout=browser-binding",
+    );
   });
 
   it("creates authorization redirects without accepting a caller identity", async () => {

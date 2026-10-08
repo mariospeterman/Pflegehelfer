@@ -81,6 +81,11 @@ import {
   type DemoScenarioStore,
 } from "../infrastructure/demo-scenario-store.js";
 import type { WorkdayCommand } from "../core/workday.js";
+import {
+  parseSourceReadSetV1,
+  sourceReadSetMatches,
+  type SourceReadSetV1,
+} from "../core/source-read-set.js";
 import type { RuntimeProfileConfiguration } from "./runtime-profile.js";
 import { runtimeBuildInfo } from "./build-info.js";
 import {
@@ -567,10 +572,10 @@ export function buildApp(
   };
   const authorityHash = (token: string) =>
     createHash("sha256").update(token).digest("hex");
-  const collectResponseAuthorities = (
+  const collectResponseAuthorities = async (
     response: AssistantResponse,
     context: AssistantContextBinding,
-  ): IntentAuthorityWrite[] => {
+  ): Promise<IntentAuthorityWrite[]> => {
     const authorities: IntentAuthorityWrite[] = [];
     for (const component of response.components) {
       if (component.type !== "DraftAction") continue;
@@ -581,9 +586,12 @@ export function buildApp(
           "Die geprüfte Aktion konnte nicht dauerhaft gebunden werden.",
           503,
         );
+      const sourceReadSet = await workspace.captureSourceReadSet(
+        parseSourceReadSetV1(record.sourceReadSet),
+      );
       authorities.push({
         tokenHash: authorityHash(component.intentToken),
-        record,
+        record: { ...record, sourceReadSet },
         sessionId: context.sessionId,
         threadId: context.threadId,
         contextRevision: context.contextRevision,
@@ -1332,7 +1340,8 @@ export function buildApp(
       route === "/ready" ||
       route === "/api/v1/build-info" ||
       route === "/api/v1/auth/login" ||
-      route === "/api/v1/auth/callback"
+      route === "/api/v1/auth/callback" ||
+      route === "/api/v1/auth/logout/callback"
     )
       return;
     await ensureIdentityReady();
@@ -1531,9 +1540,36 @@ export function buildApp(
     const result = await identity.logout(request.headers.cookie);
     return reply
       .header("set-cookie", result.cookies)
-      .header("location", result.redirectTo)
-      .code(204)
-      .send();
+      .header("cache-control", "no-store")
+      .send({
+        localLogout: true,
+        federatedLogout: result.mode === "federated-redirect",
+        redirectTo: result.redirectTo,
+      });
+  });
+  app.get("/api/v1/auth/logout/callback", async (request, reply) => {
+    if (!identity)
+      return reply.header("cache-control", "no-store").redirect("/", 303);
+    const { state } = z
+      .object({ state: z.string().min(32).max(240) })
+      .strict()
+      .parse(request.query);
+    try {
+      const result = await identity.completeLogout(
+        state,
+        request.headers.cookie,
+      );
+      return reply
+        .header("set-cookie", result.cookies)
+        .header("cache-control", "no-store")
+        .redirect(result.redirectTo, 303);
+    } catch {
+      throw new DomainError(
+        "AUTH_DENIED",
+        "Abmeldebestätigung ist ungültig oder abgelaufen.",
+        400,
+      );
+    }
   });
   app.get("/ready", async (_request, reply) => {
     await Promise.all([
@@ -3673,7 +3709,7 @@ export function buildApp(
           499,
         );
       }
-      const authorities = collectResponseAuthorities(response, context);
+      const authorities = await collectResponseAuthorities(response, context);
       if (inferenceController.signal.aborted || transportDisconnected()) {
         await revokeAfterDisconnect();
         throw new DomainError(
@@ -3942,7 +3978,7 @@ export function buildApp(
             );
           const authorities = replayedResponse
             ? []
-            : collectResponseAuthorities(response, context);
+            : await collectResponseAuthorities(response, context);
           if (inferenceController.signal.aborted || transportDisconnected()) {
             await revokeAfterDisconnect();
             if (!requestCommitted)
@@ -4064,6 +4100,43 @@ export function buildApp(
         "AUTH_DENIED",
         "Assistenzaktion ist ungültig, abgelaufen oder bereits verwendet.",
         403,
+      );
+    const reviewedSourceReadSet = parseSourceReadSetV1(
+      durableIntent.sourceReadSet,
+    );
+    if (reviewedSourceReadSet.policyVersion !== runtimeSitePack.packDigest)
+      throw new DomainError(
+        "VERSION_CONFLICT",
+        "Richtlinie oder Arbeitsablauf wurde seit dem Entwurf geändert. Bitte erneut prüfen.",
+        409,
+      );
+    let currentSourceReadSet: SourceReadSetV1;
+    try {
+      currentSourceReadSet =
+        workspace.mode === "medplum"
+          ? await workspace.refreshSourceReadSet(reviewedSourceReadSet)
+          : assistant.refreshMemorySourceReadSet(
+              actorId,
+              reviewedSourceReadSet,
+            );
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        (error.message.startsWith("SOURCE_READ_") ||
+          error.message === "MEDPLUM_RESOURCE_VERSION_MISSING")
+      )
+        throw new DomainError(
+          "VERSION_CONFLICT",
+          "Die gelesenen Quelldaten sind nicht mehr vollständig verfügbar. Bitte erneut prüfen.",
+          409,
+        );
+      throw error;
+    }
+    if (!sourceReadSetMatches(reviewedSourceReadSet, currentSourceReadSet))
+      throw new DomainError(
+        "VERSION_CONFLICT",
+        "Die gelesenen Quelldaten haben sich seit dem Entwurf geändert. Bitte erneut prüfen.",
+        409,
       );
     if (
       runtime.profile !== "integrated-demo" &&
@@ -4192,22 +4265,6 @@ export function buildApp(
           );
           if (!workspace.loadResourceVersions)
             throw new Error("CLINICAL_VERSION_READ_NOT_AVAILABLE");
-          const sourceReferences = [
-            `Patient/${fhirResourceId("Patient", execution.patientId)}`,
-            `Encounter/${fhirResourceId("Encounter", execution.encounterId)}`,
-          ];
-          // Capture the immutable source read set before local execution. The
-          // later conditional projection check is a second fence, not a
-          // substitute for recording what the reviewer actually saw.
-          const sourceReadVersions =
-            await workspace.loadResourceVersions(sourceReferences);
-          if (
-            workspace.mode === "medplum" &&
-            sourceReferences.some(
-              (reference) => sourceReadVersions[reference] === null,
-            )
-          )
-            throw new Error("CLINICAL_SOURCE_VERSION_NOT_AVAILABLE");
           try {
             const result = await executeAuthorizedIntent();
             const nextResources = service.fhirResources();
@@ -4243,7 +4300,6 @@ export function buildApp(
               await workspace.loadResourceVersions(clinicalReferences);
             const clinicalExpectedVersions = {
               ...changedResourceVersions,
-              ...sourceReadVersions,
             };
             const providerCommands = service
               .pendingProviderCommands()
@@ -4279,14 +4335,7 @@ export function buildApp(
               resultPayload: result,
               selectedActionIds: execution.reviewedActionIds ?? [],
               policyVersion: runtimeSitePack.packDigest,
-              sourceReadSet: sourceReferences.map((reference) => ({
-                reference,
-                version: clinicalExpectedVersions[reference] ?? null,
-                versionAuthority:
-                  workspace.mode === "medplum"
-                    ? "fhir-meta-versionId"
-                    : "unavailable-in-memory-demo",
-              })),
+              sourceReadSet: reviewedSourceReadSet,
               auditEntries: service.audit.slice(beforeAuditLength),
               clinicalResources: changedResources,
               removedReferences,

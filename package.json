@@ -38,6 +38,8 @@
     "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
     "verify": "pnpm format && pnpm lint && pnpm typecheck && pnpm test && pnpm build",
     "verify:e2e": "playwright test",
+    "verify:e2e:real-stack": "pnpm e2e:guard && playwright test --config=playwright.real-stack.config.ts",
+    "e2e:guard": "tsx tools/assert-isolated-e2e.ts",
     "verify:security": "node scripts/security-check.mjs",
     "verify:ops": "node scripts/ops-check.mjs",
     "verify:airgap": "pnpm pfhctl preflight && node scripts/security-check.mjs",

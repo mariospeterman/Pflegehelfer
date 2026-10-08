@@ -18,7 +18,12 @@ import {
 } from "./assistant.js";
 import type { PflegehelferService } from "./service.js";
 import { siteConfiguration } from "./site-config.js";
-import { DomainError, isTerminalOutboxState, type Purpose } from "./types.js";
+import {
+  DomainError,
+  isTerminalOutboxState,
+  type AppSnapshot,
+  type Purpose,
+} from "./types.js";
 import {
   actionReviewLabel,
   assistantProposalSchema,
@@ -51,6 +56,14 @@ import {
   verifyNaturalDialogueAgainstSources,
   type SourceBoundAtom,
 } from "./source-claim-binding.js";
+import {
+  buildSourceReadSetV1,
+  parseSourceReadSetV1,
+  type SourceReadClaim,
+  type SourceReadResource,
+  type SourceReadSelector,
+  type SourceReadSetV1,
+} from "./source-read-set.js";
 
 export interface AssistantRequest {
   prompt: string;
@@ -416,6 +429,83 @@ function canonicalJson(value: unknown): string {
     .sort()
     .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
     .join(",")}}`;
+}
+
+function sourceReadSetForDraft(
+  patient: AppSnapshot["patients"][number],
+  purpose: Purpose,
+  agentRun: AgentRunResult | null,
+): SourceReadSetV1 {
+  const resources: SourceReadResource[] = [
+    {
+      reference: `Patient/${patient.id}`,
+      logicalReference: `Patient/${patient.id}`,
+      version: String(patient.source.version),
+      patientId: patient.id,
+      encounterId: patient.encounterId,
+      claims: [
+        { path: "patient.id", value: patient.id },
+        { path: "patient.encounterId", value: patient.encounterId },
+      ],
+    },
+    {
+      reference: `Encounter/${patient.encounterId}`,
+      logicalReference: `Encounter/${patient.encounterId}`,
+      version: String(patient.source.version),
+      patientId: patient.id,
+      encounterId: patient.encounterId,
+      claims: [{ path: "encounter.id", value: patient.encounterId }],
+    },
+  ];
+  const selectors: SourceReadSelector[] = [];
+  for (const record of agentRun?.evidenceRecords ?? []) {
+    resources.push(...(record.sourceRead?.resources ?? []));
+    selectors.push(...(record.sourceRead?.selectors ?? []));
+    for (const claim of (agentRun?.evidenceClaims ?? []).filter(
+      (candidate) => candidate.referenceId === record.referenceId,
+    )) {
+      const provenance = record.rowProvenance
+        ?.filter(
+          ({ path }) =>
+            claim.path === path || claim.path.startsWith(`${path}.`),
+        )
+        .toSorted((left, right) => right.path.length - left.path.length)[0];
+      if (!provenance) continue;
+      const resource = resources.find(
+        ({ logicalReference }) => logicalReference === provenance.resourceId,
+      );
+      if (resource)
+        resource.claims.push({ path: claim.path, value: claim.value });
+    }
+    const selector = selectors.find((candidate) =>
+      candidate.id.startsWith(`${record.toolName}.`),
+    );
+    if (selector)
+      selector.claims.push(
+        ...(agentRun?.evidenceClaims ?? [])
+          .filter(
+            (candidate) =>
+              candidate.referenceId === record.referenceId &&
+              !record.rowProvenance?.some(
+                ({ path }) =>
+                  candidate.path === path ||
+                  candidate.path.startsWith(`${path}.`),
+              ),
+          )
+          .map(({ path, value }): SourceReadClaim => ({ path, value })),
+      );
+  }
+  return buildSourceReadSetV1({
+    schemaVersion: 1,
+    evidenceAuthority: "memory-demo-not-fhir-evident",
+    capturedAt: new Date().toISOString(),
+    purpose,
+    policyVersion: runtimeSitePack.packDigest,
+    patientId: patient.id,
+    encounterId: patient.encounterId,
+    resources,
+    selectors,
+  });
 }
 
 function formatEvidenceValue(value: string | number | boolean | null): string {
@@ -1407,8 +1497,123 @@ export class AssistantService {
     return this.intents.durableRecord(token);
   }
 
+  refreshMemorySourceReadSet(
+    userId: string,
+    sourceReadSet: SourceReadSetV1,
+  ): SourceReadSetV1 {
+    const reviewed = parseSourceReadSetV1(sourceReadSet);
+    if (reviewed.evidenceAuthority !== "memory-demo-not-fhir-evident")
+      throw new Error("MEMORY_SOURCE_READ_AUTHORITY_INVALID");
+    const snapshot = this.clinical.snapshot(userId, reviewed.purpose);
+    const patient = snapshot.patients.find(
+      (candidate) =>
+        candidate.id === reviewed.patientId &&
+        candidate.encounterId === reviewed.encounterId,
+    );
+    if (!patient) throw new Error("SOURCE_READ_SUBJECT_NOT_AVAILABLE");
+    const priorByReference = new Map(
+      reviewed.resources.map((resource) => [
+        resource.logicalReference,
+        resource,
+      ]),
+    );
+    const selectorResults = reviewed.selectors.map((selector) => {
+      const ordered =
+        selector.resourceType === "Task"
+          ? snapshot.tasks
+              .filter(
+                (item) =>
+                  item.patientId === selector.patientId &&
+                  item.encounterId === selector.encounterId &&
+                  item.state !== "completed",
+              )
+              .toSorted(
+                (left, right) =>
+                  (left.dueAt ?? "9999").localeCompare(right.dueAt ?? "9999") ||
+                  left.id.localeCompare(right.id),
+              )
+              .map((item) => `Task/${item.id}`)
+          : selector.resourceType === "Observation"
+            ? snapshot.observations
+                .filter(
+                  (item) =>
+                    item.patientId === selector.patientId &&
+                    item.encounterId === selector.encounterId &&
+                    item.approvedAt !== null,
+                )
+                .toSorted(
+                  (left, right) =>
+                    right.effectiveAt.localeCompare(left.effectiveAt) ||
+                    left.id.localeCompare(right.id),
+                )
+                .map((item) => `Observation/${item.id}`)
+            : snapshot.communications
+                .filter(
+                  (item) =>
+                    item.patientId === selector.patientId &&
+                    item.encounterId === selector.encounterId &&
+                    item.state !== "closed",
+                )
+                .toSorted(
+                  (left, right) =>
+                    right.source.recordedAt.localeCompare(
+                      left.source.recordedAt,
+                    ) || left.id.localeCompare(right.id),
+                )
+                .map((item) => `Communication/${item.id}`);
+      return {
+        ...selector,
+        totalCount: ordered.length,
+        complete: ordered.length <= selector.limit,
+        absenceObserved: ordered.length === 0,
+        membershipReferences: [...ordered].sort(),
+        selectedReferences: ordered.slice(0, selector.limit),
+      };
+    });
+    const references = new Set([
+      `Patient/${patient.id}`,
+      `Encounter/${patient.encounterId}`,
+      ...selectorResults.flatMap((selector) => selector.membershipReferences),
+    ]);
+    const resources: SourceReadResource[] = [...references].map((reference) => {
+      const [resourceType, id] = reference.split("/");
+      const version =
+        resourceType === "Patient" || resourceType === "Encounter"
+          ? patient.source.version
+          : resourceType === "Task"
+            ? snapshot.tasks.find((item) => item.id === id)?.source.version
+            : resourceType === "Observation"
+              ? snapshot.observations.find((item) => item.id === id)?.version
+              : snapshot.communications.find((item) => item.id === id)?.source
+                  .version;
+      if (version === undefined)
+        throw new Error(`SOURCE_READ_RESOURCE_MISSING:${reference}`);
+      const prior = priorByReference.get(reference);
+      return {
+        reference,
+        logicalReference: reference,
+        version: String(version),
+        patientId: patient.id,
+        encounterId: patient.encounterId,
+        claims: prior?.claims ?? [],
+      };
+    });
+    return buildSourceReadSetV1({
+      schemaVersion: 1,
+      evidenceAuthority: "memory-demo-not-fhir-evident",
+      capturedAt: new Date().toISOString(),
+      purpose: reviewed.purpose,
+      policyVersion: reviewed.policyVersion,
+      patientId: reviewed.patientId,
+      encounterId: reviewed.encounterId,
+      resources,
+      selectors: selectorResults,
+    });
+  }
+
   restoreDurableIntent(token: string, record: DurableIntentRecord): void {
     validateDurableIntentPayload(record);
+    parseSourceReadSetV1(record.sourceReadSet);
     this.intents.restore(token, record);
   }
 
@@ -1421,6 +1626,7 @@ export class AssistantService {
         403,
       );
     validateDurableIntentPayload(record);
+    const sourceReadSet = parseSourceReadSetV1(record.sourceReadSet);
     return this.intents.issue(actor, {
       command: record.command,
       patientId: record.patientId,
@@ -1428,6 +1634,7 @@ export class AssistantService {
       purpose: record.purpose,
       resourceVersion: record.resourceVersion,
       payload: record.payload,
+      sourceReadSet,
       ttlMs: 120_000,
     });
   }
@@ -1658,6 +1865,37 @@ export class AssistantService {
           },
         });
       };
+      const sourceResource = (
+        reference: string,
+        version: string | number,
+        patientId: string,
+        encounterId: string,
+      ): SourceReadResource => ({
+        reference,
+        logicalReference: reference,
+        version: String(version),
+        patientId,
+        encounterId,
+        claims: [],
+      });
+      const sourceSelector = (input: {
+        id: string;
+        resourceType: SourceReadSelector["resourceType"];
+        predicate: SourceReadSelector["predicate"];
+        order: SourceReadSelector["order"];
+        limit: number;
+        membershipReferences: string[];
+        selectedReferences: string[];
+      }): SourceReadSelector => ({
+        ...input,
+        patientId: patient!.id,
+        encounterId: patient!.encounterId,
+        totalCount: input.membershipReferences.length,
+        complete:
+          input.membershipReferences.length <= input.selectedReferences.length,
+        absenceObserved: input.membershipReferences.length === 0,
+        claims: [],
+      });
       const registry = new AuthorizedToolRegistry([
         {
           name: "get_patient_summary",
@@ -1667,7 +1905,7 @@ export class AssistantService {
           effect: "read",
           input: emptyInput,
           execute: () => {
-            const selectedTasks = patient
+            const matchingTasks = patient
               ? snapshot.tasks
                   .filter(
                     (task) =>
@@ -1675,9 +1913,15 @@ export class AssistantService {
                       task.encounterId === patient.encounterId &&
                       task.state !== "completed",
                   )
-                  .slice(0, 10)
+                  .toSorted(
+                    (left, right) =>
+                      (left.dueAt ?? "9999").localeCompare(
+                        right.dueAt ?? "9999",
+                      ) || left.id.localeCompare(right.id),
+                  )
               : [];
-            const selectedObservations = patient
+            const selectedTasks = matchingTasks.slice(0, 10);
+            const matchingObservations = patient
               ? snapshot.observations
                   .filter(
                     (item) =>
@@ -1685,8 +1929,13 @@ export class AssistantService {
                       item.encounterId === patient.encounterId &&
                       item.approvedAt !== null,
                   )
-                  .slice(-6)
+                  .toSorted(
+                    (left, right) =>
+                      right.effectiveAt.localeCompare(left.effectiveAt) ||
+                      left.id.localeCompare(right.id),
+                  )
               : [];
+            const selectedObservations = matchingObservations.slice(0, 6);
             const briefEntries = patient
               ? [
                   {
@@ -1753,6 +2002,58 @@ export class AssistantService {
               data: patient
                 ? { briefFacts: briefEntries.map(({ text }) => text) }
                 : { patientContext: "not-selected" },
+              ...(patient
+                ? {
+                    sourceRead: {
+                      resources: [
+                        ...matchingTasks.map((task) =>
+                          sourceResource(
+                            `Task/${task.id}`,
+                            task.source.version,
+                            task.patientId!,
+                            task.encounterId!,
+                          ),
+                        ),
+                        ...matchingObservations.map((observation) =>
+                          sourceResource(
+                            `Observation/${observation.id}`,
+                            observation.version,
+                            observation.patientId,
+                            observation.encounterId,
+                          ),
+                        ),
+                      ],
+                      selectors: [
+                        sourceSelector({
+                          id: "get_patient_summary.tasks",
+                          resourceType: "Task",
+                          predicate: "task-open",
+                          order: "due-asc",
+                          limit: 10,
+                          membershipReferences: matchingTasks.map(
+                            (task) => `Task/${task.id}`,
+                          ),
+                          selectedReferences: selectedTasks.map(
+                            (task) => `Task/${task.id}`,
+                          ),
+                        }),
+                        sourceSelector({
+                          id: "get_patient_summary.observations",
+                          resourceType: "Observation",
+                          predicate: "observation-accepted",
+                          order: "effective-desc",
+                          limit: 6,
+                          membershipReferences: matchingObservations.map(
+                            (observation) => `Observation/${observation.id}`,
+                          ),
+                          selectedReferences: selectedObservations.map(
+                            (observation) => `Observation/${observation.id}`,
+                          ),
+                        }),
+                      ],
+                    },
+                  }
+                : {}),
             });
           },
         },
@@ -1764,24 +2065,30 @@ export class AssistantService {
           effect: "read",
           input: emptyInput,
           execute: () => {
-            const allTasks = snapshot.tasks.filter((task) => {
-              const currentSubject = task.patientId
-                ? snapshot.patients.find(
-                    (candidate) => candidate.id === task.patientId,
-                  )
-                : null;
-              const currentEncounter =
-                task.patientId === null ||
-                (currentSubject != null &&
-                  task.encounterId === currentSubject.encounterId);
-              return (
-                currentEncounter &&
-                (!patient ||
-                  (task.patientId === patient.id &&
-                    task.encounterId === patient.encounterId)) &&
-                task.state !== "completed"
+            const allTasks = snapshot.tasks
+              .filter((task) => {
+                const currentSubject = task.patientId
+                  ? snapshot.patients.find(
+                      (candidate) => candidate.id === task.patientId,
+                    )
+                  : null;
+                const currentEncounter =
+                  task.patientId === null ||
+                  (currentSubject != null &&
+                    task.encounterId === currentSubject.encounterId);
+                return (
+                  currentEncounter &&
+                  (!patient ||
+                    (task.patientId === patient.id &&
+                      task.encounterId === patient.encounterId)) &&
+                  task.state !== "completed"
+                );
+              })
+              .toSorted(
+                (left, right) =>
+                  (left.dueAt ?? "9999").localeCompare(right.dueAt ?? "9999") ||
+                  left.id.localeCompare(right.id),
               );
-            });
             const selectedTasks = allTasks.slice(0, 20);
             const tasks = selectedTasks.map(
               ({ patientId, title, reason, state, priority, dueAt }) => {
@@ -1815,6 +2122,35 @@ export class AssistantService {
                 provider: task.source.provider,
               })),
               data: { tasks, totalCount: allTasks.length },
+              ...(patient
+                ? {
+                    sourceRead: {
+                      resources: allTasks.map((task) =>
+                        sourceResource(
+                          `Task/${task.id}`,
+                          task.source.version,
+                          task.patientId!,
+                          task.encounterId!,
+                        ),
+                      ),
+                      selectors: [
+                        sourceSelector({
+                          id: "get_open_tasks.tasks",
+                          resourceType: "Task",
+                          predicate: "task-open",
+                          order: "due-asc",
+                          limit: 20,
+                          membershipReferences: allTasks.map(
+                            (task) => `Task/${task.id}`,
+                          ),
+                          selectedReferences: selectedTasks.map(
+                            (task) => `Task/${task.id}`,
+                          ),
+                        }),
+                      ],
+                    },
+                  }
+                : {}),
             });
           },
         },
@@ -1827,14 +2163,20 @@ export class AssistantService {
           input: emptyInput,
           execute: () => {
             const allObservations = patient
-              ? snapshot.observations.filter(
-                  (item) =>
-                    item.patientId === patient.id &&
-                    item.encounterId === patient.encounterId &&
-                    item.approvedAt !== null,
-                )
+              ? snapshot.observations
+                  .filter(
+                    (item) =>
+                      item.patientId === patient.id &&
+                      item.encounterId === patient.encounterId &&
+                      item.approvedAt !== null,
+                  )
+                  .toSorted(
+                    (left, right) =>
+                      right.effectiveAt.localeCompare(left.effectiveAt) ||
+                      left.id.localeCompare(right.id),
+                  )
               : [];
-            const selectedObservations = allObservations.slice(-12);
+            const selectedObservations = allObservations.slice(0, 12);
             const observations = selectedObservations.map(
               ({
                 label,
@@ -1878,6 +2220,35 @@ export class AssistantService {
                 provider: observation.source.provider,
               })),
               data: { observations, totalCount: allObservations.length },
+              ...(patient
+                ? {
+                    sourceRead: {
+                      resources: allObservations.map((observation) =>
+                        sourceResource(
+                          `Observation/${observation.id}`,
+                          observation.version,
+                          observation.patientId,
+                          observation.encounterId,
+                        ),
+                      ),
+                      selectors: [
+                        sourceSelector({
+                          id: "get_latest_vitals.observations",
+                          resourceType: "Observation",
+                          predicate: "observation-accepted",
+                          order: "effective-desc",
+                          limit: 12,
+                          membershipReferences: allObservations.map(
+                            (observation) => `Observation/${observation.id}`,
+                          ),
+                          selectedReferences: selectedObservations.map(
+                            (observation) => `Observation/${observation.id}`,
+                          ),
+                        }),
+                      ],
+                    },
+                  }
+                : {}),
             });
           },
         },
@@ -1922,19 +2293,26 @@ export class AssistantService {
           effect: "read",
           input: emptyInput,
           execute: () => {
-            const allCommunications = snapshot.communications.filter((item) => {
-              const currentSubject = snapshot.patients.find(
-                (candidate) => candidate.id === item.patientId,
+            const allCommunications = snapshot.communications
+              .filter((item) => {
+                const currentSubject = snapshot.patients.find(
+                  (candidate) => candidate.id === item.patientId,
+                );
+                return (
+                  currentSubject !== undefined &&
+                  item.encounterId === currentSubject.encounterId &&
+                  (!patient ||
+                    (item.patientId === patient.id &&
+                      item.encounterId === patient.encounterId)) &&
+                  item.state !== "closed"
+                );
+              })
+              .toSorted(
+                (left, right) =>
+                  right.source.recordedAt.localeCompare(
+                    left.source.recordedAt,
+                  ) || left.id.localeCompare(right.id),
               );
-              return (
-                currentSubject !== undefined &&
-                item.encounterId === currentSubject.encounterId &&
-                (!patient ||
-                  (item.patientId === patient.id &&
-                    item.encounterId === patient.encounterId)) &&
-                item.state !== "closed"
-              );
-            });
             const selectedCommunications = allCommunications.slice(0, 20);
             const communications = selectedCommunications.map(
               ({
@@ -1977,6 +2355,37 @@ export class AssistantService {
                 }),
               ),
               data: { communications, totalCount: allCommunications.length },
+              ...(patient
+                ? {
+                    sourceRead: {
+                      resources: allCommunications.map((communication) =>
+                        sourceResource(
+                          `Communication/${communication.id}`,
+                          communication.source.version,
+                          communication.patientId,
+                          communication.encounterId,
+                        ),
+                      ),
+                      selectors: [
+                        sourceSelector({
+                          id: "get_team_inbox.communications",
+                          resourceType: "Communication",
+                          predicate: "communication-open",
+                          order: "recorded-desc",
+                          limit: 20,
+                          membershipReferences: allCommunications.map(
+                            (communication) =>
+                              `Communication/${communication.id}`,
+                          ),
+                          selectedReferences: selectedCommunications.map(
+                            (communication) =>
+                              `Communication/${communication.id}`,
+                          ),
+                        }),
+                      ],
+                    },
+                  }
+                : {}),
             });
           },
         },
@@ -2253,6 +2662,7 @@ export class AssistantService {
         encounterId: current.encounterId,
         purpose,
         resourceVersion: current.source.version,
+        sourceReadSet: sourceReadSetForDraft(current, purpose, agentRun),
         payload: {
           ...payload,
           ...(request.voiceTranscriptProvenance

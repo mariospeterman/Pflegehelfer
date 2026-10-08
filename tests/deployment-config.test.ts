@@ -25,6 +25,34 @@ describe("production deployment guards", () => {
     expect(deployment).toContain("gt (int .Values.replicaCount) 1");
     expect(deployment).toContain('fail "replicaCount above 1 is unsafe');
   });
+
+  it("binds one reusable container image to a validated source identity", () => {
+    const dockerfile = read("Dockerfile");
+    const compose = read("compose.yaml");
+    const workflow = read(".github/workflows/ci.yml");
+    expect(dockerfile).toContain("ARG PFH_BUILD_SHA");
+    expect(dockerfile).toContain("node scripts/validate-build-sha.mjs");
+    expect(compose).toContain("PFH_BUILD_SHA: ${PFH_BUILD_SHA:-}");
+    expect(compose).toContain("image: ${PFH_IMAGE:-pflegehelfer:local}");
+    expect(workflow).toContain('--build-arg "PFH_BUILD_SHA=$PFH_BUILD_SHA"');
+    expect(workflow).toContain('--tag "$PFH_IMAGE"');
+    expect(workflow.match(/docker build /g)).toHaveLength(1);
+    expect(workflow).not.toContain("up -d --build");
+    expect(workflow).toContain("info.matchingSource !== true");
+  });
+
+  it("keeps real-stack Playwright detached from the protected showcase", () => {
+    const configuration = read("playwright.real-stack.config.ts");
+    const workflow = read(".github/workflows/ci.yml");
+    expect(configuration).toContain("assertIsolatedE2eEnvironment");
+    expect(configuration).not.toContain("webServer:");
+    expect(configuration).not.toContain("reuseExistingServer");
+    expect(configuration).toContain('serviceWorkers: "block"');
+    expect(configuration).toContain('serviceWorkers: "allow"');
+    expect(workflow).toContain('project="pfh-e2e-${nonce}"');
+    expect(workflow).toContain("pnpm e2e:guard");
+    expect(workflow).toContain("PFH_STORAGE_MODE: medplum");
+  });
 });
 
 describe("service worker safety", () => {
