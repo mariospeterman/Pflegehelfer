@@ -155,6 +155,46 @@ describe("per-tab assistant context", () => {
     ).toEqual([expect.objectContaining({ prompt: "Was ist noch offen?" })]);
   });
 
+  it("binds assistant mutation receipts to the originating tab", async () => {
+    const app = buildApp(undefined, { demoMode: true });
+    apps.push(app);
+    const firstTab = crypto.randomUUID();
+    const secondTab = crypto.randomUUID();
+    for (const clientContextId of [firstTab, secondTab])
+      expect(
+        (
+          await app.inject({
+            method: "POST",
+            url: "/api/v1/assistant/context",
+            headers: tabHeaders(clientContextId),
+            payload: { patientId: "p-anna" },
+          })
+        ).statusCode,
+      ).toBe(200);
+
+    const commandId = crypto.randomUUID();
+    const accepted = await app.inject({
+      method: "POST",
+      url: "/api/v1/assistant/conversation/clear",
+      headers: {
+        ...tabHeaders(firstTab),
+        "x-command-id": commandId,
+      },
+      payload: {},
+    });
+    expect(accepted.statusCode).toBe(200);
+    const crossTabReplay = await app.inject({
+      method: "POST",
+      url: "/api/v1/assistant/conversation/clear",
+      headers: {
+        ...tabHeaders(secondTab),
+        "x-command-id": commandId,
+      },
+      payload: {},
+    });
+    expect(crossTabReplay.statusCode).toBe(409);
+  });
+
   it("rejects authority from the previous scope of the same tab", async () => {
     const app = buildApp(undefined, { demoMode: true });
     apps.push(app);

@@ -484,6 +484,14 @@ export interface ApplicationCommandAcceptance {
     actorRole: Role;
     context: AssistantContextBinding;
   };
+  assistantContextSwitch?: {
+    actorId: string;
+    actorRole: Role;
+    sessionId: string;
+    clientContextId: string;
+    patientId: string | null;
+    encounterId: string | null;
+  };
   providerCommands: LocalIntentAcceptance["providerCommands"];
 }
 
@@ -4228,23 +4236,30 @@ export class PostgresOperationalStore
       client.release();
     }
   }
-  private async setThreadPatientContext(
+  private async setAssistantThreadContext(
     client: pg.PoolClient,
     session: Pick<WorkingSessionView, "id" | "effectiveRole" | "departmentId">,
     actorId: string,
-    patientId: string,
-    encounterId: string,
+    patientId: string | null,
+    encounterId: string | null,
   ): Promise<{ threadId: string; threadContextRevision: number } | null> {
+    if ((patientId === null) !== (encounterId === null))
+      throw new Error("ASSISTANT_CONTEXT_SCOPE_INVALID");
+    const threadType = patientId ? "patient-assistant" : "general-assistant";
     await client.query(
       "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
-      [`${organizationId}:${actorId}:conversation:${patientId}:${encounterId}`],
+      [
+        `${organizationId}:${actorId}:conversation:${patientId ?? "general"}:${encounterId ?? "none"}`,
+      ],
     );
     const existing = await client.query<{ id: string }>(
       `SELECT id FROM assistant_threads
          WHERE organization_id=$1 AND actor_id=$2
          AND effective_role=$3 AND site_id=$4 AND department_id=$5
-         AND thread_type='patient-assistant'
-         AND patient_id=$6 AND subject_encounter_id=$7 AND expires_at > now()
+         AND thread_type=$6
+         AND patient_id IS NOT DISTINCT FROM $7
+         AND subject_encounter_id IS NOT DISTINCT FROM $8
+         AND expires_at > now()
        ORDER BY updated_at DESC LIMIT 1 FOR UPDATE`,
       [
         organizationId,
@@ -4252,6 +4267,7 @@ export class PostgresOperationalStore
         session.effectiveRole,
         siteConfiguration.siteId,
         departmentId,
+        threadType,
         patientId,
         encounterId,
       ],
@@ -4261,7 +4277,7 @@ export class PostgresOperationalStore
       await client.query(
         `INSERT INTO assistant_threads
            (organization_id,id,actor_id,effective_role,department_id,site_id,thread_type,patient_id,subject_encounter_id,title,audience,membership,retention_class,pinned,expires_at)
-         VALUES ($1,$2,$3,$4,$5,$6,'patient-assistant',$7,$8,'Patientengespräch',$9,$10,'patient-record',false,$11)`,
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
         [
           organizationId,
           threadId,
@@ -4269,10 +4285,14 @@ export class PostgresOperationalStore
           session.effectiveRole,
           session.departmentId,
           siteConfiguration.siteId,
+          threadType,
           patientId,
           encounterId,
-          { actorId, patientId, encounterId },
+          patientId ? "Patientengespräch" : "Mein Assistent",
+          patientId ? { actorId, patientId, encounterId } : { actorId },
           JSON.stringify([actorId]),
+          patientId ? "patient-record" : "shift-session",
+          patientId === null,
           new Date(Date.now() + sessionTtlMs),
         ],
       );
@@ -4509,7 +4529,7 @@ export class PostgresOperationalStore
            VALUES ($1,$2,1,now())`,
           [organizationId, episodeId],
         );
-        await this.setThreadPatientContext(
+        await this.setAssistantThreadContext(
           client,
           session,
           actorId,
@@ -4558,7 +4578,7 @@ export class PostgresOperationalStore
            VALUES ($1,$2,1,now())`,
           [organizationId, episodeId],
         );
-        await this.setThreadPatientContext(
+        await this.setAssistantThreadContext(
           client,
           session,
           actorId,
@@ -4688,7 +4708,7 @@ export class PostgresOperationalStore
         );
         const resumed = changed.rows[0];
         if (!resumed) throw new Error("EPISODE_STATE_CONFLICT");
-        await this.setThreadPatientContext(
+        await this.setAssistantThreadContext(
           client,
           session,
           actorId,
@@ -5598,7 +5618,7 @@ export class PostgresOperationalStore
            VALUES ($1,$2,1,now())`,
           [organizationId, nextEpisodeId],
         );
-        const nextContext = await this.setThreadPatientContext(
+        const nextContext = await this.setAssistantThreadContext(
           client,
           {
             id: input.sessionId,
@@ -5818,6 +5838,14 @@ export class PostgresOperationalStore
       input.receipt.payload !== JSON.stringify(input.resultPayload)
     )
       throw new Error("APPLICATION_COMMAND_RECEIPT_BINDING_INVALID");
+    if (
+      [
+        input.workdayCommand,
+        input.conversationClear,
+        input.assistantContextSwitch,
+      ].filter(Boolean).length > 1
+    )
+      throw new Error("APPLICATION_COMMAND_EFFECT_CONFLICT");
     let effectiveAuthorization = authorization;
     let effectiveResultPayload = input.resultPayload;
     let effectiveReceipt = input.receipt;
@@ -6070,6 +6098,121 @@ export class PostgresOperationalStore
             },
           ],
         );
+      }
+      if (input.assistantContextSwitch) {
+        const contextSwitch = input.assistantContextSwitch;
+        if (
+          contextSwitch.actorId !== input.actorId ||
+          contextSwitch.actorRole !== input.actorRole ||
+          contextSwitch.patientId !== authorization.patientId ||
+          contextSwitch.encounterId !== authorization.encounterId ||
+          (contextSwitch.patientId === null) !==
+            (contextSwitch.encounterId === null)
+        )
+          throw new Error("APPLICATION_ASSISTANT_CONTEXT_BINDING_INVALID");
+        const session = await client.query<{
+          id: string;
+          effective_role: Role;
+          department_id: string;
+        }>(
+          `SELECT id::text,effective_role,department_id
+           FROM working_sessions
+           WHERE organization_id=$1 AND id=$2 AND actor_id=$3
+             AND effective_role=$4 AND department_id=$5 AND status='active'
+           FOR UPDATE`,
+          [
+            organizationId,
+            contextSwitch.sessionId,
+            contextSwitch.actorId,
+            contextSwitch.actorRole,
+            departmentId,
+          ],
+        );
+        const currentSession = session.rows[0];
+        if (!currentSession)
+          throw new Error("APPLICATION_ASSISTANT_SESSION_STALE");
+        await client.query(
+          `UPDATE safety_authority SET consumed_at=now()
+           WHERE organization_id=$1 AND actor_id=$2 AND client_context_id=$3
+             AND consumed_at IS NULL`,
+          [
+            organizationId,
+            contextSwitch.actorId,
+            contextSwitch.clientContextId,
+          ],
+        );
+        const thread = await this.setAssistantThreadContext(
+          client,
+          {
+            id: currentSession.id,
+            effectiveRole: currentSession.effective_role,
+            departmentId: currentSession.department_id,
+          },
+          contextSwitch.actorId,
+          contextSwitch.patientId,
+          contextSwitch.encounterId,
+        );
+        if (!thread) throw new Error("ASSISTANT_CONTEXT_SWITCH_FAILED");
+        const rebound = await client.query<{ context_revision: number }>(
+          `INSERT INTO assistant_client_contexts
+             (organization_id,id,actor_id,effective_role,session_id,thread_id,
+              context_revision,patient_id,encounter_id,expires_at)
+           VALUES ($1,$2,$3,$4,$5,$6,1,$7,$8,$9)
+           ON CONFLICT (organization_id,id) DO UPDATE
+           SET session_id=EXCLUDED.session_id,
+               thread_id=EXCLUDED.thread_id,
+               context_revision=assistant_client_contexts.context_revision+1,
+               patient_id=EXCLUDED.patient_id,
+               encounter_id=EXCLUDED.encounter_id,
+               expires_at=EXCLUDED.expires_at,
+               updated_at=now()
+           WHERE assistant_client_contexts.actor_id=EXCLUDED.actor_id
+             AND assistant_client_contexts.effective_role=EXCLUDED.effective_role
+           RETURNING context_revision`,
+          [
+            organizationId,
+            contextSwitch.clientContextId,
+            contextSwitch.actorId,
+            contextSwitch.actorRole,
+            contextSwitch.sessionId,
+            thread.threadId,
+            contextSwitch.patientId,
+            contextSwitch.encounterId,
+            new Date(Date.now() + sessionTtlMs),
+          ],
+        );
+        const contextRevision = rebound.rows[0]?.context_revision;
+        if (contextRevision === undefined)
+          throw new DomainError(
+            "AUTH_DENIED",
+            "Browserkontext gehört nicht zu dieser Mitarbeitenden-Sitzung.",
+            403,
+          );
+        effectiveResultPayload = {
+          clientContextId: contextSwitch.clientContextId,
+          sessionId: contextSwitch.sessionId,
+          threadId: thread.threadId,
+          contextRevision,
+          patientId: contextSwitch.patientId,
+          encounterId: contextSwitch.encounterId,
+        } satisfies AssistantContextBinding;
+        effectiveAuthorization = applicationReceiptAuthorizationSchema.parse({
+          ...authorization,
+          patientScopes:
+            contextSwitch.patientId && contextSwitch.encounterId
+              ? [
+                  {
+                    patientId: contextSwitch.patientId,
+                    encounterId: contextSwitch.encounterId,
+                  },
+                ]
+              : [],
+        });
+        effectiveReceipt = {
+          ...input.receipt,
+          payload: JSON.stringify(effectiveResultPayload),
+          authorization: effectiveAuthorization,
+        };
       }
       const acceptedCommandId = randomUUID();
       const hasClinicalProjection =

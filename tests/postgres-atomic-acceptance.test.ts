@@ -15,6 +15,169 @@ const databaseUrl = process.env.PFH_OPERATIONAL_DATABASE_URL;
 const { Pool } = pg;
 
 describe.runIf(Boolean(databaseUrl))("atomic local command acceptance", () => {
+  it("switches assistant context in the same transaction as its receipt", async () => {
+    const store = new PostgresOperationalStore(databaseUrl!);
+    const scenarios = new PostgresDemoScenarioStore(databaseUrl!);
+    const inspection = new Pool({
+      connectionString: databaseUrl,
+      options: "-c pfh.organization_id=org-demo",
+    });
+    try {
+      await store.initialize();
+      await store.resetDemoState();
+      await inspection.query(
+        `DELETE FROM demo_scenario_runs WHERE organization_id=$1`,
+        [siteConfiguration.institutionId],
+      );
+      const scenario = await scenarios.initialize();
+      const clientContextId = randomUUID();
+      const original = await store.bindAssistantContext(
+        "u-assistant",
+        "care-assistant",
+        clientContextId,
+        "p-anna",
+        "enc-anna-2026",
+      );
+      const voiceTokenHash = createHash("sha256")
+        .update(`context-voice-${clientContextId}`)
+        .digest("hex");
+      const voiceAuthority = {
+        clientContextId,
+        actorId: "u-assistant",
+        patientId: "p-anna",
+        encounterId: "enc-anna-2026",
+        purpose: "direct-care" as const,
+        original: {
+          transcript: "Synthetischer Kontextwechsel",
+          transcriptHash: createHash("sha256")
+            .update("Synthetischer Kontextwechsel")
+            .digest("hex"),
+          capturedAt: new Date().toISOString(),
+          source: {
+            kind: "asr" as const,
+            mode: "browser-demo" as const,
+            model: "synthetic-context-test",
+            language: "de",
+            confidence: 1,
+            confidenceState: "reported" as const,
+            audioRetained: false as const,
+          },
+        },
+        sessionId: original.sessionId,
+        threadId: original.threadId,
+        contextRevision: original.contextRevision,
+        expiresAt: Date.now() + 60_000,
+      };
+      await store.storeVoiceAuthority(voiceTokenHash, voiceAuthority);
+      const makeInput = (key: string, expectedDigest: string) => {
+        const resultPayload = {
+          clientContextId,
+          sessionId: original.sessionId,
+          threadId: original.threadId,
+          contextRevision: original.contextRevision,
+          patientId: "p-luca",
+          encounterId: "enc-luca-2026",
+        };
+        const requestHash = createHash("sha256").update(key).digest("hex");
+        return {
+          receipt: {
+            key,
+            requestHash,
+            statusCode: 200,
+            payload: JSON.stringify(resultPayload),
+            authorization: {
+              actorId: "u-assistant",
+              actorRole: "care-assistant" as const,
+              siteId: siteConfiguration.siteId,
+              departmentId: siteConfiguration.department.id,
+              route: "/api/v1/assistant/context",
+              purpose: "direct-care" as const,
+              actions: ["patient:read" as const],
+              patientId: "p-luca",
+              encounterId: "enc-luca-2026",
+              patientScopes: [
+                { patientId: "p-luca", encounterId: "enc-luca-2026" },
+              ],
+              workdayAuthority: null,
+            },
+          },
+          actorId: "u-assistant",
+          actorRole: "care-assistant" as const,
+          purpose: "direct-care" as const,
+          policyVersion: "test-policy-v1",
+          resultPayload,
+          auditEntries: [],
+          clinicalResources: [],
+          removedReferences: [],
+          clinicalExpectedVersions: {},
+          demoScenarioState: scenario.state,
+          demoScenarioWorkspace: scenario.workspace,
+          demoScenarioExpectedDigest: expectedDigest,
+          assistantContextSwitch: {
+            actorId: "u-assistant",
+            actorRole: "care-assistant" as const,
+            sessionId: original.sessionId,
+            clientContextId,
+            patientId: "p-luca",
+            encounterId: "enc-luca-2026",
+          },
+          providerCommands: [],
+        };
+      };
+      await expect(
+        store.acceptApplicationCommand(
+          makeInput(`context-rejected-${randomUUID()}`, "0".repeat(64)),
+        ),
+      ).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+      await expect(
+        store.resolveAssistantContext(
+          "u-assistant",
+          "care-assistant",
+          clientContextId,
+        ),
+      ).resolves.toEqual(original);
+      await expect(store.loadVoiceAuthority(voiceTokenHash)).resolves.toEqual(
+        voiceAuthority,
+      );
+
+      const input = makeInput(
+        `context-accepted-${randomUUID()}`,
+        scenarioRunContentDigest(scenario),
+      );
+      const accepted = await store.acceptApplicationCommand(input);
+      const switched = await store.resolveAssistantContext(
+        "u-assistant",
+        "care-assistant",
+        clientContextId,
+      );
+      expect(switched).toMatchObject({
+        patientId: "p-luca",
+        encounterId: "enc-luca-2026",
+      });
+      expect(switched?.threadId).not.toBe(original.threadId);
+      await expect(
+        store.loadVoiceAuthority(voiceTokenHash),
+      ).resolves.toBeNull();
+      await expect(
+        store.acceptApplicationCommand(input),
+      ).resolves.toMatchObject({ id: accepted.id, replayed: true });
+      await expect(
+        store.resolveAssistantContext(
+          "u-assistant",
+          "care-assistant",
+          clientContextId,
+        ),
+      ).resolves.toEqual(switched);
+    } finally {
+      await store.resetDemoState();
+      await inspection.query(
+        `DELETE FROM demo_scenario_runs WHERE organization_id=$1`,
+        [siteConfiguration.institutionId],
+      );
+      await Promise.all([store.close(), scenarios.close(), inspection.end()]);
+    }
+  });
+
   it("clears a conversation in the same transaction as its receipt", async () => {
     const store = new PostgresOperationalStore(databaseUrl!);
     const scenarios = new PostgresDemoScenarioStore(databaseUrl!);

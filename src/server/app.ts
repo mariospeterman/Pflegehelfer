@@ -1103,6 +1103,7 @@ export function buildApp(
       actions = ["patient:read"];
     else if (route === "/api/v1/assistant/conversation/clear")
       actions = ["patient:read"];
+    else if (route === "/api/v1/assistant/context") actions = ["patient:read"];
     else if (
       route.startsWith("/api/v1/admin/demo/") ||
       route.startsWith("/api/v1/simulators/") ||
@@ -1265,6 +1266,14 @@ export function buildApp(
       actorId: string;
       actorRole: Role;
       context: AssistantContextBinding;
+    },
+    assistantContextSwitch?: {
+      actorId: string;
+      actorRole: Role;
+      sessionId: string;
+      clientContextId: string;
+      patientId: string | null;
+      encounterId: string | null;
     },
   ): Promise<T> => {
     const pending = persistenceQueue.then(async () => {
@@ -1473,6 +1482,7 @@ export function buildApp(
             ...(workdayCommand ? { workdayCommand } : {}),
             ...(voiceAuthority ? { voiceAuthority } : {}),
             ...(conversationClear ? { conversationClear } : {}),
+            ...(assistantContextSwitch ? { assistantContextSwitch } : {}),
             providerCommands,
           });
           if (acceptance.replayed) {
@@ -2143,6 +2153,9 @@ export function buildApp(
       route,
       path: request.url.split("?", 1)[0],
       body: request.body ?? null,
+      ...(route.startsWith("/api/v1/assistant/")
+        ? { clientContextId: assistantClientContextId(request) }
+        : {}),
       ...(route === "/api/v1/workspace/attachments"
         ? { contentHash: request.headers["x-content-sha256"] ?? null }
         : {}),
@@ -4385,22 +4398,67 @@ export function buildApp(
           403,
         );
     }
-    revokeClientVoiceReceipts(actorId, clientContextId);
-    await operationalStore.suspendAssistantContextAuthorities(
-      actorId,
-      clientContextId,
-    );
-    const transition = operationalStore.bindAssistantContext(
-      actorId,
-      actor.role,
-      clientContextId,
-      body.patientId,
-      selectedPatient?.encounterId ?? null,
-    );
+    const encounterId = selectedPatient?.encounterId ?? null;
+    const transition = (async () => {
+      if (runtime.profile !== "integrated-demo") {
+        await operationalStore.suspendAssistantContextAuthorities(
+          actorId,
+          clientContextId,
+        );
+        return operationalStore.bindAssistantContext(
+          actorId,
+          actor.role,
+          clientContextId,
+          body.patientId,
+          encounterId,
+        );
+      }
+      const session = await operationalStore.getOrStartSession(
+        actorId,
+        actor.role,
+      );
+      const placeholder: AssistantContextBinding = {
+        clientContextId,
+        sessionId: session.id,
+        threadId: session.threadId,
+        contextRevision: session.contextRevision,
+        patientId: body.patientId,
+        encounterId,
+      };
+      return persist(
+        () => {
+          service.audit.append({
+            actor,
+            action: "assistant:context-selected",
+            patientId: body.patientId,
+            purpose: actor.defaultPurpose,
+            outcome: "success",
+            detail: { clientContextId },
+          });
+          return placeholder;
+        },
+        request,
+        200,
+        false,
+        undefined,
+        undefined,
+        undefined,
+        {
+          actorId,
+          actorRole: actor.role,
+          sessionId: session.id,
+          clientContextId,
+          patientId: body.patientId,
+          encounterId,
+        },
+      );
+    })();
     const transitionKey = `${actorId}:${clientContextId}`;
     contextTransitions.set(transitionKey, transition);
     try {
-      return await transition;
+      const context = await transition;
+      revokeClientVoiceReceipts(actorId, clientContextId);
+      return context;
     } finally {
       if (contextTransitions.get(transitionKey) === transition)
         contextTransitions.delete(transitionKey);
