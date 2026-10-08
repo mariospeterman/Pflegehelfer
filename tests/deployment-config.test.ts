@@ -52,6 +52,9 @@ describe("production deployment guards", () => {
     expect(workflow).toContain('project="pfh-e2e-${nonce}"');
     expect(workflow).toContain("pnpm e2e:guard");
     expect(workflow).toContain("PFH_STORAGE_MODE: medplum");
+    expect(workflow).toContain(
+      "MEDPLUM_APP_BASE_URL=http://127.0.0.1:$PFH_MEDPLUM_APP_HOST_PORT/",
+    );
   });
 });
 
