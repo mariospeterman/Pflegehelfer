@@ -7,6 +7,7 @@ import type {
   ClinicalWorkspaceStatus,
 } from "../src/infrastructure/medplum-workspace.js";
 import { buildApp } from "../src/server/app.js";
+import type { SourceReadSetV1 } from "../src/core/source-read-set.js";
 
 class ResetRecordingWorkspace implements ClinicalWorkspace {
   readonly mode = "medplum" as const;
@@ -23,6 +24,14 @@ class ResetRecordingWorkspace implements ClinicalWorkspace {
         new Error("MEDPLUM_TRANSACTION_ENTRY_LIMIT_EXCEEDED"),
       );
     return Promise.resolve();
+  }
+
+  captureSourceReadSet(value: SourceReadSetV1): Promise<SourceReadSetV1> {
+    return Promise.resolve(structuredClone(value));
+  }
+
+  refreshSourceReadSet(value: SourceReadSetV1): Promise<SourceReadSetV1> {
+    return Promise.resolve(structuredClone(value));
   }
 
   loadCheckpoint(): Promise<ServiceCheckpoint | null> {

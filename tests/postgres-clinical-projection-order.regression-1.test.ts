@@ -3,7 +3,9 @@ import pg from "pg";
 import { describe, expect, it } from "vitest";
 import { AuditChain } from "../src/core/audit.js";
 import { PflegehelferService } from "../src/core/service.js";
+import { fhirResourceId } from "../src/core/fhir-resource-set.js";
 import { PostgresOperationalStore } from "../src/infrastructure/operational-store.js";
+import { sourceReadSetFixture } from "./source-read-set-fixture.js";
 
 const databaseUrl = process.env.PFH_OPERATIONAL_DATABASE_URL;
 const { Pool } = pg;
@@ -11,6 +13,7 @@ const { Pool } = pg;
 async function acceptSyntheticCommand(
   store: PostgresOperationalStore,
   sequence: number,
+  targetId = "p-luca",
 ) {
   const token = randomUUID();
   const clientContextId = randomUUID();
@@ -22,6 +25,11 @@ async function acceptSyntheticCommand(
     "enc-luca-2026",
   );
   const tokenHash = createHash("sha256").update(token).digest("hex");
+  const sourceReadSet = sourceReadSetFixture({
+    patientId: "p-luca",
+    encounterId: "enc-luca-2026",
+    version: 4,
+  });
   await store.storeIntentAuthority({
     tokenHash,
     record: {
@@ -36,6 +44,7 @@ async function acceptSyntheticCommand(
         transcript: `Synthetische Notiz ${sequence}`,
         structuredText: `Synthetische Notiz ${sequence}`,
       },
+      sourceReadSet,
       expiresAt: Date.now() + 60_000,
     },
     sessionId: context.sessionId,
@@ -64,13 +73,21 @@ async function acceptSyntheticCommand(
     statusCode: 200,
     resultPayload: { sequence },
     selectedActionIds: ["action-1"],
+    authorizationActions: ["patient:read", "note:draft"],
     policyVersion: "test-policy-v1",
-    sourceReadSet: [{ reference: "Patient/p-luca", version: 4 }],
+    sourceReadSet,
     auditEntries: [],
-    clinicalResources: [],
+    clinicalResources: new PflegehelferService()
+      .fhirResources()
+      .filter(
+        (resource) =>
+          resource.resourceType === "Patient" &&
+          resource.id === fhirResourceId("Patient", targetId),
+      ),
     removedReferences: [],
-    clinicalExpectedVersions: {},
-    checkpoint: new PflegehelferService().checkpoint(),
+    clinicalExpectedVersions: {
+      [`Patient/${fhirResourceId("Patient", targetId)}`]: null,
+    },
     providerCommands: [],
   });
 }
@@ -78,15 +95,16 @@ async function acceptSyntheticCommand(
 describe.runIf(Boolean(databaseUrl))(
   "PostgreSQL clinical projection order",
   () => {
-    it("does not lease a newer whole-state checkpoint past an unresolved older job", async () => {
+    it("does not lease a newer same-target delta past an unresolved older job", async () => {
       const store = new PostgresOperationalStore(databaseUrl!);
-      const inspection = new Pool({ connectionString: databaseUrl });
+      const inspection = new Pool({
+        connectionString: databaseUrl,
+        options: "-c pfh.organization_id=org-demo",
+      });
       try {
         await store.initialize();
         await store.resetDemoState();
         const first = await acceptSyntheticCommand(store, 1);
-        await new Promise((resolve) => setTimeout(resolve, 10));
-        const second = await acceptSyntheticCommand(store, 2);
 
         const older = await store.claimClinicalProjection({
           workerId: "ordering-worker",
@@ -98,6 +116,10 @@ describe.runIf(Boolean(databaseUrl))(
           workerId: "ordering-worker",
           errorCode: "SYNTHETIC_MANUAL_HOLD",
           retryAt: null,
+        });
+
+        await expect(acceptSyntheticCommand(store, 2)).rejects.toMatchObject({
+          code: "VERSION_CONFLICT",
         });
 
         await expect(
@@ -118,7 +140,9 @@ describe.runIf(Boolean(databaseUrl))(
         const requestHash = createHash("sha256")
           .update("recover-first-projection")
           .digest("hex");
-        const audit = new AuditChain().append({
+        const auditChain = new AuditChain();
+        auditChain.restore(await store.loadAuditEntries());
+        const audit = auditChain.append({
           actor: new PflegehelferService().user("u-it"),
           action: "clinical-projection:retry",
           patientId: null,
@@ -176,6 +200,7 @@ describe.runIf(Boolean(databaseUrl))(
           jobId: retried!.id,
           workerId: "retry-head-in-order",
         });
+        const second = await acceptSyntheticCommand(store, 2);
         await expect(
           store.claimClinicalProjection({
             workerId: "next-in-order",
@@ -195,6 +220,45 @@ describe.runIf(Boolean(databaseUrl))(
           [commandKey, audit.hash, older!.id],
         );
         expect(evidence.rows[0]).toEqual({ receipts: 1, audits: 1, events: 1 });
+      } finally {
+        await store.resetDemoState();
+        await Promise.all([store.close(), inspection.end()]);
+      }
+    });
+
+    it("leases an unrelated resource delta past a manual hold", async () => {
+      const store = new PostgresOperationalStore(databaseUrl!);
+      const inspection = new Pool({
+        connectionString: databaseUrl,
+        options: "-c pfh.organization_id=org-demo",
+      });
+      try {
+        await store.initialize();
+        await store.resetDemoState();
+        const first = await acceptSyntheticCommand(store, 1, "p-luca");
+        const second = await acceptSyntheticCommand(store, 2, "p-anna");
+        const held = await store.claimClinicalProjection({
+          workerId: "patient-a-worker",
+          leaseDurationMs: 30_000,
+        });
+        expect(held?.acceptedCommandId).toBe(first.id);
+        await store.failClinicalProjection({
+          jobId: held!.id,
+          workerId: "patient-a-worker",
+          errorCode: "SYNTHETIC_MANUAL_HOLD",
+          retryAt: null,
+        });
+
+        await expect(
+          store.claimClinicalProjection({
+            workerId: "patient-b-worker",
+            leaseDurationMs: 30_000,
+          }),
+        ).resolves.toMatchObject({
+          acceptedCommandId: second.id,
+          targetKeys: [`Patient/${fhirResourceId("Patient", "p-anna")}`],
+          payloadSchemaVersion: 2,
+        });
       } finally {
         await store.resetDemoState();
         await Promise.all([store.close(), inspection.end()]);

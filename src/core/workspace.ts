@@ -90,7 +90,7 @@ export const workspaceAttachmentSchema = z
     sha256: z.string().regex(/^[a-f0-9]{64}$/),
     audience: workspaceAudienceSchema,
     topicIds: z.array(z.string().min(1).max(120)).max(12),
-    state: z.enum(["available", "withdrawn"]),
+    state: z.enum(["available", "quarantined", "withdrawn"]),
     inspection: workspaceAttachmentInspectionSchema.optional(),
     createdAt: z.string().datetime(),
     withdrawnAt: z.string().datetime().nullable(),

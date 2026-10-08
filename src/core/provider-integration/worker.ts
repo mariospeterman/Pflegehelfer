@@ -52,6 +52,11 @@ export interface ProviderDeliveryStore {
     leaseDurationMs: number;
     now?: Date;
   }): Promise<ProviderOutboxJob[]>;
+  renewProviderDelivery?(input: {
+    jobId: string;
+    workerId: string;
+    leaseDurationMs: number;
+  }): Promise<boolean>;
   finishProviderDelivery(input: {
     jobId: string;
     workerId: string;
@@ -186,7 +191,10 @@ export class ProviderDeliveryWorker {
       ...workerOptionsSchema.parse({
         workerId: options.workerId,
         profile: options.profile,
-        batchSize: options.batchSize ?? 20,
+        // One lease per delivery loop keeps the bounded lease attached to the
+        // operation that is actually in flight. A later command is not left
+        // ageing in a prefetched batch while an earlier provider call stalls.
+        batchSize: options.batchSize ?? 1,
         leaseDurationMs: options.leaseDurationMs ?? 30_000,
         retryBaseMs: options.retryBaseMs ?? 1_000,
         retryMaximumMs: options.retryMaximumMs ?? 5 * 60_000,
@@ -198,11 +206,12 @@ export class ProviderDeliveryWorker {
   }
 
   async runOnce(): Promise<ProviderWorkerResult> {
+    const leaseDurationMs = this.options.leaseDurationMs;
     const jobs = await this.store.claimProviderCommands({
       workerId: this.options.workerId,
       profile: this.options.profile,
       limit: this.options.batchSize,
-      leaseDurationMs: this.options.leaseDurationMs,
+      leaseDurationMs,
       now: this.options.now(),
     });
     const result: ProviderWorkerResult = {
@@ -246,12 +255,46 @@ export class ProviderDeliveryWorker {
         result.manual += 1;
         continue;
       }
+      let leaseLost = false;
+      let renewal = Promise.resolve();
+      const renew = async () => {
+        if (
+          this.store.renewProviderDelivery &&
+          !(await this.store.renewProviderDelivery({
+            jobId: job.id,
+            workerId: this.options.workerId,
+            leaseDurationMs,
+          }))
+        ) {
+          leaseLost = true;
+          throw new Error("PROVIDER_OUTBOX_LEASE_LOST");
+        }
+      };
+      const timer = setInterval(
+        () => {
+          renewal = renewal.then(renew).catch(() => {
+            leaseLost = true;
+          });
+        },
+        Math.max(500, Math.floor(leaseDurationMs / 3)),
+      );
+      timer.unref();
+      const assertLease = async () => {
+        await renewal;
+        if (leaseLost) throw new Error("PROVIDER_OUTBOX_LEASE_LOST");
+        await renew();
+      };
+      let dispatchAttempted = false;
       try {
-        const acknowledgement = job.latestReceiptId
-          ? await adapter.getCommandStatus(job.latestReceiptId)
-          : await adapter.executeCommand(
-              await adapter.prepareCommand(job.payload.command),
-            );
+        await assertLease();
+        let acknowledgement: ProviderAcknowledgement;
+        if (job.latestReceiptId)
+          acknowledgement = await adapter.getCommandStatus(job.latestReceiptId);
+        else {
+          const prepared = await adapter.prepareCommand(job.payload.command);
+          dispatchAttempted = true;
+          acknowledgement = await adapter.executeCommand(prepared);
+        }
         let readBack: Awaited<ReturnType<typeof verifyProviderReadBack>> = null;
         if (acknowledgement.status === "acknowledged") {
           try {
@@ -259,6 +302,7 @@ export class ProviderDeliveryWorker {
               adapter,
               job.payload.command,
             );
+            await assertLease();
           } catch (error) {
             if (!technicalFailure(error)) throw error;
             const retryAt =
@@ -268,6 +312,7 @@ export class ProviderDeliveryWorker {
             // The remote receipt is already a durable fact. Persist it before
             // retrying read-back so restart recovery polls the receipt instead
             // of executing the command a second time.
+            await assertLease();
             await this.store.finishProviderDelivery({
               jobId: job.id,
               workerId: this.options.workerId,
@@ -290,6 +335,7 @@ export class ProviderDeliveryWorker {
             (acknowledgement.providerVersion !== null &&
               readBack.providerVersion !== acknowledgement.providerVersion))
         ) {
+          await assertLease();
           await this.store.finishProviderDelivery({
             jobId: job.id,
             workerId: this.options.workerId,
@@ -304,6 +350,7 @@ export class ProviderDeliveryWorker {
           result.manual += 1;
           continue;
         }
+        await assertLease();
         await this.store.finishProviderDelivery({
           jobId: job.id,
           workerId: this.options.workerId,
@@ -331,24 +378,41 @@ export class ProviderDeliveryWorker {
           result.retrying += 1;
         else result.manual += 1;
       } catch (error) {
+        if (
+          leaseLost ||
+          (error instanceof Error &&
+            error.message === "PROVIDER_OUTBOX_LEASE_LOST")
+        )
+          throw error;
         const retry =
           technicalFailure(error) &&
           job.attempts < this.options.maximumAttempts &&
           (Boolean(job.latestReceiptId) ||
             job.payload.retrySafety === "idempotent-provider");
+        const uncertainRemoteOutcome =
+          dispatchAttempted &&
+          !job.latestReceiptId &&
+          job.payload.retrySafety === "reconcile-before-retry";
         await this.store.failProviderDelivery({
           jobId: job.id,
           workerId: this.options.workerId,
-          errorCode: technicalFailure(error)
-            ? "PROVIDER_UNAVAILABLE"
-            : "PROVIDER_DELIVERY_FAILED",
-          errorClassification: technicalFailure(error)
-            ? "technical"
-            : "mapping",
+          errorCode: uncertainRemoteOutcome
+            ? "UNCERTAIN_REMOTE_OUTCOME"
+            : technicalFailure(error)
+              ? "PROVIDER_UNAVAILABLE"
+              : "PROVIDER_DELIVERY_FAILED",
+          errorClassification: uncertainRemoteOutcome
+            ? "version-conflict"
+            : technicalFailure(error)
+              ? "technical"
+              : "mapping",
           retryAt: retry ? this.retryAt(job.attempts) : null,
         });
         if (retry) result.retrying += 1;
         else result.manual += 1;
+      } finally {
+        clearInterval(timer);
+        await renewal;
       }
     }
     return result;

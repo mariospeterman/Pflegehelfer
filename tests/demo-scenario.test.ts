@@ -66,37 +66,36 @@ describe("versioned synthetic scenarios", () => {
     });
     expect(created.statusCode).toBe(201);
 
-    const task = await app.inject({
-      method: "POST",
-      url: "/api/v1/admin/demo/tasks",
-      headers: headers("u-it"),
-      payload: {
-        id: "t-mobilise-klara",
-        patientId: "p-klara",
-        title: "Morgenpflege und Mobilisation vorbereiten",
-        reason: "Synthetischer Rehabilitationsplan",
-        ownerRole: "care-assistant",
-        ownerId: "u-assistant",
-        priority: "routine",
-        dueAt: "2026-09-05T10:45:00.000Z",
-        escalation: "Bei Abweichung Pflegefachperson informieren",
-      },
-    });
-    expect(task.statusCode).toBe(201);
-
     const existing = baselineDemoScenario.state.users.find(
       (item) => item.id === "u-assistant",
     )!.patientIds;
-    const assigned = await app.inject({
+    const task = await app.inject({
       method: "POST",
-      url: "/api/v1/admin/demo/assignments",
+      url: "/api/v1/admin/demo/task-assignment",
       headers: headers("u-it"),
       payload: {
+        task: {
+          id: "t-mobilise-klara",
+          patientId: "p-klara",
+          title: "Morgenpflege und Mobilisation vorbereiten",
+          reason: "Synthetischer Rehabilitationsplan",
+          ownerRole: "care-assistant",
+          ownerId: "u-assistant",
+          priority: "routine",
+          escalation: "Bei Abweichung Pflegefachperson informieren",
+        },
+        dueOffsetMinutes: 165,
         actorId: "u-assistant",
-        patientIds: [...existing, "p-klara"],
+        patientIds: ["p-klara"],
       },
     });
-    expect(assigned.statusCode).toBe(200);
+    expect(task.statusCode).toBe(201);
+    expect(task.json<{ patientIds: string[] }>().patientIds).toEqual(
+      expect.arrayContaining([...existing, "p-klara"]),
+    );
+    expect(
+      Date.parse(task.json<{ task: { dueAt: string } }>().task.dueAt),
+    ).toBeGreaterThan(Date.parse(baselineDemoScenario.clock.anchor));
 
     const snapshot = await app.inject({
       method: "GET",

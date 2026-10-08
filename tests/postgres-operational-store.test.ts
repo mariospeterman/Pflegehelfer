@@ -1,8 +1,9 @@
 import pg from "pg";
 import { createHash } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { PostgresOperationalStore } from "../src/infrastructure/operational-store.js";
 import { patients } from "../src/core/seed.js";
+import { sourceReadSetFixture } from "./source-read-set-fixture.js";
 
 const databaseUrl = process.env.PFH_OPERATIONAL_DATABASE_URL;
 const { Pool } = pg;
@@ -39,6 +40,124 @@ async function acknowledgeHandover(
 }
 
 describe.runIf(Boolean(databaseUrl))("PostgreSQL operational store", () => {
+  it("fences an expired assistant request holder from its replacement", async () => {
+    const store = new PostgresOperationalStore(databaseUrl!);
+    const inspectionPool = new Pool({
+      connectionString: databaseUrl,
+      options: "-c pfh.organization_id=org-demo",
+    });
+    const actorId = "u-nurse";
+    const role = "registered-nurse" as const;
+    try {
+      await store.initialize();
+      await store.resetDemoState();
+      await store.getOrStartSession(actorId, role);
+      const context = await store.bindAssistantContext(
+        actorId,
+        role,
+        crypto.randomUUID(),
+        "p-anna",
+        "enc-anna-2026",
+      );
+      const identity = {
+        commandId: crypto.randomUUID(),
+        requestHash: "d".repeat(64),
+        actorId,
+        role,
+        context,
+      };
+      const first = await store.claimAssistantRequest(identity);
+      const skewedApplicationTime = Date.now() + 365 * 24 * 60 * 60_000;
+      const clockSkew = vi
+        .spyOn(Date, "now")
+        .mockReturnValue(skewedApplicationTime);
+      await expect(store.claimAssistantRequest(identity)).resolves.toEqual({
+        state: "in-progress",
+      });
+      clockSkew.mockRestore();
+      await inspectionPool.query(
+        `UPDATE assistant_request_claims SET lease_expires_at=now()-interval '1 second'
+         WHERE organization_id=$1 AND site_id=$2 AND actor_id=$3 AND command_id=$4`,
+        ["org-demo", "rehab-2", actorId, identity.commandId],
+      );
+      const replacement = await store.claimAssistantRequest(identity);
+      expect(replacement.holderId).not.toBe(first.holderId);
+      await store.releaseAssistantRequest(identity, first.holderId!);
+      expect(
+        await store.renewAssistantRequest(identity, replacement.holderId!),
+      ).toBe(true);
+
+      const turn = {
+        id: crypto.randomUUID(),
+        prompt: "Synthetischer Fence-Test",
+        response: { components: [], openUi: "" },
+        createdAt: new Date().toISOString(),
+        inputModality: "typed" as const,
+        originPatientId: context.patientId,
+        originEncounterId: context.encounterId,
+        originThreadId: context.threadId,
+        originContextRevision: context.contextRevision,
+      };
+      const authority = {
+        tokenHash: createHash("sha256")
+          .update("fenced-test-token")
+          .digest("hex"),
+        record: {
+          actorId,
+          actorRole: role,
+          command: "task:draft" as const,
+          patientId: "p-anna",
+          encounterId: "enc-anna-2026",
+          purpose: "direct-care" as const,
+          resourceVersion: 7,
+          payload: { title: "Synthetischer Fence-Test" },
+          sourceReadSet: sourceReadSetFixture({
+            patientId: "p-anna",
+            encounterId: "enc-anna-2026",
+            version: 7,
+          }),
+          expiresAt: Date.now() + 60_000,
+        },
+        sessionId: context.sessionId,
+        threadId: context.threadId,
+        contextRevision: context.contextRevision,
+        responseId: turn.id,
+        reviewItems: [{ id: "action-1", kind: "task" }],
+        clientContextId: context.clientContextId,
+      };
+      await expect(
+        store.appendConversationTurn(actorId, role, turn, context, {
+          ...identity,
+          holderId: first.holderId!,
+          response: turn.response as never,
+          authorities: [authority],
+        }),
+      ).rejects.toThrow("ASSISTANT_REQUEST_CLAIM_STALE");
+      await expect(
+        inspectionPool.query(
+          `SELECT 1 FROM safety_authority
+           WHERE organization_id=$1 AND token_hash=$2`,
+          ["org-demo", authority.tokenHash],
+        ),
+      ).resolves.toMatchObject({ rowCount: 0 });
+      await store.appendConversationTurn(actorId, role, turn, context, {
+        ...identity,
+        holderId: replacement.holderId!,
+        response: turn.response as never,
+        authorities: [authority],
+      });
+      await expect(
+        inspectionPool.query(
+          `SELECT 1 FROM safety_authority
+           WHERE organization_id=$1 AND token_hash=$2`,
+          ["org-demo", authority.tokenHash],
+        ),
+      ).resolves.toMatchObject({ rowCount: 1 });
+    } finally {
+      await Promise.all([store.close(), inspectionPool.end()]);
+    }
+  });
+
   it("durably replays only events addressed to the requesting actor", async () => {
     const store = new PostgresOperationalStore(databaseUrl!);
     try {
@@ -65,7 +184,10 @@ describe.runIf(Boolean(databaseUrl))("PostgreSQL operational store", () => {
 
   it("rejects acknowledgement when frozen handover content was altered", async () => {
     const store = new PostgresOperationalStore(databaseUrl!);
-    const inspectionPool = new Pool({ connectionString: databaseUrl });
+    const inspectionPool = new Pool({
+      connectionString: databaseUrl,
+      options: "-c pfh.organization_id=org-demo",
+    });
     try {
       await store.initialize();
       await store.resetDemoState();
@@ -206,7 +328,10 @@ describe.runIf(Boolean(databaseUrl))("PostgreSQL operational store", () => {
 
   it("pauses an expired session before starting its replacement", async () => {
     const store = new PostgresOperationalStore(databaseUrl!);
-    const inspectionPool = new Pool({ connectionString: databaseUrl });
+    const inspectionPool = new Pool({
+      connectionString: databaseUrl,
+      options: "-c pfh.organization_id=org-demo",
+    });
     const actorId = "u-assistant";
 
     try {
@@ -504,7 +629,7 @@ describe.runIf(Boolean(databaseUrl))("PostgreSQL operational store", () => {
     } finally {
       await store.close();
     }
-  });
+  }, 30_000);
 
   it("keeps same-shift staff responsibility independent", async () => {
     const store = new PostgresOperationalStore(databaseUrl!);
@@ -545,7 +670,10 @@ describe.runIf(Boolean(databaseUrl))("PostgreSQL operational store", () => {
 
   it("persists and atomically consumes one-use assistant authority", async () => {
     const store = new PostgresOperationalStore(databaseUrl!);
-    const inspectionPool = new Pool({ connectionString: databaseUrl });
+    const inspectionPool = new Pool({
+      connectionString: databaseUrl,
+      options: "-c pfh.organization_id=org-demo",
+    });
     try {
       await store.initialize();
       await store.resetDemoState();
@@ -557,6 +685,11 @@ describe.runIf(Boolean(databaseUrl))("PostgreSQL operational store", () => {
         "enc-anna-2026",
       );
       const tokenHash = createHash("sha256").update("test-token").digest("hex");
+      const sourceReadSet = sourceReadSetFixture({
+        patientId: "p-anna",
+        encounterId: "enc-anna-2026",
+        version: 7,
+      });
       const record = {
         actorId: "u-nurse",
         actorRole: "registered-nurse" as const,
@@ -566,6 +699,7 @@ describe.runIf(Boolean(databaseUrl))("PostgreSQL operational store", () => {
         purpose: "direct-care" as const,
         resourceVersion: 7,
         payload: { title: "Kontrolle" },
+        sourceReadSet,
         expiresAt: Date.now() + 60_000,
       };
       await store.storeIntentAuthority({

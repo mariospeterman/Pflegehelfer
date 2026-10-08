@@ -13,28 +13,15 @@ const job: ClinicalProjectionJob = {
   resources: [{ resourceType: "Patient", id: "patient-1", active: true }],
   removedReferences: ["Task/task-1"],
   expectedVersions: { "Patient/patient-1": "7", "Task/task-1": "3" },
-  checkpoint: {
-    formatVersion: 1,
-    dataClass: "synthetic-demo",
-    state: {
-      users: [],
-      patients: [],
-      tasks: [],
-      observations: [],
-      notes: [],
-      communications: [],
-      intake: [],
-      roundActions: [],
-      providerHealth: [],
-      outbox: [],
-    },
-    audit: [],
-    commandReceipts: [],
-  },
+  payloadSchemaVersion: 2,
+  targetKeys: ["Patient/patient-1", "Task/task-1"],
   attempts: 1,
 };
 
-function harness(synchronize: ClinicalWorkspace["synchronize"]) {
+function harness(
+  synchronize: ClinicalWorkspace["synchronize"],
+  renewClinicalProjection = () => Promise.resolve(true),
+) {
   const finishClinicalProjection = vi.fn(
     (input: Parameters<OperationalStore["finishClinicalProjection"]>[0]) => {
       void input;
@@ -49,6 +36,7 @@ function harness(synchronize: ClinicalWorkspace["synchronize"]) {
   );
   const store = {
     claimClinicalProjection: () => Promise.resolve(structuredClone(job)),
+    renewClinicalProjection,
     finishClinicalProjection,
     failClinicalProjection,
   } as unknown as OperationalStore;
@@ -79,7 +67,7 @@ describe("clinical projection worker", () => {
     });
     expect(synchronize).toHaveBeenCalledWith(
       job.resources,
-      job.checkpoint,
+      undefined,
       job.removedReferences,
       undefined,
       job.expectedVersions,
@@ -106,5 +94,16 @@ describe("clinical projection worker", () => {
     const failure = test.failClinicalProjection.mock.calls[0]?.[0];
     expect(failure?.errorCode).toContain("MEDPLUM_VERSION_CONFLICT");
     expect(failure?.retryAt).toBeNull();
+  });
+
+  it("does not write or finalize after losing the lease fence", async () => {
+    const synchronize = vi.fn(() => Promise.resolve());
+    const test = harness(synchronize, () => Promise.resolve(false));
+    await expect(test.worker.runOnce()).rejects.toThrow(
+      "CLINICAL_PROJECTION_LEASE_LOST",
+    );
+    expect(synchronize).not.toHaveBeenCalled();
+    expect(test.finishClinicalProjection).not.toHaveBeenCalled();
+    expect(test.failClinicalProjection).not.toHaveBeenCalled();
   });
 });

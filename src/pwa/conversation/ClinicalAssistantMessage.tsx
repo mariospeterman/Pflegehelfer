@@ -15,10 +15,16 @@ import { useThread, type AssistantMessage } from "@openuidev/react-headless";
 import type { Patient } from "../../core/types";
 import { clinicalAssistantLibrary } from "../assistant/clinical-library";
 import { assistantClientContextHeaders } from "../assistant-context";
+import { authenticatedFetch, requestIntegrityHeaders } from "../auth";
 import {
   completedOpenUi,
   supersededOpenUi,
 } from "./conversation-presentations";
+import { claimPlayback } from "./playback-owner";
+import {
+  resolveIntentExecutionAttempt,
+  type IntentExecutionAttempt,
+} from "./intent-execution-retry";
 
 export interface AssistantHandoff {
   kind: "task" | "communication";
@@ -39,7 +45,8 @@ export interface AssistantHandoff {
 interface ConversationActions {
   userId: string;
   patient: Patient | null;
-  onPatient: (patientId: string) => void;
+  connected: boolean;
+  onPatient: (patientId: string | null) => void;
   onHandoff: (handoff: AssistantHandoff) => void;
   onExecuted: (message: string, activePatientId?: string) => Promise<void>;
   onError: (message: string | null) => void;
@@ -63,21 +70,40 @@ async function post<T>(
   path: string,
   userId: string,
   body: unknown,
+  commandId: string = crypto.randomUUID(),
 ): Promise<T> {
-  const response = await fetch(path, {
+  const response = await authenticatedFetch(path, {
     method: "POST",
     headers: {
       "content-type": "application/json",
       "x-demo-user": userId,
       ...assistantClientContextHeaders(),
-      "x-command-id": crypto.randomUUID(),
+      "x-command-id": commandId,
+      ...requestIntegrityHeaders("POST"),
     },
     body: JSON.stringify(body),
   });
-  const result = (await response.json()) as T & { message?: string };
+  const result = (await response.json()) as T & {
+    error?: string;
+    message?: string;
+  };
   if (!response.ok)
-    throw new Error(result.message ?? "Assistenzaktion fehlgeschlagen.");
+    throw new AssistantActionError(
+      response.status,
+      result.error ?? "UNKNOWN",
+      result.message ?? "Assistenzaktion fehlgeschlagen.",
+    );
   return result;
+}
+
+class AssistantActionError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+  }
 }
 
 export function ClinicalAssistantMessage({
@@ -93,6 +119,17 @@ export function ClinicalAssistantMessage({
   const [speaking, setSpeaking] = useState(false);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioUrlRef = useRef<string | null>(null);
+  const speechRequestRef = useRef<{
+    generation: number;
+    abort: AbortController;
+  } | null>(null);
+  const speechGenerationRef = useRef(0);
+  const releasePlaybackRef = useRef<(() => void) | null>(null);
+  const executionCommandIdsRef = useRef(
+    new Map<string, IntentExecutionAttempt>(),
+  );
+  const communicationCommandIdsRef = useRef(new Map<string, string>());
   if (!actions) throw new Error("ConversationActionsProvider fehlt.");
   const source = message.content ?? "";
   const proposalStatus = message.name?.match(
@@ -115,18 +152,30 @@ export function ClinicalAssistantMessage({
 
   useEffect(
     () => () => {
+      speechRequestRef.current?.abort.abort();
+      speechRequestRef.current = null;
       audioRef.current?.pause();
+      if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
       window.speechSynthesis?.cancel();
+      releasePlaybackRef.current?.();
     },
     [],
   );
 
   const stopSpeaking = () => {
+    speechRequestRef.current?.abort.abort();
+    speechRequestRef.current = null;
     audioRef.current?.pause();
     audioRef.current = null;
+    if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
+    audioUrlRef.current = null;
     window.speechSynthesis?.cancel();
+    releasePlaybackRef.current?.();
+    releasePlaybackRef.current = null;
     setSpeaking(false);
   };
+
+  useEffect(() => stopSpeaking, [actions.userId, renderedSource]);
 
   const readAloud = async () => {
     if (speaking) {
@@ -141,8 +190,18 @@ export function ClinicalAssistantMessage({
     if (!text) return;
     actions.onError(null);
     setSpeaking(true);
+    stopSpeaking();
+    const generation = ++speechGenerationRef.current;
+    const abort = new AbortController();
+    speechRequestRef.current = { generation, abort };
+    releasePlaybackRef.current = claimPlayback(stopSpeaking);
+    setSpeaking(true);
+    const current = () =>
+      speechRequestRef.current?.generation === generation &&
+      !abort.signal.aborted;
     try {
-      const statusResponse = await fetch("/api/v1/ai/status", {
+      const statusResponse = await authenticatedFetch("/api/v1/ai/status", {
+        signal: abort.signal,
         headers: {
           "x-demo-user": actions.userId,
           ...assistantClientContextHeaders(),
@@ -152,6 +211,7 @@ export function ClinicalAssistantMessage({
         tts?: { mode?: string; ready?: boolean; acceptance?: string };
         message?: string;
       };
+      if (!current()) return;
       if (!statusResponse.ok)
         throw new Error(status.message ?? "Sprachausgabe nicht verfügbar.");
       if (
@@ -159,13 +219,15 @@ export function ClinicalAssistantMessage({
         status.tts.acceptance === "accepted" &&
         status.tts.mode !== "browser-demo"
       ) {
-        const response = await fetch("/api/v1/assistant/speech", {
+        const response = await authenticatedFetch("/api/v1/assistant/speech", {
           method: "POST",
+          signal: abort.signal,
           headers: {
             "content-type": "application/json",
             "x-demo-user": actions.userId,
             ...assistantClientContextHeaders(),
             "x-command-id": crypto.randomUUID(),
+            ...requestIntegrityHeaders("POST"),
           },
           body: JSON.stringify({ text }),
         });
@@ -173,17 +235,30 @@ export function ClinicalAssistantMessage({
           const failure = (await response.json()) as { message?: string };
           throw new Error(failure.message ?? "Sprachausgabe fehlgeschlagen.");
         }
-        const url = URL.createObjectURL(await response.blob());
+        const blob = await response.blob();
+        if (!current()) return;
+        const url = URL.createObjectURL(blob);
         const audio = new Audio(url);
         audioRef.current = audio;
+        audioUrlRef.current = url;
         audio.onended = () => {
+          if (!current() || audioRef.current !== audio) return;
+          speechRequestRef.current = null;
           URL.revokeObjectURL(url);
           audioRef.current = null;
+          audioUrlRef.current = null;
+          releasePlaybackRef.current?.();
+          releasePlaybackRef.current = null;
           setSpeaking(false);
         };
         audio.onerror = () => {
+          if (!current() || audioRef.current !== audio) return;
+          speechRequestRef.current = null;
           URL.revokeObjectURL(url);
           audioRef.current = null;
+          audioUrlRef.current = null;
+          releasePlaybackRef.current?.();
+          releasePlaybackRef.current = null;
           setSpeaking(false);
           actions.onError("Die Audiodatei konnte nicht abgespielt werden.");
         };
@@ -191,10 +266,21 @@ export function ClinicalAssistantMessage({
         return;
       }
       if (status.tts?.mode === "browser-demo" && "speechSynthesis" in window) {
+        if (!current()) return;
         const utterance = new SpeechSynthesisUtterance(text);
         utterance.lang = "de-CH";
-        utterance.onend = () => setSpeaking(false);
+        utterance.onend = () => {
+          if (!current()) return;
+          speechRequestRef.current = null;
+          releasePlaybackRef.current?.();
+          releasePlaybackRef.current = null;
+          setSpeaking(false);
+        };
         utterance.onerror = () => {
+          if (!current()) return;
+          speechRequestRef.current = null;
+          releasePlaybackRef.current?.();
+          releasePlaybackRef.current = null;
           setSpeaking(false);
           actions.onError("Browser-Vorlesen wurde abgebrochen.");
         };
@@ -204,7 +290,8 @@ export function ClinicalAssistantMessage({
       }
       throw new Error("Sprachausgabe ist in diesem Modus nicht freigegeben.");
     } catch (error) {
-      setSpeaking(false);
+      if (abort.signal.aborted) return;
+      stopSpeaking();
       actions.onError(
         error instanceof Error
           ? error.message
@@ -215,6 +302,12 @@ export function ClinicalAssistantMessage({
 
   const handleAction = async (event: ActionEvent) => {
     if (busy || isRunning) return;
+    if (!actions.connected) {
+      actions.onError(
+        "Die Ansicht bleibt lesbar. Änderungen sind erst nach erneuter Verbindung möglich.",
+      );
+      return;
+    }
     if (
       String(event.type) === "SelectPatient" &&
       typeof event.params.patientId === "string"
@@ -230,6 +323,15 @@ export function ClinicalAssistantMessage({
       )
     ) {
       const transition = String(event.params.transition);
+      const responseText =
+        typeof event.params.response === "string"
+          ? event.params.response.trim()
+          : "";
+      const transitionKey = `${event.params.id}:${transition}:${responseText}`;
+      const commandId =
+        communicationCommandIdsRef.current.get(transitionKey) ??
+        crypto.randomUUID();
+      communicationCommandIdsRef.current.set(transitionKey, commandId);
       setBusy(true);
       actions.onError(null);
       try {
@@ -237,18 +339,27 @@ export function ClinicalAssistantMessage({
           `/api/v1/communications/${encodeURIComponent(event.params.id)}/${transition}`,
           actions.userId,
           {
-            ...(typeof event.params.response === "string" &&
-            event.params.response.trim()
-              ? { response: event.params.response.trim() }
-              : {}),
+            ...(responseText ? { response: responseText } : {}),
             createTask: false,
           },
+          commandId,
         );
         updateMessage({ ...message, content: completedOpenUi });
-        await actions.onExecuted("Teamfrage wurde aktualisiert.");
+        communicationCommandIdsRef.current.delete(transitionKey);
+        try {
+          await actions.onExecuted("Teamfrage wurde aktualisiert.");
+        } catch {
+          actions.onError(
+            "Die Teamfrage wurde bestätigt aktualisiert. Die Ansicht konnte danach nicht neu geladen werden.",
+          );
+        }
       } catch (error) {
+        if (error instanceof AssistantActionError && error.status < 500)
+          communicationCommandIdsRef.current.delete(transitionKey);
         actions.onError(
-          error instanceof Error ? error.message : "Teamfrage fehlgeschlagen.",
+          error instanceof AssistantActionError && error.status < 500
+            ? error.message
+            : "Der Übernahmestatus ist noch unklar. Du kannst dieselbe Aktion sicher erneut versuchen; dabei wird keine zweite Operation angelegt.",
         );
       } finally {
         setBusy(false);
@@ -258,6 +369,22 @@ export function ClinicalAssistantMessage({
 
     const token = event.params.intentToken;
     if (typeof token !== "string" || !actions.patient) return;
+    const reviewedActionIds = Array.isArray(event.params.reviewedActionIds)
+      ? event.params.reviewedActionIds.map(String)
+      : undefined;
+    const executionAttempt = resolveIntentExecutionAttempt(
+      executionCommandIdsRef.current,
+      token,
+      reviewedActionIds,
+      () => crypto.randomUUID(),
+    );
+    if ("conflict" in executionAttempt) {
+      actions.onError(
+        "Der Status der vorherigen Übernahme ist noch unklar. Wiederhole zuerst exakt dieselbe Auswahl; eine geänderte Auswahl benötigt danach einen neuen Entwurf.",
+      );
+      return;
+    }
+    const commandId = executionAttempt.commandId;
     setBusy(true);
     actions.onError(null);
     try {
@@ -267,16 +394,19 @@ export function ClinicalAssistantMessage({
         itemStates?: string[];
         workflowChanged?: boolean;
         activePatientId?: string;
-      }>(`/api/v1/assistant/intents/${token}/execute`, actions.userId, {
-        patientId: actions.patient.id,
-        encounterId: actions.patient.encounterId,
-        purpose: "direct-care",
-        resourceVersion: actions.patient.source.version,
-        explicitlyConfirmed: true,
-        reviewedActionIds: Array.isArray(event.params.reviewedActionIds)
-          ? event.params.reviewedActionIds
-          : undefined,
-      });
+      }>(
+        `/api/v1/assistant/intents/${token}/execute`,
+        actions.userId,
+        {
+          patientId: actions.patient.id,
+          encounterId: actions.patient.encounterId,
+          purpose: "direct-care",
+          resourceVersion: actions.patient.source.version,
+          explicitlyConfirmed: true,
+          reviewedActionIds,
+        },
+        commandId,
+      );
       updateMessage({
         ...message,
         name: message.name?.replace(
@@ -295,10 +425,26 @@ export function ClinicalAssistantMessage({
         result.workflowChanged ? result.activePatientId : undefined,
       );
     } catch (error) {
+      if (
+        error instanceof AssistantActionError &&
+        error.code === "VERSION_CONFLICT"
+      )
+        updateMessage({
+          ...message,
+          name: message.name?.replace(
+            /pflegehelfer-proposal:[^:]+:/,
+            "pflegehelfer-proposal:superseded:",
+          ),
+          content: supersededOpenUi,
+        });
       actions.onError(
-        error instanceof Error
-          ? error.message
-          : "Entwurf konnte nicht übernommen werden.",
+        error instanceof AssistantActionError
+          ? error.code === "VERSION_CONFLICT"
+            ? "Die Angaben haben sich geändert. Der alte Entwurf wurde geschlossen. Bitte frage die aktualisierten Angaben erneut ab."
+            : error.status >= 500
+              ? "Der Übernahmestatus ist noch unklar. Du kannst dieselbe Aktion sicher erneut versuchen; dabei wird keine zweite Operation angelegt."
+              : error.message
+          : "Der Übernahmestatus ist noch unklar. Du kannst dieselbe Aktion sicher erneut versuchen; dabei wird keine zweite Operation angelegt.",
       );
     } finally {
       setBusy(false);

@@ -37,6 +37,50 @@ const digest = (bytes: Uint8Array) =>
 const responseLimitBytes = 2 * 1024 * 1024;
 const defaultTimeoutMs = 45_000;
 
+function normalizedOrigin(value: string): string {
+  const url = new URL(value);
+  if (url.username || url.password)
+    throw new Error("DOCUMENT_INSPECTION_URL_MUST_NOT_CONTAIN_CREDENTIALS");
+  if (!["http:", "https:"].includes(url.protocol))
+    throw new Error("DOCUMENT_INSPECTION_URL_PROTOCOL_NOT_ALLOWED");
+  return url.origin;
+}
+
+function isLocalParserOrigin(url: URL): boolean {
+  const hostname = url.hostname.toLowerCase();
+  return (
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "::1" ||
+    hostname === "docling" ||
+    hostname.endsWith(".localhost")
+  );
+}
+
+async function readBoundedText(response: Response): Promise<string> {
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > responseLimitBytes) {
+      await reader.cancel("response-too-large");
+      throw new Error("DOCUMENT_INSPECTION_RESPONSE_TOO_LARGE");
+    }
+    chunks.push(value);
+  }
+  const body = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder("utf-8", { fatal: true }).decode(body);
+}
+
 function boundedTimeout(value: number | undefined) {
   return Number.isFinite(value) && value !== undefined
     ? Math.min(120_000, Math.max(1_000, Math.trunc(value)))
@@ -66,14 +110,22 @@ export class LocalDocumentInspectionGateway implements DocumentInspectionGateway
       baseUrl?: string;
       apiKey?: string;
       timeoutMs?: number;
+      allowedOrigins?: string[];
     } = {},
   ) {
     const configured = input.baseUrl?.trim();
     this.baseUrl = configured ? new URL(configured) : null;
-    if (this.baseUrl?.username || this.baseUrl?.password)
-      throw new Error("DOCUMENT_INSPECTION_URL_MUST_NOT_CONTAIN_CREDENTIALS");
-    if (this.baseUrl && !["http:", "https:"].includes(this.baseUrl.protocol))
-      throw new Error("DOCUMENT_INSPECTION_URL_PROTOCOL_NOT_ALLOWED");
+    const allowedOrigins = new Set(
+      (input.allowedOrigins ?? []).map(normalizedOrigin),
+    );
+    if (this.baseUrl) {
+      normalizedOrigin(this.baseUrl.href);
+      if (
+        !isLocalParserOrigin(this.baseUrl) &&
+        !allowedOrigins.has(this.baseUrl.origin)
+      )
+        throw new Error("DOCUMENT_INSPECTION_ORIGIN_NOT_ALLOWED");
+    }
     this.apiKey = input.apiKey?.trim() || null;
     this.timeoutMs = boundedTimeout(input.timeoutMs);
   }
@@ -155,13 +207,12 @@ export class LocalDocumentInspectionGateway implements DocumentInspectionGateway
         ...(this.apiKey ? { headers: { "x-api-key": this.apiKey } } : {}),
         body: form,
         signal: controller.signal,
+        redirect: "error",
       });
       const contentLength = Number(response.headers.get("content-length") ?? 0);
       if (Number.isFinite(contentLength) && contentLength > responseLimitBytes)
         throw new Error("DOCUMENT_INSPECTION_RESPONSE_TOO_LARGE");
-      const raw = await response.text();
-      if (Buffer.byteLength(raw, "utf8") > responseLimitBytes)
-        throw new Error("DOCUMENT_INSPECTION_RESPONSE_TOO_LARGE");
+      const raw = await readBoundedText(response);
       if (!response.ok)
         throw new Error(`DOCUMENT_INSPECTION_HTTP_${response.status}`);
       const result = doclingResponseSchema.parse(JSON.parse(raw));
@@ -227,6 +278,10 @@ export function documentInspectionFromEnvironment(): DocumentInspectionGateway {
     ...(process.env.PFH_DOCUMENT_INSPECTION_API_KEY
       ? { apiKey: process.env.PFH_DOCUMENT_INSPECTION_API_KEY }
       : {}),
+    allowedOrigins: (process.env.PFH_DOCUMENT_INSPECTION_ALLOWED_ORIGINS ?? "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean),
     timeoutMs: Number(process.env.PFH_DOCUMENT_INSPECTION_TIMEOUT_MS ?? 45_000),
   });
 }

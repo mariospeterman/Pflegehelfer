@@ -1,5 +1,9 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import type {
+  SourceReadResource,
+  SourceReadSelector,
+} from "../core/source-read-set.js";
 
 export type AgentTerminalStatus =
   | "conversation"
@@ -60,6 +64,11 @@ export interface AgentToolResult {
     effectiveAt?: string;
     provider?: string;
   }>;
+  /** Server-only record/query basis; this object is never sent to the model. */
+  sourceRead?: {
+    resources: SourceReadResource[];
+    selectors: SourceReadSelector[];
+  };
 }
 
 export interface AgentEvidenceRecord extends AgentToolResult {
@@ -284,7 +293,13 @@ export class AgentToolError extends Error {
 export class AuthorizedToolRegistry {
   private readonly tools = new Map<string, AgentTool>();
 
-  constructor(tools: readonly AgentTool[]) {
+  constructor(
+    tools: readonly AgentTool[],
+    private readonly resultGuard?: (
+      toolName: string,
+      result: AgentToolResult,
+    ) => Promise<AgentToolResult>,
+  ) {
     for (const tool of tools) {
       if (this.tools.has(tool.name))
         throw new Error(`DUPLICATE_AGENT_TOOL:${tool.name}`);
@@ -325,7 +340,8 @@ export class AuthorizedToolRegistry {
     if (!tool) throw new AgentToolError("TOOL_NOT_ALLOWED", name);
     const parsed = tool.input.safeParse(input);
     if (!parsed.success) throw new AgentToolError("TOOL_INPUT_INVALID", name);
-    return tool.execute(parsed.data, context, signal);
+    const result = await tool.execute(parsed.data, context, signal);
+    return this.resultGuard ? this.resultGuard(name, result) : result;
   }
 }
 
@@ -724,6 +740,13 @@ export class BoundedAgentRuntime {
             }),
           });
         } catch (error) {
+          if (
+            error &&
+            typeof error === "object" &&
+            "code" in error &&
+            error.code === "VERSION_CONFLICT"
+          )
+            throw error;
           const rejected = error instanceof AgentToolError;
           trace.push({
             sequence: trace.length + 1,

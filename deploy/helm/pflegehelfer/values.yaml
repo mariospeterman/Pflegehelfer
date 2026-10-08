@@ -9,13 +9,14 @@ resources:
   requests: { cpu: 100m, memory: 128Mi }
   limits: { cpu: 500m, memory: 512Mi }
 config:
-  aiEnabled: false
+  runtimeProfile: production
+  aiMode: disabled
   demoMode: false
   storageMode: medplum
   fhirBaseUrl: "https://medplum-api.example.invalid/"
   medplumAppBaseUrl: "https://medplum.example.invalid/"
 secrets:
   # Keys: MEDPLUM_CLIENT_ID, MEDPLUM_CLIENT_SECRET and a minimum-32-byte
-  # PFH_CHECKPOINT_HMAC_KEY and optionally
+  # PFH_OPERATIONAL_DATABASE_URL, PFH_CHECKPOINT_HMAC_KEY and optionally
   # PFH_CHECKPOINT_HMAC_PREVIOUS_KEYS during controlled rotation.
   existingSecret: pflegehelfer-runtime

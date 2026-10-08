@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
   ModelGateway,
+  assistantIntentSchema,
   type AuthorizedModelContext,
   type ClinicalPlanResult,
   type IntentClassification,
@@ -9,6 +10,7 @@ import {
 import { ApprovedKnowledgeService } from "../ai/approved-knowledge.js";
 import {
   OpaqueIntentBroker,
+  assistantComponentSchema,
   validateAssistantComponents,
   type AssistantComponent,
   type DurableIntentRecord,
@@ -16,7 +18,12 @@ import {
 } from "./assistant.js";
 import type { PflegehelferService } from "./service.js";
 import { siteConfiguration } from "./site-config.js";
-import { DomainError, isTerminalOutboxState, type Purpose } from "./types.js";
+import {
+  DomainError,
+  isTerminalOutboxState,
+  type AppSnapshot,
+  type Purpose,
+} from "./types.js";
 import {
   actionReviewLabel,
   assistantProposalSchema,
@@ -49,6 +56,14 @@ import {
   verifyNaturalDialogueAgainstSources,
   type SourceBoundAtom,
 } from "./source-claim-binding.js";
+import {
+  buildSourceReadSetV1,
+  parseSourceReadSetV1,
+  type SourceReadClaim,
+  type SourceReadResource,
+  type SourceReadSelector,
+  type SourceReadSetV1,
+} from "./source-read-set.js";
 
 export interface AssistantRequest {
   prompt: string;
@@ -241,6 +256,160 @@ export function toOpenUi(components: AssistantComponent[]): string {
   ].join("\n");
 }
 
+/**
+ * Request receipts are durable history, not executable capability storage.
+ * Rebuild OpenUI from the retained, non-executable components so a legacy
+ * serialized token can never be replayed from either representation.
+ */
+export function archiveAssistantResponse(response: unknown): AssistantResponse {
+  const source =
+    response && typeof response === "object"
+      ? (response as Record<string, unknown>)
+      : {};
+  const rawComponents = Array.isArray(source.components)
+    ? source.components
+    : [];
+  const components = rawComponents.flatMap((candidate) => {
+    const parsed = assistantComponentSchema.safeParse(candidate);
+    return parsed.success && parsed.data.type !== "DraftAction"
+      ? [parsed.data]
+      : [];
+  });
+  const removedOrMalformed =
+    !Array.isArray(source.components) ||
+    components.length !== rawComponents.length;
+  if (removedOrMalformed)
+    components.push({
+      type: "SafetyAlert",
+      severity: "info",
+      message:
+        "Diese frühere Änderung ist nicht direkt ausführbar. Öffne den zugehörigen Entwurf erneut, damit Berechtigung, Kontext und Version aktuell geprüft werden.",
+    });
+  const classification = assistantIntentSchema.safeParse(source.classification);
+  const runtime = z
+    .object({
+      route: z.enum(["assistant", "safe-fallback"]),
+      label: z.string().trim().min(1).max(200),
+      degraded: z.boolean(),
+      failure: z
+        .enum([
+          "not-configured",
+          "timeout",
+          "rate-limited",
+          "refusal",
+          "incomplete",
+          "http-error",
+          "invalid-output",
+        ])
+        .optional(),
+    })
+    .strip()
+    .safeParse(source.runtime);
+  const patientContext = z
+    .object({
+      patientId: z.string().max(200),
+      encounterId: z.string().max(200),
+      resourceVersion: z.number().int().nonnegative(),
+      displayName: z.string().max(200),
+      birthDate: z.string().max(40),
+      mrn: z.string().max(120),
+    })
+    .strict()
+    .nullable()
+    .safeParse(source.patientContext);
+  const evidence = z
+    .array(
+      z
+        .object({
+          resourceId: z.string().max(240),
+          version: z.number().int().nonnegative(),
+          label: z.string().max(240),
+          sourceVersion: z.string().max(240).optional(),
+          freshness: z.string().max(80).optional(),
+          complete: z.boolean().optional(),
+          claims: z
+            .array(
+              z
+                .object({
+                  path: z.string().max(240),
+                  value: z.union([
+                    z.string().max(2_400),
+                    z.number().finite(),
+                    z.boolean(),
+                    z.null(),
+                  ]),
+                })
+                .strict(),
+            )
+            .max(100)
+            .optional(),
+          rowProvenance: z
+            .array(
+              z
+                .object({
+                  path: z.string().max(240),
+                  resourceId: z.string().max(240),
+                  version: z.string().max(240),
+                  patientId: z.string().max(200).optional(),
+                  encounterId: z.string().max(200).optional(),
+                  effectiveAt: z.string().max(80).optional(),
+                  provider: z.string().max(160).optional(),
+                })
+                .strict(),
+            )
+            .max(100)
+            .optional(),
+          contextBinding: z
+            .object({
+              sessionId: z.string().max(200),
+              threadId: z.string().max(200),
+              contextRevision: z.number().int().nonnegative(),
+              patientId: z.string().max(200).nullable(),
+              encounterId: z.string().max(200).nullable(),
+            })
+            .strict()
+            .optional(),
+          sourceDigest: z.string().max(240).optional(),
+          digest: z.string().max(240).optional(),
+        })
+        .strict(),
+    )
+    .max(100)
+    .safeParse(source.evidence);
+  const warnings = z
+    .array(z.string().max(600))
+    .max(30)
+    .safeParse(source.warnings);
+  return {
+    id:
+      typeof source.id === "string" && source.id.length <= 200
+        ? source.id
+        : `archived-${randomUUID()}`,
+    classification: classification.success
+      ? classification.data
+      : { intent: "unknown" },
+    runtime: runtime.success
+      ? {
+          route: runtime.data.route,
+          label: runtime.data.label,
+          degraded: runtime.data.degraded,
+          ...(runtime.data.failure ? { failure: runtime.data.failure } : {}),
+        }
+      : {
+          route: "safe-fallback",
+          label: "Archivierte Antwort",
+          degraded: true,
+        },
+    patientContext: patientContext.success ? patientContext.data : null,
+    components,
+    openUi: toOpenUi(components),
+    evidence: evidence.success
+      ? (evidence.data as AssistantResponse["evidence"])
+      : [],
+    warnings: warnings.success ? warnings.data : [],
+  };
+}
+
 function cleanDraft(prompt: string): string {
   return prompt
     .replace(
@@ -260,6 +429,83 @@ function canonicalJson(value: unknown): string {
     .sort()
     .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
     .join(",")}}`;
+}
+
+function sourceReadSetForDraft(
+  patient: AppSnapshot["patients"][number],
+  purpose: Purpose,
+  agentRun: AgentRunResult | null,
+): SourceReadSetV1 {
+  const resources: SourceReadResource[] = [
+    {
+      reference: `Patient/${patient.id}`,
+      logicalReference: `Patient/${patient.id}`,
+      version: String(patient.source.version),
+      patientId: patient.id,
+      encounterId: patient.encounterId,
+      claims: [
+        { path: "patient.id", value: patient.id },
+        { path: "patient.encounterId", value: patient.encounterId },
+      ],
+    },
+    {
+      reference: `Encounter/${patient.encounterId}`,
+      logicalReference: `Encounter/${patient.encounterId}`,
+      version: String(patient.source.version),
+      patientId: patient.id,
+      encounterId: patient.encounterId,
+      claims: [{ path: "encounter.id", value: patient.encounterId }],
+    },
+  ];
+  const selectors: SourceReadSelector[] = [];
+  for (const record of agentRun?.evidenceRecords ?? []) {
+    resources.push(...(record.sourceRead?.resources ?? []));
+    selectors.push(...(record.sourceRead?.selectors ?? []));
+    for (const claim of (agentRun?.evidenceClaims ?? []).filter(
+      (candidate) => candidate.referenceId === record.referenceId,
+    )) {
+      const provenance = record.rowProvenance
+        ?.filter(
+          ({ path }) =>
+            claim.path === path || claim.path.startsWith(`${path}.`),
+        )
+        .toSorted((left, right) => right.path.length - left.path.length)[0];
+      if (!provenance) continue;
+      const resource = resources.find(
+        ({ logicalReference }) => logicalReference === provenance.resourceId,
+      );
+      if (resource)
+        resource.claims.push({ path: claim.path, value: claim.value });
+    }
+    const selector = selectors.find((candidate) =>
+      candidate.id.startsWith(`${record.toolName}.`),
+    );
+    if (selector)
+      selector.claims.push(
+        ...(agentRun?.evidenceClaims ?? [])
+          .filter(
+            (candidate) =>
+              candidate.referenceId === record.referenceId &&
+              !record.rowProvenance?.some(
+                ({ path }) =>
+                  candidate.path === path ||
+                  candidate.path.startsWith(`${path}.`),
+              ),
+          )
+          .map(({ path, value }): SourceReadClaim => ({ path, value })),
+      );
+  }
+  return buildSourceReadSetV1({
+    schemaVersion: 1,
+    evidenceAuthority: "memory-demo-not-fhir-evident",
+    capturedAt: new Date().toISOString(),
+    purpose,
+    policyVersion: runtimeSitePack.packDigest,
+    patientId: patient.id,
+    encounterId: patient.encounterId,
+    resources,
+    selectors,
+  });
 }
 
 function formatEvidenceValue(value: string | number | boolean | null): string {
@@ -379,12 +625,17 @@ function safeSourceFreePatientDialogue(
     containsProtectedTerm(dialogue, protectedTerms) ||
     canonicalClaimTokens(dialogue).length > 0 ||
     requiresDedicatedClinicalWorkflow(dialogue) ||
+    prohibitedAssistanceRequest(dialogue) !== null ||
     /\b(?:diagnos|schmerzfrei|stabil|unauffällig|reizlos|verabreicht|gegeben|durchgeführt|erledigt|offen|vollständig|dokumentiert)\p{L}*\b/iu.test(
       dialogue,
     )
   )
     return null;
-  return dialogue;
+  const harmlessSpeechAct =
+    /^(?:(?:hallo|guten\s+(?:morgen|tag|abend)|hello|hi|danke|vielen\s+dank|thank\s+you|verstanden|okay|in\s+ordnung|gern)\b|ich\s+kann\s+(?:autorisierte|freigegebene|vorhandene)\s+(?:angaben|quellen|aufgaben|dokumentation)\b)/iu.test(
+      dialogue,
+    );
+  return harmlessSpeechAct ? dialogue : null;
 }
 
 /**
@@ -406,6 +657,7 @@ function verifiedCoworkerContent(
     run.text.trim().length === 0
   )
     return null;
+  if (prohibitedAssistanceRequest(run.text) !== null) return null;
 
   if (run.toolCalls === 0) {
     if (
@@ -999,6 +1251,51 @@ function explicitlyRequestsNote(prompt: string): boolean {
   );
 }
 
+type ProhibitedAssistanceRequest = "clinical-decision" | "employment-decision";
+
+function prohibitedAssistanceRequest(
+  input: string,
+): ProhibitedAssistanceRequest | null {
+  const text = input.toLocaleLowerCase("de-CH");
+  const clinicalSubject =
+    /\b(?:blutdruck|blood\s+pressure|puls|pulse|temperatur|temperature|sauerstoff|oxygen|spo2|messwert|reading|symptom|schwindel|dizz\p{L}*|schmerz|pain|wunde|wound|patient|bewohner|resident|diagnos|therapie|therapy|behandlung|treatment|medikament|medication|dosis|dose|intervention|verschlechter|deteriorat)\p{L}*\b/iu.test(
+      text,
+    );
+  const clinicalDecision =
+    /\b(?:interpretier\p{L}*|interpret\p{L}*|deute|bewerte|evaluate|assess|beurteile|analysiere|analy[sz]e|diagnostizier|diagnos\p{L}*|prognostizier|prognos\p{L}*|empfiehl|recommend\p{L}*|empfehlung|welche\s+(?:therapie|behandlung|medikation)|which\s+(?:therapy|treatment|medication)|behandlung\s+wählen|choose\s+treatment|therapie\s+wählen|dosis\s+(?:ändern|anpassen|erhöhen|senken)|(?:change|adjust|increase|decrease)\s+(?:the\s+)?dose|wer\s+(?:ist|hat)\s+(?:am\s+meisten\s+)?(?:gefährdet|risiko)|who\s+is\s+(?:most\s+)?at\s+risk|priorisier\p{L}*\s+patient|prioriti[sz]e\s+(?:the\s+)?patient|nach\s+verschlechterung\s+(?:sortier|priorisier)|dringende?\s+intervention|urgent\s+intervention)\b/iu.test(
+      text,
+    ) ||
+    /\bwer\s+ist\s+(?:am\s+meisten\s+)?gefährdet\b/iu.test(text) ||
+    /\bpriorisier\p{L}*\b[^.!?]{0,80}\bpatient\p{L}*\b|\bpatient\p{L}*\b[^.!?]{0,80}\bnach\s+verschlechterung\b/iu.test(
+      text,
+    ) ||
+    (/\b(?:sollte|muss|am\s+besten|ich\s+empfehle|should|must|needs?\s+to|i\s+recommend)\b/iu.test(
+      text,
+    ) &&
+      /\b(?:hinsetzen|im\s+bett\s+bleiben|trinken|behandeln|therapieren|verabreichen|geben|absetzen|überwachen|kontrollieren|sit|stay\s+in\s+bed|drink|treat|administer|give|stop|monitor|check)\b/iu.test(
+        text,
+      )) ||
+    /\b(?:was\s+sollte|what\s+should)\s+(?:sie|er|die\s+person|she|he|they)\b/iu.test(
+      text,
+    );
+  if (
+    clinicalDecision &&
+    (clinicalSubject ||
+      /\b(?:gefährdet|at\s+risk|sie|er|she|he|they)\b/iu.test(text))
+  )
+    return "clinical-decision";
+
+  const employmentSubject =
+    /\b(?:mitarbeiter|mitarbeiterin|angestellte|bewerber|bewerberin|personal|pflegekraft|teammitglied|employee|staff|candidate|applicant|worker)\p{L}*\b/iu.test(
+      text,
+    );
+  const employmentDecision =
+    /\b(?:kündig|entlass|einstell|ablehn|disziplin|beförder|rangliste|rank|fire|terminat|dismiss|hire|reject|disciplin|promot|demot|leistung\s+bewert|performance|emotion|psycholog|schicht\s+zuteil|dienst\s+zuteil|assign\s+shift)\p{L}*\b/iu.test(
+      text,
+    );
+  return employmentSubject && employmentDecision ? "employment-decision" : null;
+}
+
 function validateDurableIntentPayload(
   record: Pick<DurableIntentRecord, "command" | "payload">,
 ): void {
@@ -1183,6 +1480,9 @@ export class AssistantService {
     private readonly knowledge = new ApprovedKnowledgeService(),
     private readonly runtimeReaders: {
       getSyncStatus?: () => Promise<AgentToolResult>;
+      captureSourceReadSet?: (
+        sourceReadSet: SourceReadSetV1,
+      ) => Promise<SourceReadSetV1>;
     } = {},
   ) {}
 
@@ -1200,8 +1500,123 @@ export class AssistantService {
     return this.intents.durableRecord(token);
   }
 
+  refreshMemorySourceReadSet(
+    userId: string,
+    sourceReadSet: SourceReadSetV1,
+  ): SourceReadSetV1 {
+    const reviewed = parseSourceReadSetV1(sourceReadSet);
+    if (reviewed.evidenceAuthority !== "memory-demo-not-fhir-evident")
+      throw new Error("MEMORY_SOURCE_READ_AUTHORITY_INVALID");
+    const snapshot = this.clinical.snapshot(userId, reviewed.purpose);
+    const patient = snapshot.patients.find(
+      (candidate) =>
+        candidate.id === reviewed.patientId &&
+        candidate.encounterId === reviewed.encounterId,
+    );
+    if (!patient) throw new Error("SOURCE_READ_SUBJECT_NOT_AVAILABLE");
+    const priorByReference = new Map(
+      reviewed.resources.map((resource) => [
+        resource.logicalReference,
+        resource,
+      ]),
+    );
+    const selectorResults = reviewed.selectors.map((selector) => {
+      const ordered =
+        selector.resourceType === "Task"
+          ? snapshot.tasks
+              .filter(
+                (item) =>
+                  item.patientId === selector.patientId &&
+                  item.encounterId === selector.encounterId &&
+                  item.state !== "completed",
+              )
+              .toSorted(
+                (left, right) =>
+                  (left.dueAt ?? "9999").localeCompare(right.dueAt ?? "9999") ||
+                  left.id.localeCompare(right.id),
+              )
+              .map((item) => `Task/${item.id}`)
+          : selector.resourceType === "Observation"
+            ? snapshot.observations
+                .filter(
+                  (item) =>
+                    item.patientId === selector.patientId &&
+                    item.encounterId === selector.encounterId &&
+                    item.approvedAt !== null,
+                )
+                .toSorted(
+                  (left, right) =>
+                    right.effectiveAt.localeCompare(left.effectiveAt) ||
+                    left.id.localeCompare(right.id),
+                )
+                .map((item) => `Observation/${item.id}`)
+            : snapshot.communications
+                .filter(
+                  (item) =>
+                    item.patientId === selector.patientId &&
+                    item.encounterId === selector.encounterId &&
+                    item.state !== "closed",
+                )
+                .toSorted(
+                  (left, right) =>
+                    right.source.recordedAt.localeCompare(
+                      left.source.recordedAt,
+                    ) || left.id.localeCompare(right.id),
+                )
+                .map((item) => `Communication/${item.id}`);
+      return {
+        ...selector,
+        totalCount: ordered.length,
+        complete: ordered.length <= selector.limit,
+        absenceObserved: ordered.length === 0,
+        membershipReferences: [...ordered].sort(),
+        selectedReferences: ordered.slice(0, selector.limit),
+      };
+    });
+    const references = new Set([
+      `Patient/${patient.id}`,
+      `Encounter/${patient.encounterId}`,
+      ...selectorResults.flatMap((selector) => selector.membershipReferences),
+    ]);
+    const resources: SourceReadResource[] = [...references].map((reference) => {
+      const [resourceType, id] = reference.split("/");
+      const version =
+        resourceType === "Patient" || resourceType === "Encounter"
+          ? patient.source.version
+          : resourceType === "Task"
+            ? snapshot.tasks.find((item) => item.id === id)?.source.version
+            : resourceType === "Observation"
+              ? snapshot.observations.find((item) => item.id === id)?.version
+              : snapshot.communications.find((item) => item.id === id)?.source
+                  .version;
+      if (version === undefined)
+        throw new Error(`SOURCE_READ_RESOURCE_MISSING:${reference}`);
+      const prior = priorByReference.get(reference);
+      return {
+        reference,
+        logicalReference: reference,
+        version: String(version),
+        patientId: patient.id,
+        encounterId: patient.encounterId,
+        claims: prior?.claims ?? [],
+      };
+    });
+    return buildSourceReadSetV1({
+      schemaVersion: 1,
+      evidenceAuthority: "memory-demo-not-fhir-evident",
+      capturedAt: new Date().toISOString(),
+      purpose: reviewed.purpose,
+      policyVersion: reviewed.policyVersion,
+      patientId: reviewed.patientId,
+      encounterId: reviewed.encounterId,
+      resources,
+      selectors: selectorResults,
+    });
+  }
+
   restoreDurableIntent(token: string, record: DurableIntentRecord): void {
     validateDurableIntentPayload(record);
+    parseSourceReadSetV1(record.sourceReadSet);
     this.intents.restore(token, record);
   }
 
@@ -1214,6 +1629,7 @@ export class AssistantService {
         403,
       );
     validateDurableIntentPayload(record);
+    const sourceReadSet = parseSourceReadSetV1(record.sourceReadSet);
     return this.intents.issue(actor, {
       command: record.command,
       patientId: record.patientId,
@@ -1221,6 +1637,7 @@ export class AssistantService {
       purpose: record.purpose,
       resourceVersion: record.resourceVersion,
       payload: record.payload,
+      sourceReadSet,
       ttlMs: 120_000,
     });
   }
@@ -1266,6 +1683,7 @@ export class AssistantService {
         "Patientenkontext ist für diese Assistenzanfrage nicht freigegeben.",
         403,
       );
+    const prohibitedRequest = prohibitedAssistanceRequest(prompt);
 
     const modelContext: AuthorizedModelContext | undefined =
       request.workingContext
@@ -1292,9 +1710,14 @@ export class AssistantService {
     // Its free-language path must not pay for, or depend on, a separate model
     // intent enum. The deterministic route remains only a fast presentation
     // hint and an honest degraded-mode control surface.
-    const classified = canRunBoundedAgent
-      ? this.models.classifyDeterministically(prompt)
-      : await this.models.classify(prompt, modelContext, request.signal);
+    const classified = prohibitedRequest
+      ? {
+          ...this.models.classifyDeterministically(prompt),
+          intent: "medication-request" as const,
+        }
+      : canRunBoundedAgent
+        ? this.models.classifyDeterministically(prompt)
+        : await this.models.classify(prompt, modelContext, request.signal);
     // Raw-language safety gates are authoritative even when a configured
     // model chose a broader keyword route.
     let safeIntent = classified.intent;
@@ -1322,6 +1745,7 @@ export class AssistantService {
     let agentGuidance: ReturnType<typeof resolveRuntimeGuidance> | null = null;
     let agentPreparedCarePlan: ClinicalPlanResult | null = null;
     let agentPreparedCareReferenceId: string | null = null;
+    let capturedAgentSourceReadSet: SourceReadSetV1 | null = null;
     const agentEligibleIntents = new Set([
       "patient-summary",
       "open-tasks",
@@ -1395,6 +1819,37 @@ export class AssistantService {
             JSON.parse(request.workingContext.previousCarePlan),
           )
         : null;
+      if (patient && this.runtimeReaders.captureSourceReadSet)
+        await this.runtimeReaders.captureSourceReadSet(
+          buildSourceReadSetV1({
+            schemaVersion: 1,
+            evidenceAuthority: "memory-demo-not-fhir-evident",
+            capturedAt: new Date().toISOString(),
+            purpose,
+            policyVersion: runtimeSitePack.packDigest,
+            patientId: patient.id,
+            encounterId: patient.encounterId,
+            resources: [
+              {
+                reference: `Patient/${patient.id}`,
+                logicalReference: `Patient/${patient.id}`,
+                version: String(patient.source.version),
+                patientId: patient.id,
+                encounterId: patient.encounterId,
+                claims: [],
+              },
+              {
+                reference: `Encounter/${patient.encounterId}`,
+                logicalReference: `Encounter/${patient.encounterId}`,
+                version: String(patient.source.version),
+                patientId: patient.id,
+                encounterId: patient.encounterId,
+                claims: [],
+              },
+            ],
+            selectors: [],
+          }),
+        );
       const allowedRecipients = snapshot.users
         .filter((candidate) => candidate.id !== actor.id)
         .filter((candidate) =>
@@ -1445,405 +1900,726 @@ export class AssistantService {
           },
         });
       };
-      const registry = new AuthorizedToolRegistry([
-        {
-          name: "get_patient_summary",
-          version: 2,
-          description:
-            "Read the current authorized patient-and-encounter brief: identity, room, risks, care goals, open tasks and latest accepted observations. Prefer this single read for broad questions about what matters today; use narrower reads only when the employee asks for a focused or larger list.",
-          effect: "read",
-          input: emptyInput,
-          execute: () => {
-            const selectedTasks = patient
-              ? snapshot.tasks
-                  .filter(
-                    (task) =>
-                      task.patientId === patient.id &&
-                      task.encounterId === patient.encounterId &&
-                      task.state !== "completed",
-                  )
-                  .slice(0, 10)
-              : [];
-            const selectedObservations = patient
-              ? snapshot.observations
-                  .filter(
-                    (item) =>
-                      item.patientId === patient.id &&
-                      item.encounterId === patient.encounterId &&
-                      item.approvedAt !== null,
-                  )
-                  .slice(-6)
-              : [];
-            const briefEntries = patient
-              ? [
-                  {
-                    text: `Patientenkontext: ${patient.room} · ${patient.displayName}.`,
-                    resourceId: `Patient/${patient.id}`,
-                    version: String(patient.source.version),
-                    provider: patient.source.provider,
-                  },
-                  ...(patient.risks.length > 0
-                    ? [
-                        {
-                          text: `Risiken: ${patient.risks.join("; ")}.`,
-                          resourceId: `Patient/${patient.id}`,
-                          version: String(patient.source.version),
-                          provider: patient.source.provider,
-                        },
-                      ]
-                    : []),
-                  ...(patient.careGoals.length > 0
-                    ? [
-                        {
-                          text: `Pflegeziele: ${patient.careGoals.join("; ")}.`,
-                          resourceId: `Patient/${patient.id}`,
-                          version: String(patient.source.version),
-                          provider: patient.source.provider,
-                        },
-                      ]
-                    : []),
-                  ...selectedTasks.map((task) => ({
-                    text: `Aufgabe: ${task.title} · ${taskStateLabel(task.state)}${task.dueAt ? ` · fällig ${formatOrganizationTimestamp(task.dueAt)}` : ""}.`,
-                    resourceId: `Task/${task.id}`,
-                    version: String(task.source.version),
-                    effectiveAt: task.dueAt,
-                    provider: task.source.provider,
-                  })),
-                  ...selectedObservations.map((observation) => ({
-                    text: `${observation.label}: ${formatEvidenceValue(observation.value)}${observation.secondaryValue === null ? "" : `/${formatEvidenceValue(observation.secondaryValue)}`} ${observation.unit} · gemessen am ${formatOrganizationTimestamp(observation.effectiveAt)} · ${observation.approvedAt && ["high-assurance", "four-eyes"].includes(observation.approvalPolicy) && new Set(observation.approvals).size >= 2 ? "unabhängig bestätigt" : "freigegeben"}.`,
+      const sourceResource = (
+        reference: string,
+        version: string | number,
+        patientId: string,
+        encounterId: string,
+      ): SourceReadResource => ({
+        reference,
+        logicalReference: reference,
+        version: String(version),
+        patientId,
+        encounterId,
+        claims: [],
+      });
+      const sourceSelector = (input: {
+        id: string;
+        resourceType: SourceReadSelector["resourceType"];
+        predicate: SourceReadSelector["predicate"];
+        order: SourceReadSelector["order"];
+        limit: number;
+        membershipReferences: string[];
+        selectedReferences: string[];
+      }): SourceReadSelector => ({
+        ...input,
+        patientId: patient!.id,
+        encounterId: patient!.encounterId,
+        totalCount: input.membershipReferences.length,
+        complete:
+          input.membershipReferences.length <= input.selectedReferences.length,
+        absenceObserved: input.membershipReferences.length === 0,
+        claims: [],
+      });
+      const registry = new AuthorizedToolRegistry(
+        [
+          {
+            name: "get_patient_summary",
+            version: 2,
+            description:
+              "Read the current authorized patient-and-encounter brief: identity, room, risks, care goals, open tasks and latest accepted observations. Prefer this single read for broad questions about what matters today; use narrower reads only when the employee asks for a focused or larger list.",
+            effect: "read",
+            input: emptyInput,
+            execute: () => {
+              const matchingTasks = patient
+                ? snapshot.tasks
+                    .filter(
+                      (task) =>
+                        task.patientId === patient.id &&
+                        task.encounterId === patient.encounterId &&
+                        task.state !== "completed",
+                    )
+                    .toSorted(
+                      (left, right) =>
+                        (left.dueAt ?? "9999").localeCompare(
+                          right.dueAt ?? "9999",
+                        ) || left.id.localeCompare(right.id),
+                    )
+                : [];
+              const selectedTasks = matchingTasks.slice(0, 10);
+              const matchingObservations = patient
+                ? snapshot.observations
+                    .filter(
+                      (item) =>
+                        item.patientId === patient.id &&
+                        item.encounterId === patient.encounterId &&
+                        item.approvedAt !== null,
+                    )
+                    .toSorted(
+                      (left, right) =>
+                        right.effectiveAt.localeCompare(left.effectiveAt) ||
+                        left.id.localeCompare(right.id),
+                    )
+                : [];
+              const selectedObservations = matchingObservations.slice(0, 6);
+              const briefEntries = patient
+                ? [
+                    {
+                      text: `Patientenkontext: ${patient.room} · ${patient.displayName}.`,
+                      resourceId: `Patient/${patient.id}`,
+                      version: String(patient.source.version),
+                      provider: patient.source.provider,
+                    },
+                    ...(patient.risks.length > 0
+                      ? [
+                          {
+                            text: `Risiken: ${patient.risks.join("; ")}.`,
+                            resourceId: `Patient/${patient.id}`,
+                            version: String(patient.source.version),
+                            provider: patient.source.provider,
+                          },
+                        ]
+                      : []),
+                    ...(patient.careGoals.length > 0
+                      ? [
+                          {
+                            text: `Pflegeziele: ${patient.careGoals.join("; ")}.`,
+                            resourceId: `Patient/${patient.id}`,
+                            version: String(patient.source.version),
+                            provider: patient.source.provider,
+                          },
+                        ]
+                      : []),
+                    ...selectedTasks.map((task) => ({
+                      text: `Aufgabe: ${task.title} · ${taskStateLabel(task.state)}${task.dueAt ? ` · fällig ${formatOrganizationTimestamp(task.dueAt)}` : ""}.`,
+                      resourceId: `Task/${task.id}`,
+                      version: String(task.source.version),
+                      effectiveAt: task.dueAt,
+                      provider: task.source.provider,
+                    })),
+                    ...selectedObservations.map((observation) => ({
+                      text: `${observation.label}: ${formatEvidenceValue(observation.value)}${observation.secondaryValue === null ? "" : `/${formatEvidenceValue(observation.secondaryValue)}`} ${observation.unit} · gemessen am ${formatOrganizationTimestamp(observation.effectiveAt)} · ${observation.approvedAt && ["high-assurance", "four-eyes"].includes(observation.approvalPolicy) && new Set(observation.approvals).size >= 2 ? "unabhängig bestätigt" : "freigegeben"}.`,
+                      resourceId: `Observation/${observation.id}`,
+                      version: String(observation.version),
+                      effectiveAt: observation.effectiveAt,
+                      provider: observation.source.provider,
+                    })),
+                  ]
+                : [];
+              return Promise.resolve({
+                referenceId: `EvidenceResult/get_patient_summary/${randomUUID()}`,
+                sourceReferenceId: patient
+                  ? `Patient/${patient.id}/_history/${patient.source.version}`
+                  : "Patient/none",
+                sourceVersion: patient ? String(patient.source.version) : "0",
+                freshness: snapshot.serverTime,
+                complete: patient !== null,
+                rowProvenance: briefEntries.map((entry, index) => ({
+                  path: `briefFacts.${index}`,
+                  resourceId: entry.resourceId,
+                  version: entry.version,
+                  ...(patient ? { patientId: patient.id } : {}),
+                  ...(patient ? { encounterId: patient.encounterId } : {}),
+                  ...("effectiveAt" in entry
+                    ? { effectiveAt: entry.effectiveAt }
+                    : {}),
+                  provider: entry.provider,
+                })),
+                data: patient
+                  ? { briefFacts: briefEntries.map(({ text }) => text) }
+                  : { patientContext: "not-selected" },
+                ...(patient
+                  ? {
+                      sourceRead: {
+                        resources: [
+                          ...matchingTasks.map((task) =>
+                            sourceResource(
+                              `Task/${task.id}`,
+                              task.source.version,
+                              task.patientId!,
+                              task.encounterId!,
+                            ),
+                          ),
+                          ...matchingObservations.map((observation) =>
+                            sourceResource(
+                              `Observation/${observation.id}`,
+                              observation.version,
+                              observation.patientId,
+                              observation.encounterId,
+                            ),
+                          ),
+                        ],
+                        selectors: [
+                          sourceSelector({
+                            id: "get_patient_summary.tasks",
+                            resourceType: "Task",
+                            predicate: "task-open",
+                            order: "due-asc",
+                            limit: 10,
+                            membershipReferences: matchingTasks.map(
+                              (task) => `Task/${task.id}`,
+                            ),
+                            selectedReferences: selectedTasks.map(
+                              (task) => `Task/${task.id}`,
+                            ),
+                          }),
+                          sourceSelector({
+                            id: "get_patient_summary.observations",
+                            resourceType: "Observation",
+                            predicate: "observation-accepted",
+                            order: "effective-desc",
+                            limit: 6,
+                            membershipReferences: matchingObservations.map(
+                              (observation) => `Observation/${observation.id}`,
+                            ),
+                            selectedReferences: selectedObservations.map(
+                              (observation) => `Observation/${observation.id}`,
+                            ),
+                          }),
+                        ],
+                      },
+                    }
+                  : {}),
+              });
+            },
+          },
+          {
+            name: "get_open_tasks",
+            version: 1,
+            description:
+              "Read authorized open work, optionally scoped by the already selected patient.",
+            effect: "read",
+            input: emptyInput,
+            execute: () => {
+              const allTasks = snapshot.tasks
+                .filter((task) => {
+                  const currentSubject = task.patientId
+                    ? snapshot.patients.find(
+                        (candidate) => candidate.id === task.patientId,
+                      )
+                    : null;
+                  const currentEncounter =
+                    task.patientId === null ||
+                    (currentSubject != null &&
+                      task.encounterId === currentSubject.encounterId);
+                  return (
+                    currentEncounter &&
+                    (!patient ||
+                      (task.patientId === patient.id &&
+                        task.encounterId === patient.encounterId)) &&
+                    task.state !== "completed"
+                  );
+                })
+                .toSorted(
+                  (left, right) =>
+                    (left.dueAt ?? "9999").localeCompare(
+                      right.dueAt ?? "9999",
+                    ) || left.id.localeCompare(right.id),
+                );
+              const selectedTasks = allTasks.slice(0, 20);
+              const tasks = selectedTasks.map(
+                ({ patientId, title, reason, state, priority, dueAt }) => {
+                  const subject = snapshot.patients.find(
+                    (candidate) => candidate.id === patientId,
+                  );
+                  return {
+                    patientLabel: subject
+                      ? `${subject.room} · ${subject.displayName}`
+                      : "Allgemeine Aufgabe",
+                    title,
+                    reason,
+                    state,
+                    priority,
+                    dueAt,
+                  };
+                },
+              );
+              return Promise.resolve({
+                referenceId: `EvidenceResult/get_open_tasks/${randomUUID()}`,
+                sourceReferenceId: `Task/search/${snapshot.serverTime}`,
+                freshness: snapshot.serverTime,
+                complete: allTasks.length <= tasks.length,
+                rowProvenance: selectedTasks.map((task, index) => ({
+                  path: `tasks.${index}`,
+                  resourceId: `Task/${task.id}`,
+                  version: String(task.source.version),
+                  ...(task.patientId ? { patientId: task.patientId } : {}),
+                  ...(task.encounterId
+                    ? { encounterId: task.encounterId }
+                    : {}),
+                  effectiveAt: task.dueAt,
+                  provider: task.source.provider,
+                })),
+                data: { tasks, totalCount: allTasks.length },
+                ...(patient
+                  ? {
+                      sourceRead: {
+                        resources: allTasks.map((task) =>
+                          sourceResource(
+                            `Task/${task.id}`,
+                            task.source.version,
+                            task.patientId!,
+                            task.encounterId!,
+                          ),
+                        ),
+                        selectors: [
+                          sourceSelector({
+                            id: "get_open_tasks.tasks",
+                            resourceType: "Task",
+                            predicate: "task-open",
+                            order: "due-asc",
+                            limit: 20,
+                            membershipReferences: allTasks.map(
+                              (task) => `Task/${task.id}`,
+                            ),
+                            selectedReferences: selectedTasks.map(
+                              (task) => `Task/${task.id}`,
+                            ),
+                          }),
+                        ],
+                      },
+                    }
+                  : {}),
+              });
+            },
+          },
+          {
+            name: "get_latest_vitals",
+            version: 1,
+            description:
+              "Read accepted authorized observations for the selected encounter.",
+            effect: "read",
+            input: emptyInput,
+            execute: () => {
+              const allObservations = patient
+                ? snapshot.observations
+                    .filter(
+                      (item) =>
+                        item.patientId === patient.id &&
+                        item.encounterId === patient.encounterId &&
+                        item.approvedAt !== null,
+                    )
+                    .toSorted(
+                      (left, right) =>
+                        right.effectiveAt.localeCompare(left.effectiveAt) ||
+                        left.id.localeCompare(right.id),
+                    )
+                : [];
+              const selectedObservations = allObservations.slice(0, 12);
+              const observations = selectedObservations.map(
+                ({
+                  label,
+                  value,
+                  secondaryValue,
+                  unit,
+                  effectiveAt,
+                  approvedAt,
+                  approvalPolicy,
+                  approvals,
+                }) => ({
+                  label,
+                  value,
+                  secondaryValue,
+                  unit,
+                  effectiveAt,
+                  status:
+                    approvedAt &&
+                    ["high-assurance", "four-eyes"].includes(approvalPolicy) &&
+                    new Set(approvals).size >= 2
+                      ? "independently-accepted"
+                      : approvedAt
+                        ? "accepted"
+                        : "draft",
+                }),
+              );
+              return Promise.resolve({
+                referenceId: `EvidenceResult/get_latest_vitals/${randomUUID()}`,
+                sourceReferenceId: `Observation/search/${snapshot.serverTime}`,
+                freshness: snapshot.serverTime,
+                complete:
+                  patient !== null &&
+                  allObservations.length <= observations.length,
+                rowProvenance: selectedObservations.map(
+                  (observation, index) => ({
+                    path: `observations.${index}`,
                     resourceId: `Observation/${observation.id}`,
                     version: String(observation.version),
+                    patientId: observation.patientId,
+                    encounterId: observation.encounterId,
                     effectiveAt: observation.effectiveAt,
                     provider: observation.source.provider,
-                  })),
-                ]
-              : [];
-            return Promise.resolve({
-              referenceId: `EvidenceResult/get_patient_summary/${randomUUID()}`,
-              sourceReferenceId: patient
-                ? `Patient/${patient.id}/_history/${patient.source.version}`
-                : "Patient/none",
-              sourceVersion: patient ? String(patient.source.version) : "0",
-              freshness: snapshot.serverTime,
-              complete: patient !== null,
-              rowProvenance: briefEntries.map((entry, index) => ({
-                path: `briefFacts.${index}`,
-                resourceId: entry.resourceId,
-                version: entry.version,
-                ...(patient ? { patientId: patient.id } : {}),
-                ...(patient ? { encounterId: patient.encounterId } : {}),
-                ...("effectiveAt" in entry
-                  ? { effectiveAt: entry.effectiveAt }
+                  }),
+                ),
+                data: { observations, totalCount: allObservations.length },
+                ...(patient
+                  ? {
+                      sourceRead: {
+                        resources: allObservations.map((observation) =>
+                          sourceResource(
+                            `Observation/${observation.id}`,
+                            observation.version,
+                            observation.patientId,
+                            observation.encounterId,
+                          ),
+                        ),
+                        selectors: [
+                          sourceSelector({
+                            id: "get_latest_vitals.observations",
+                            resourceType: "Observation",
+                            predicate: "observation-accepted",
+                            order: "effective-desc",
+                            limit: 12,
+                            membershipReferences: allObservations.map(
+                              (observation) => `Observation/${observation.id}`,
+                            ),
+                            selectedReferences: selectedObservations.map(
+                              (observation) => `Observation/${observation.id}`,
+                            ),
+                          }),
+                        ],
+                      },
+                    }
                   : {}),
-                provider: entry.provider,
-              })),
-              data: patient
-                ? { briefFacts: briefEntries.map(({ text }) => text) }
-                : { patientContext: "not-selected" },
-            });
+              });
+            },
           },
-        },
-        {
-          name: "get_open_tasks",
-          version: 1,
-          description:
-            "Read authorized open work, optionally scoped by the already selected patient.",
-          effect: "read",
-          input: emptyInput,
-          execute: () => {
-            const allTasks = snapshot.tasks.filter((task) => {
-              const currentSubject = task.patientId
-                ? snapshot.patients.find(
-                    (candidate) => candidate.id === task.patientId,
-                  )
-                : null;
-              const currentEncounter =
-                task.patientId === null ||
-                (currentSubject != null &&
-                  task.encounterId === currentSubject.encounterId);
-              return (
-                currentEncounter &&
-                (!patient ||
-                  (task.patientId === patient.id &&
-                    task.encounterId === patient.encounterId)) &&
-                task.state !== "completed"
-              );
-            });
-            const selectedTasks = allTasks.slice(0, 20);
-            const tasks = selectedTasks.map(
-              ({ patientId, title, reason, state, priority, dueAt }) => {
-                const subject = snapshot.patients.find(
-                  (candidate) => candidate.id === patientId,
+          {
+            name: "get_handover",
+            version: 1,
+            description:
+              "Read the actor-owned current workday handover and responsibility summary.",
+            effect: "read",
+            input: emptyInput,
+            execute: () => {
+              const handover = request.workingContext!.workdayHandover;
+              return Promise.resolve({
+                referenceId: `EvidenceResult/get_handover/${randomUUID()}`,
+                sourceReferenceId: handover
+                  ? `WorkdayHandover/${handover.id}/_history/${handover.version}`
+                  : "WorkdayHandover/none",
+                sourceVersion: handover
+                  ? `${handover.version}:${handover.contentHash}`
+                  : "0",
+                freshness: snapshot.serverTime,
+                complete: handover !== null,
+                data: handover
+                  ? {
+                      shiftKey: handover.shiftKey,
+                      status: handover.status,
+                      acknowledgedCount: handover.acknowledgedCount,
+                      assignedCount: handover.assignedCount,
+                      openCount: handover.openCount,
+                      summary: handover.summary,
+                      items: handover.items ?? [],
+                    }
+                  : { handover: "not-available-for-role" },
+              });
+            },
+          },
+          {
+            name: "get_team_inbox",
+            version: 1,
+            description:
+              "Read authorized unresolved patient-team communications.",
+            effect: "read",
+            input: emptyInput,
+            execute: () => {
+              const allCommunications = snapshot.communications
+                .filter((item) => {
+                  const currentSubject = snapshot.patients.find(
+                    (candidate) => candidate.id === item.patientId,
+                  );
+                  return (
+                    currentSubject !== undefined &&
+                    item.encounterId === currentSubject.encounterId &&
+                    (!patient ||
+                      (item.patientId === patient.id &&
+                        item.encounterId === patient.encounterId)) &&
+                    item.state !== "closed"
+                  );
+                })
+                .toSorted(
+                  (left, right) =>
+                    right.source.recordedAt.localeCompare(
+                      left.source.recordedAt,
+                    ) || left.id.localeCompare(right.id),
                 );
-                return {
-                  patientLabel: subject
-                    ? `${subject.room} · ${subject.displayName}`
-                    : "Allgemeine Aufgabe",
-                  title,
+              const selectedCommunications = allCommunications.slice(0, 20);
+              const communications = selectedCommunications.map(
+                ({
+                  patientId,
+                  request,
                   reason,
-                  state,
+                  recipientRole,
                   priority,
                   dueAt,
-                };
-              },
-            );
-            return Promise.resolve({
-              referenceId: `EvidenceResult/get_open_tasks/${randomUUID()}`,
-              sourceReferenceId: `Task/search/${snapshot.serverTime}`,
-              freshness: snapshot.serverTime,
-              complete: allTasks.length <= tasks.length,
-              rowProvenance: selectedTasks.map((task, index) => ({
-                path: `tasks.${index}`,
-                resourceId: `Task/${task.id}`,
-                version: String(task.source.version),
-                ...(task.patientId ? { patientId: task.patientId } : {}),
-                ...(task.encounterId ? { encounterId: task.encounterId } : {}),
-                effectiveAt: task.dueAt,
-                provider: task.source.provider,
-              })),
-              data: { tasks, totalCount: allTasks.length },
-            });
-          },
-        },
-        {
-          name: "get_latest_vitals",
-          version: 1,
-          description:
-            "Read accepted authorized observations for the selected encounter.",
-          effect: "read",
-          input: emptyInput,
-          execute: () => {
-            const allObservations = patient
-              ? snapshot.observations.filter(
-                  (item) =>
-                    item.patientId === patient.id &&
-                    item.encounterId === patient.encounterId &&
-                    item.approvedAt !== null,
-                )
-              : [];
-            const selectedObservations = allObservations.slice(-12);
-            const observations = selectedObservations.map(
-              ({
-                label,
-                value,
-                secondaryValue,
-                unit,
-                effectiveAt,
-                approvedAt,
-                approvalPolicy,
-                approvals,
-              }) => ({
-                label,
-                value,
-                secondaryValue,
-                unit,
-                effectiveAt,
-                status:
-                  approvedAt &&
-                  ["high-assurance", "four-eyes"].includes(approvalPolicy) &&
-                  new Set(approvals).size >= 2
-                    ? "independently-accepted"
-                    : approvedAt
-                      ? "accepted"
-                      : "draft",
-              }),
-            );
-            return Promise.resolve({
-              referenceId: `EvidenceResult/get_latest_vitals/${randomUUID()}`,
-              sourceReferenceId: `Observation/search/${snapshot.serverTime}`,
-              freshness: snapshot.serverTime,
-              complete:
-                patient !== null &&
-                allObservations.length <= observations.length,
-              rowProvenance: selectedObservations.map((observation, index) => ({
-                path: `observations.${index}`,
-                resourceId: `Observation/${observation.id}`,
-                version: String(observation.version),
-                patientId: observation.patientId,
-                encounterId: observation.encounterId,
-                effectiveAt: observation.effectiveAt,
-                provider: observation.source.provider,
-              })),
-              data: { observations, totalCount: allObservations.length },
-            });
-          },
-        },
-        {
-          name: "get_handover",
-          version: 1,
-          description:
-            "Read the actor-owned current workday handover and responsibility summary.",
-          effect: "read",
-          input: emptyInput,
-          execute: () => {
-            const handover = request.workingContext!.workdayHandover;
-            return Promise.resolve({
-              referenceId: `EvidenceResult/get_handover/${randomUUID()}`,
-              sourceReferenceId: handover
-                ? `WorkdayHandover/${handover.id}/_history/${handover.version}`
-                : "WorkdayHandover/none",
-              sourceVersion: handover
-                ? `${handover.version}:${handover.contentHash}`
-                : "0",
-              freshness: snapshot.serverTime,
-              complete: handover !== null,
-              data: handover
-                ? {
-                    shiftKey: handover.shiftKey,
-                    status: handover.status,
-                    acknowledgedCount: handover.acknowledgedCount,
-                    assignedCount: handover.assignedCount,
-                    openCount: handover.openCount,
-                    summary: handover.summary,
-                    items: handover.items ?? [],
-                  }
-                : { handover: "not-available-for-role" },
-            });
-          },
-        },
-        {
-          name: "get_team_inbox",
-          version: 1,
-          description:
-            "Read authorized unresolved patient-team communications.",
-          effect: "read",
-          input: emptyInput,
-          execute: () => {
-            const allCommunications = snapshot.communications.filter((item) => {
-              const currentSubject = snapshot.patients.find(
-                (candidate) => candidate.id === item.patientId,
-              );
-              return (
-                currentSubject !== undefined &&
-                item.encounterId === currentSubject.encounterId &&
-                (!patient ||
-                  (item.patientId === patient.id &&
-                    item.encounterId === patient.encounterId)) &&
-                item.state !== "closed"
-              );
-            });
-            const selectedCommunications = allCommunications.slice(0, 20);
-            const communications = selectedCommunications.map(
-              ({
-                patientId,
-                request,
-                reason,
-                recipientRole,
-                priority,
-                dueAt,
-                state,
-              }) => ({
-                patientLabel:
-                  snapshot.patients.find(
-                    (candidate) => candidate.id === patientId,
-                  )?.displayName ?? "Allgemeiner Teamkontext",
-                request,
-                reason,
-                recipientRole,
-                priority,
-                dueAt,
-                state,
-              }),
-            );
-            return Promise.resolve({
-              referenceId: `EvidenceResult/get_team_inbox/${randomUUID()}`,
-              sourceReferenceId: `Communication/search/${snapshot.serverTime}`,
-              freshness: snapshot.serverTime,
-              complete: allCommunications.length <= communications.length,
-              rowProvenance: selectedCommunications.map(
-                (communication, index) => ({
-                  path: `communications.${index}`,
-                  resourceId: `Communication/${communication.id}`,
-                  version: String(communication.source.version),
-                  patientId: communication.patientId,
-                  encounterId: communication.encounterId,
-                  ...(communication.dueAt
-                    ? { effectiveAt: communication.dueAt }
-                    : {}),
-                  provider: communication.source.provider,
+                  state,
+                }) => ({
+                  patientLabel:
+                    snapshot.patients.find(
+                      (candidate) => candidate.id === patientId,
+                    )?.displayName ?? "Allgemeiner Teamkontext",
+                  request,
+                  reason,
+                  recipientRole,
+                  priority,
+                  dueAt,
+                  state,
                 }),
-              ),
-              data: { communications, totalCount: allCommunications.length },
-            });
+              );
+              return Promise.resolve({
+                referenceId: `EvidenceResult/get_team_inbox/${randomUUID()}`,
+                sourceReferenceId: `Communication/search/${snapshot.serverTime}`,
+                freshness: snapshot.serverTime,
+                complete: allCommunications.length <= communications.length,
+                rowProvenance: selectedCommunications.map(
+                  (communication, index) => ({
+                    path: `communications.${index}`,
+                    resourceId: `Communication/${communication.id}`,
+                    version: String(communication.source.version),
+                    patientId: communication.patientId,
+                    encounterId: communication.encounterId,
+                    ...(communication.dueAt
+                      ? { effectiveAt: communication.dueAt }
+                      : {}),
+                    provider: communication.source.provider,
+                  }),
+                ),
+                data: { communications, totalCount: allCommunications.length },
+                ...(patient
+                  ? {
+                      sourceRead: {
+                        resources: allCommunications.map((communication) =>
+                          sourceResource(
+                            `Communication/${communication.id}`,
+                            communication.source.version,
+                            communication.patientId,
+                            communication.encounterId,
+                          ),
+                        ),
+                        selectors: [
+                          sourceSelector({
+                            id: "get_team_inbox.communications",
+                            resourceType: "Communication",
+                            predicate: "communication-open",
+                            order: "recorded-desc",
+                            limit: 20,
+                            membershipReferences: allCommunications.map(
+                              (communication) =>
+                                `Communication/${communication.id}`,
+                            ),
+                            selectedReferences: selectedCommunications.map(
+                              (communication) =>
+                                `Communication/${communication.id}`,
+                            ),
+                          }),
+                        ],
+                      },
+                    }
+                  : {}),
+              });
+            },
           },
-        },
-        {
-          name: "get_sync_status",
-          version: 1,
-          description:
-            "Read current provider-delivery and reconciliation status without changing it.",
-          effect: "read",
-          input: emptyInput,
-          execute: async () => {
-            if (patient)
+          {
+            name: "get_sync_status",
+            version: 1,
+            description:
+              "Read current provider-delivery and reconciliation status without changing it.",
+            effect: "read",
+            input: emptyInput,
+            execute: async () => {
+              if (patient)
+                return {
+                  referenceId: `EvidenceResult/get_sync_status/${randomUUID()}`,
+                  sourceReferenceId: `ProviderSync/patient-scope-unavailable/${patient.id}`,
+                  freshness: snapshot.serverTime,
+                  complete: false,
+                  data: {
+                    status:
+                      "patient-encounter-scoped delivery projection unavailable",
+                  },
+                };
+              if (this.runtimeReaders.getSyncStatus) {
+                const authoritative = await this.runtimeReaders.getSyncStatus();
+                return {
+                  ...authoritative,
+                  referenceId: `EvidenceResult/get_sync_status/${randomUUID()}`,
+                  sourceReferenceId:
+                    authoritative.sourceReferenceId ??
+                    authoritative.referenceId,
+                };
+              }
               return {
                 referenceId: `EvidenceResult/get_sync_status/${randomUUID()}`,
-                sourceReferenceId: `ProviderSync/patient-scope-unavailable/${patient.id}`,
+                sourceReferenceId: `ProviderSync/${snapshot.serverTime}`,
                 freshness: snapshot.serverTime,
-                complete: false,
+                complete: true,
                 data: {
-                  status:
-                    "patient-encounter-scoped delivery projection unavailable",
+                  summary: snapshot.syncSummary,
+                  totalCount: snapshot.outbox.length,
                 },
               };
-            if (this.runtimeReaders.getSyncStatus) {
-              const authoritative = await this.runtimeReaders.getSyncStatus();
-              return {
-                ...authoritative,
-                referenceId: `EvidenceResult/get_sync_status/${randomUUID()}`,
-                sourceReferenceId:
-                  authoritative.sourceReferenceId ?? authoritative.referenceId,
-              };
+            },
+          },
+          {
+            name: "load_workflow_skill",
+            version: 1,
+            description:
+              "Load one listed reviewed workflow skill by exact id when more guidance is needed.",
+            effect: "read",
+            input: workflowSkillInput,
+            execute: (input) => {
+              const { skillId } = workflowSkillInput.parse(input);
+              const skill = loadApprovedWorkflowSkill(runtimeSitePack, {
+                roleProfileId: request.workingContext!.roleProfileId!,
+                workflowId: request.workingContext!.workflowId!,
+                workflowSkillId: skillId,
+              });
+              return Promise.resolve({
+                referenceId: `EvidenceResult/load_workflow_skill/${randomUUID()}`,
+                sourceReferenceId: `RuntimeInstruction/${skill.id}/${skill.sha256}`,
+                sourceVersion: String(agentGuidance!.packVersion),
+                complete: true,
+                data: { id: skill.id, body: skill.body },
+              });
+            },
+          },
+          ...(canPrepareCareUpdate
+            ? [
+                {
+                  name: "prepare_clinical_draft",
+                  version: 2,
+                  description:
+                    "Prepare, but never execute, a typed review from the employee's natural report. Pass the complete AssistantProposal as proposalJson. Preserve negation, uncertainty, occurrence time, partial/deferred work and corrections. Include only explicitly requested actions. The server independently binds sources, recipient authority and safety fields.",
+                  effect: "draft" as const,
+                  input: draftInput,
+                  execute: prepareDraft,
+                },
+              ]
+            : []),
+        ],
+        async (toolName, result) => {
+          void toolName;
+          if (
+            !patient ||
+            !result.sourceRead ||
+            !this.runtimeReaders.captureSourceReadSet
+          )
+            return result;
+          // A read tool may construct its bounded presentation from the local
+          // projection only after the same FHIR resources and selector
+          // membership have been checked. This guard runs before the result is
+          // appended to model turns, so stale values can never be rebound to a
+          // fresh version and interpreted or displayed.
+          const guarded = await this.runtimeReaders.captureSourceReadSet(
+            buildSourceReadSetV1({
+              schemaVersion: 1,
+              evidenceAuthority: "memory-demo-not-fhir-evident",
+              capturedAt: new Date().toISOString(),
+              purpose,
+              policyVersion: runtimeSitePack.packDigest,
+              patientId: patient.id,
+              encounterId: patient.encounterId,
+              resources: [
+                {
+                  reference: `Patient/${patient.id}`,
+                  logicalReference: `Patient/${patient.id}`,
+                  version: String(patient.source.version),
+                  patientId: patient.id,
+                  encounterId: patient.encounterId,
+                  claims: [],
+                },
+                {
+                  reference: `Encounter/${patient.encounterId}`,
+                  logicalReference: `Encounter/${patient.encounterId}`,
+                  version: String(patient.source.version),
+                  patientId: patient.id,
+                  encounterId: patient.encounterId,
+                  claims: [],
+                },
+                ...result.sourceRead.resources,
+              ],
+              selectors: result.sourceRead.selectors,
+            }),
+          );
+          const capturedByLogical = new Map(
+            guarded.resources.map((resource) => [
+              resource.logicalReference,
+              resource,
+            ]),
+          );
+          const capturedSourceVersion = capturedByLogical.get(
+            result.sourceReferenceId ?? "",
+          )?.version;
+          const selectorsComplete = guarded.selectors.every(
+            (selector) => selector.complete,
+          );
+          const omitUnprovedNegativeClaims = (value: unknown): unknown => {
+            if (Array.isArray(value)) {
+              const retained = value.map(omitUnprovedNegativeClaims);
+              return retained.length > 0 ? retained : undefined;
             }
-            return {
-              referenceId: `EvidenceResult/get_sync_status/${randomUUID()}`,
-              sourceReferenceId: `ProviderSync/${snapshot.serverTime}`,
-              freshness: snapshot.serverTime,
-              complete: true,
-              data: {
-                summary: snapshot.syncSummary,
-                totalCount: snapshot.outbox.length,
-              },
-            };
-          },
+            if (!value || typeof value !== "object") return value;
+            return Object.fromEntries(
+              Object.entries(value as Record<string, unknown>).flatMap(
+                ([key, nested]) => {
+                  if (
+                    ["totalCount", "count", "openCount"].includes(key) &&
+                    typeof nested === "number"
+                  )
+                    return [];
+                  const retained = omitUnprovedNegativeClaims(nested);
+                  return retained === undefined ? [] : [[key, retained]];
+                },
+              ),
+            );
+          };
+          const positiveData = omitUnprovedNegativeClaims(result.data);
+          return {
+            ...result,
+            complete: result.complete && selectorsComplete,
+            data: selectorsComplete
+              ? result.data
+              : positiveData &&
+                  typeof positiveData === "object" &&
+                  !Array.isArray(positiveData)
+                ? { ...positiveData, coverage: "incomplete" }
+                : {
+                    coverage: "incomplete",
+                    ...(positiveData === undefined
+                      ? {}
+                      : { value: positiveData }),
+                  },
+            ...(result.rowProvenance
+              ? {
+                  rowProvenance: result.rowProvenance.map((row) => ({
+                    ...row,
+                    version:
+                      capturedByLogical.get(row.resourceId)?.version ??
+                      row.version,
+                  })),
+                }
+              : {}),
+            sourceRead: {
+              resources: guarded.resources,
+              selectors: guarded.selectors,
+            },
+            ...(capturedSourceVersion
+              ? { sourceVersion: capturedSourceVersion }
+              : {}),
+          };
         },
-        {
-          name: "load_workflow_skill",
-          version: 1,
-          description:
-            "Load one listed reviewed workflow skill by exact id when more guidance is needed.",
-          effect: "read",
-          input: workflowSkillInput,
-          execute: (input) => {
-            const { skillId } = workflowSkillInput.parse(input);
-            const skill = loadApprovedWorkflowSkill(runtimeSitePack, {
-              roleProfileId: request.workingContext!.roleProfileId!,
-              workflowId: request.workingContext!.workflowId!,
-              workflowSkillId: skillId,
-            });
-            return Promise.resolve({
-              referenceId: `EvidenceResult/load_workflow_skill/${randomUUID()}`,
-              sourceReferenceId: `RuntimeInstruction/${skill.id}/${skill.sha256}`,
-              sourceVersion: String(agentGuidance!.packVersion),
-              complete: true,
-              data: { id: skill.id, body: skill.body },
-            });
-          },
-        },
-        ...(canPrepareCareUpdate
-          ? [
-              {
-                name: "prepare_clinical_draft",
-                version: 2,
-                description:
-                  "Prepare, but never execute, a typed review from the employee's natural report. Pass the complete AssistantProposal as proposalJson. Preserve negation, uncertainty, occurrence time, partial/deferred work and corrections. Include only explicitly requested actions. The server independently binds sources, recipient authority and safety fields.",
-                effect: "draft" as const,
-                input: draftInput,
-                execute: prepareDraft,
-              },
-            ]
-          : []),
-      ]);
+      );
       agentRun = await new BoundedAgentRuntime(
         this.models.agentAdapter(),
         registry,
@@ -1894,8 +2670,6 @@ export class AssistantService {
                   request.workingContext.resumableEpisodePatientId !== null,
                 selectedPatient: patient
                   ? {
-                      displayName: patient.displayName,
-                      room: patient.room,
                       encounterBound: true,
                     }
                   : null,
@@ -1928,6 +2702,19 @@ export class AssistantService {
         !requiresDedicatedClinicalWorkflow(prompt)
       )
         safeIntent = "unknown";
+      if (
+        patient &&
+        agentRun.evidenceRecords?.some(
+          (record) =>
+            (record.sourceRead?.resources.length ?? 0) > 0 ||
+            (record.sourceRead?.selectors.length ?? 0) > 0,
+        ) &&
+        this.runtimeReaders.captureSourceReadSet
+      )
+        capturedAgentSourceReadSet =
+          await this.runtimeReaders.captureSourceReadSet(
+            sourceReadSetForDraft(patient, purpose, agentRun),
+          );
     }
     const classification: IntentClassification = {
       ...classified,
@@ -2040,6 +2827,9 @@ export class AssistantService {
         encounterId: current.encounterId,
         purpose,
         resourceVersion: current.source.version,
+        sourceReadSet:
+          capturedAgentSourceReadSet ??
+          sourceReadSetForDraft(current, purpose, agentRun),
         payload: {
           ...payload,
           ...(request.voiceTranscriptProvenance
@@ -3005,6 +3795,17 @@ export class AssistantService {
           break;
         }
         case "medication-request": {
+          if (prohibitedRequest) {
+            components.push({
+              type: "SafetyAlert",
+              severity: "warning",
+              message:
+                prohibitedRequest === "employment-decision"
+                  ? "Pflegehelfer trifft oder empfiehlt keine Personalentscheidungen und erstellt keine Ranglisten. Ich kann freigegebene administrative Fristen, Qualifikationen oder bereits beschlossene Einsatzbedingungen anzeigen."
+                  : "Pflegehelfer interpretiert keine Messwerte oder Symptome, priorisiert keine Personen nach klinischem Risiko und empfiehlt keine Diagnose, Therapie, Dosis oder dringende Intervention. Ich kann autorisierte Quelldaten unverändert anzeigen oder deinen eigenen Bericht zur Prüfung dokumentieren.",
+            });
+            break;
+          }
           const current = patient;
           if (!current) {
             components.push(patientPicker());

@@ -6,6 +6,7 @@ import {
   type Thread,
 } from "@openuidev/react-headless";
 import { assistantClientContextHeaders } from "../assistant-context";
+import { authenticatedFetch, requestIntegrityHeaders } from "../auth";
 import {
   completedOpenUi,
   supersededOpenUi,
@@ -54,19 +55,34 @@ export interface VoiceSubmission {
 }
 
 export interface SubmissionChannel {
-  take(prompt: string): VoiceSubmission | null;
+  take(prompt: string, operationId: string): VoiceSubmission | null;
 }
 
-function requestHeaders(userId: string, write = false): HeadersInit {
+async function deterministicOperationId(envelope: string): Promise<string> {
+  const digest = new Uint8Array(
+    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(envelope)),
+  ).slice(0, 16);
+  digest[6] = (digest[6]! & 0x0f) | 0x50;
+  digest[8] = (digest[8]! & 0x3f) | 0x80;
+  const hex = [...digest].map((byte) => byte.toString(16).padStart(2, "0"));
+  return `${hex.slice(0, 4).join("")}-${hex.slice(4, 6).join("")}-${hex.slice(6, 8).join("")}-${hex.slice(8, 10).join("")}-${hex.slice(10).join("")}`;
+}
+
+function requestHeaders(
+  userId: string,
+  write = false,
+  commandId?: string,
+): HeadersInit {
   return {
     "x-demo-user": userId,
     ...assistantClientContextHeaders(),
-    ...(write ? { "x-command-id": crypto.randomUUID() } : {}),
+    ...(write ? { "x-command-id": commandId ?? crypto.randomUUID() } : {}),
+    ...requestIntegrityHeaders(write ? "POST" : "GET"),
   };
 }
 
 async function readConversation(userId: string): Promise<ConversationResponse> {
-  const response = await fetch("/api/v1/assistant/conversation", {
+  const response = await authenticatedFetch("/api/v1/assistant/conversation", {
     headers: requestHeaders(userId),
   });
   const body = (await response.json()) as ConversationResponse & {
@@ -115,7 +131,7 @@ export function createConversationStorage(userId: string): ChatStorage {
           throw new Error("Das Gespräch gehört nicht zum aktiven Kontext.");
         let pending: PendingReviewResponse["pending"] = null;
         if (body.context.patientId && body.context.encounterId) {
-          const pendingResponse = await fetch(
+          const pendingResponse = await authenticatedFetch(
             "/api/v1/assistant/pending-review",
             {
               method: "POST",
@@ -216,22 +232,52 @@ export function createConversationLlm(input: {
       );
       if (prompt.length < 2)
         throw new Error("Bitte gib mindestens zwei Zeichen ein.");
-      const voice = input.submissionChannel.take(prompt);
-      return fetch("/api/v1/assistant/query/stream", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          ...requestHeaders(input.userId, true),
+      const userMessage = messages.findLast((item) => item.role === "user");
+      const operationEnvelope = [
+        input.userId,
+        input.patientId ?? "no-patient",
+        input.purpose,
+        userMessage?.id ?? "missing",
+        prompt,
+      ].join("\u001f");
+      const commandId = await deterministicOperationId(operationEnvelope);
+      const voice = input.submissionChannel.take(prompt, commandId);
+      const response = await authenticatedFetch(
+        "/api/v1/assistant/query/stream",
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            ...requestHeaders(input.userId, true, commandId),
+          },
+          body: JSON.stringify({
+            prompt,
+            patientId: input.patientId,
+            purpose: input.purpose,
+            inputModality: voice?.inputModality ?? "typed",
+            ...(voice ?? {}),
+          }),
+          signal,
         },
-        body: JSON.stringify({
-          prompt,
-          patientId: input.patientId,
-          purpose: input.purpose,
-          inputModality: voice?.inputModality ?? "typed",
-          ...(voice ?? {}),
-        }),
-        signal,
-      });
+      );
+      if (!response.ok) {
+        const failure = (await response.json().catch(() => null)) as {
+          error?: string;
+          message?: string;
+          requestId?: string;
+        } | null;
+        const trustedServerMessage =
+          typeof failure?.error === "string" &&
+          typeof failure.requestId === "string" &&
+          typeof failure.message === "string"
+            ? failure.message
+            : null;
+        throw new Error(
+          trustedServerMessage ??
+            "Das Gespräch konnte nicht fortgesetzt werden. Bitte aktualisiere den Arbeitskontext und versuche es erneut.",
+        );
+      }
+      return response;
     },
   };
 }

@@ -10,6 +10,7 @@ import {
 import type { WorkflowState } from "../core/service.js";
 import { siteConfiguration } from "../core/site-config.js";
 import type { DemoWorkspaceSnapshot } from "../core/workspace.js";
+import { monitorPostgresPool } from "./postgres-pool-health.js";
 
 const { Pool } = pg;
 const organizationId = siteConfiguration.institutionId;
@@ -40,8 +41,10 @@ export interface DemoScenarioStore {
   updateActiveState(
     state: WorkflowState,
     workspace: DemoWorkspaceSnapshot,
+    expectedDigest?: string,
   ): Promise<DemoScenarioRun>;
   importRun(run: DemoScenarioRun): Promise<DemoScenarioRun>;
+  health(): Promise<boolean>;
   close(): Promise<void>;
 }
 
@@ -112,8 +115,14 @@ export class InMemoryDemoScenarioStore implements DemoScenarioStore {
   async updateActiveState(
     state: WorkflowState,
     workspace: DemoWorkspaceSnapshot,
+    expectedDigest?: string,
   ): Promise<DemoScenarioRun> {
     const run = await this.active();
+    if (
+      expectedDigest !== undefined &&
+      scenarioRunContentDigest(run) !== expectedDigest
+    )
+      throw new Error("DEMO_SCENARIO_STATE_CONFLICT");
     const next = parseDemoScenarioRun({
       ...run,
       // Scenario data describes fixtures, not executable delivery authority.
@@ -132,6 +141,10 @@ export class InMemoryDemoScenarioStore implements DemoScenarioStore {
       throw new Error("DEMO_SCENARIO_RUN_ALREADY_EXISTS");
     this.runs.set(run.runId, structuredClone(run));
     return Promise.resolve(structuredClone(run));
+  }
+
+  health(): Promise<boolean> {
+    return Promise.resolve(true);
   }
 
   close(): Promise<void> {
@@ -181,13 +194,17 @@ function fromRow(row: ScenarioRow): DemoScenarioRun {
 
 export class PostgresDemoScenarioStore implements DemoScenarioStore {
   private readonly pool: pg.Pool;
+  private readonly poolHealth;
 
   constructor(connectionString: string) {
     this.pool = new Pool({
       connectionString,
       max: 3,
+      connectionTimeoutMillis: 2_000,
+      query_timeout: 15_000,
       statement_timeout: 15_000,
     });
+    this.poolHealth = monitorPostgresPool(this.pool);
   }
 
   async initialize(): Promise<DemoScenarioRun> {
@@ -249,8 +266,12 @@ export class PostgresDemoScenarioStore implements DemoScenarioStore {
   async updateActiveState(
     state: WorkflowState,
     workspace: DemoWorkspaceSnapshot,
+    expectedDigest?: string,
   ): Promise<DemoScenarioRun> {
     const run = await this.active();
+    const priorDigest = scenarioRunContentDigest(run);
+    if (expectedDigest !== undefined && priorDigest !== expectedDigest)
+      throw new Error("DEMO_SCENARIO_STATE_CONFLICT");
     const next = parseDemoScenarioRun({
       ...run,
       // Never copy delivery authority into a portable scenario run.
@@ -262,7 +283,8 @@ export class PostgresDemoScenarioStore implements DemoScenarioStore {
     const result = await this.pool.query(
       `UPDATE demo_scenario_runs
        SET state=$3,workspace=$4,state_digest=$5,updated_at=$6
-       WHERE organization_id=$1 AND run_id=$2 AND active=true`,
+       WHERE organization_id=$1 AND run_id=$2 AND active=true
+         AND state_digest=$7`,
       [
         organizationId,
         next.runId,
@@ -270,6 +292,7 @@ export class PostgresDemoScenarioStore implements DemoScenarioStore {
         next.workspace,
         digest,
         next.updatedAt,
+        priorDigest,
       ],
     );
     if (result.rowCount !== 1)
@@ -283,8 +306,13 @@ export class PostgresDemoScenarioStore implements DemoScenarioStore {
     return run;
   }
 
+  health(): Promise<boolean> {
+    return this.poolHealth.probe();
+  }
+
   async close(): Promise<void> {
     await this.pool.end();
+    this.poolHealth.dispose();
   }
 
   private async insert(run: DemoScenarioRun, active: boolean): Promise<void> {

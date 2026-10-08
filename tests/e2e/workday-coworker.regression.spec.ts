@@ -115,6 +115,18 @@ test("read-aloud is attached to the expanded patient and speaks only the visible
   await expect(readButton).toBeVisible();
   await readButton.click();
 
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (
+            window as unknown as {
+              __pfhWorkdaySpeech: { spokenText: string };
+            }
+          ).__pfhWorkdaySpeech.spokenText,
+      ),
+    )
+    .toContain(patientName);
   const speech = await page.evaluate(
     () =>
       (

@@ -20,6 +20,12 @@ try {
   } else {
     console.log("demo env: existing .env.demo retained");
   }
+  if (!/^PFH_RUNTIME_POSTGRES_PASSWORD=/m.test(existing))
+    additions.push(
+      "",
+      "# Non-owner, non-superuser, NOBYPASSRLS application principal.",
+      `PFH_RUNTIME_POSTGRES_PASSWORD=${secret()}`,
+    );
   if (!/^PFH_ALLOW_EXTERNAL_AI=/m.test(existing)) {
     additions.push(
       "",
@@ -49,6 +55,12 @@ try {
       "# Authenticates the local independent synthetic provider process.",
       `PFH_PROVIDER_SIMULATOR_TOKEN=${secret()}`,
     );
+  if (!/^PFH_SESSION_ENCRYPTION_SECRET=/m.test(existing))
+    additions.push(
+      "",
+      "# Encrypts short-lived BFF login state and signs no browser-readable identity.",
+      `PFH_SESSION_ENCRYPTION_SECRET=${secret()}`,
+    );
   if (!/^PFH_NGROK_DOMAIN=/m.test(existing))
     additions.push(
       "",
@@ -70,8 +82,10 @@ const content = [
   "# Generated local synthetic-demo credentials. Never commit or reuse.",
   `MEDPLUM_DEMO_POSTGRES_PASSWORD=${secret()}`,
   `PFH_DEMO_POSTGRES_PASSWORD=${operationalPassword}`,
+  `PFH_RUNTIME_POSTGRES_PASSWORD=${secret()}`,
   `PFH_OPERATIONAL_DATABASE_URL=postgresql://pflegehelfer:${operationalPassword}@127.0.0.1:5434/pflegehelfer`,
   `PFH_PROVIDER_SIMULATOR_TOKEN=${secret()}`,
+  `PFH_SESSION_ENCRYPTION_SECRET=${secret()}`,
   `MEDPLUM_DEMO_REDIS_PASSWORD=${secret()}`,
   "MEDPLUM_DEFAULT_SUPER_ADMIN_EMAIL=admin@pflegehelfer.demo.invalid",
   `MEDPLUM_DEFAULT_SUPER_ADMIN_PASSWORD=${secret()}`,

@@ -1,9 +1,9 @@
 # Pflegehelfer product contract
 
 Status: active acceptance contract
-Last updated: 2026-09-12
+Last updated: 2026-10-07
 
-Pflegehelfer is one interruption-tolerant, mobile-first clinical coworker for authorised staff. The same conversation accepts speech, text and direct taps; materialises stable clinical GenUI components; keeps the active patient and responsibility visible; and routes approved work to Medplum and configured providers. Chat-first is not chat-only: quick lenses, compact tables, forms and deterministic controls are part of the conversation when they reduce effort.
+Pflegehelfer is one interruption-tolerant, mobile-first administrative documentation and coordination coworker for authorised healthcare staff. The same conversation accepts speech, text and direct taps; materialises stable record-backed GenUI components; keeps the active patient and responsibility visible; and routes approved work to Medplum and configured providers. It may preserve and display clinical source content, but it does not interpret that content or decide what care a person needs. Chat-first is not chat-only: quick lenses, compact tables, forms and deterministic controls are part of the conversation when they reduce effort.
 
 One coherent working session may link multiple explicitly scoped conversations: a private general assistant, private patient-and-encounter assistants and separately authorized patient-team, department or direct threads. Scope changes preserve shift progress and per-thread continuity without mixing prompts, drafts or audiences. This supersedes the former one-giant-transcript rule.
 
@@ -15,6 +15,7 @@ The assistant is natural on top and controlled underneath. Ordinary questions no
 
 - A model may interpret language, identify evidence spans, ask clarifying questions and compose allowlisted presentation.
 - A model never supplies identity, permission, clinical truth, urgency, completion, provider capability or executable authority.
+- Neither model nor deterministic middleware may diagnose, prognose, interpret physiological values or symptoms, rank patients by clinical risk, recommend treatment/medication/dose/urgent intervention, originate a care plan, control a device, replace a primary alarm, or make/recommend employment decisions. Human review and site configuration cannot widen this boundary.
 - Internally, one generic typed `AssistantProposal` separates understood facts, performed work, observations, task changes, communications, workflow actions, ambiguities and evidence. Deterministic server code validates its specific executable sub-schemas against source text and current authorised resources, presents the exact meaningful change, binds approval to that version and executes an idempotent command graph.
 - Negation, uncertainty, historical reporting, occurrence time and correction remain explicit. Missing intent never becomes a default physician message, repeat measurement, elevated priority, completion or billable activity.
 - Medplum owns clinical FHIR resources and provenance. Pflegehelfer PostgreSQL owns workflow/session/episode state, proposals, approvals, receipts, durable events and provider delivery. Provider systems remain authoritative only for configured domains.

@@ -18,7 +18,9 @@ test.beforeEach(async ({ page, request }) => {
 async function ask(page: Page, prompt: string) {
   await page.getByLabel("Nachricht an Pflegehelfer").fill(prompt);
   await page.getByRole("button", { name: "Nachricht senden" }).click();
-  await expect(page.getByLabel("Nachricht an Pflegehelfer")).toBeEnabled({
+  await expect(
+    page.getByRole("button", { name: "Antwort abbrechen" }),
+  ).toHaveCount(0, {
     timeout: 20_000,
   });
 }

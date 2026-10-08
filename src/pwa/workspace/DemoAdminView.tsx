@@ -1,4 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
+import {
+  authenticatedFetch,
+  requestIntegrityHeaders,
+  requireAuthenticatedResponse,
+} from "../auth";
 
 type Inventory = {
   users: number;
@@ -35,17 +40,20 @@ async function adminRequest<T>(
   userId: string,
   init?: RequestInit,
 ): Promise<T> {
-  const response = await fetch(path, {
-    ...init,
-    headers: {
-      ...(init?.body ? { "content-type": "application/json" } : {}),
-      "x-demo-user": userId,
-      ...(init?.method === "POST"
-        ? { "x-command-id": crypto.randomUUID() }
-        : {}),
-      ...init?.headers,
-    },
-  });
+  const response = requireAuthenticatedResponse(
+    await authenticatedFetch(path, {
+      ...init,
+      headers: {
+        ...(init?.body ? { "content-type": "application/json" } : {}),
+        "x-demo-user": userId,
+        ...(init?.method === "POST"
+          ? { "x-command-id": crypto.randomUUID() }
+          : {}),
+        ...requestIntegrityHeaders(init?.method),
+        ...init?.headers,
+      },
+    }),
+  );
   const body = (await response.json()) as T & { message?: string };
   if (!response.ok)
     throw new Error(
@@ -139,7 +147,7 @@ export function DemoAdminView({
           disabled={busy}
           onClick={() => {
             setBusy(true);
-            void fetch("/api/v1/admin/demo/export", {
+            void authenticatedFetch("/api/v1/admin/demo/export", {
               headers: { "x-demo-user": userId },
             })
               .then(async (response) => {
@@ -291,23 +299,23 @@ export function DemoAdminView({
               .map((item) => item.trim())
               .filter(Boolean);
             void run(async () => {
-              await adminRequest("/api/v1/admin/demo/tasks", userId, {
+              await adminRequest("/api/v1/admin/demo/task-assignment", userId, {
                 method: "POST",
                 body: JSON.stringify({
-                  id: `t-mobilise-${newPatientId.slice(2)}`,
-                  patientId: newPatientId,
-                  title: "Morgenpflege und Mobilisation vorbereiten",
-                  reason: "Synthetischer Rehabilitationsplan",
-                  ownerRole: "care-assistant",
-                  ownerId: "u-assistant",
-                  priority: "routine",
-                  dueAt: "2026-09-05T10:45:00.000Z",
-                  escalation: "Bei Abweichung Pflegefachperson informieren",
+                  task: {
+                    id: `t-mobilise-${newPatientId.slice(2)}`,
+                    patientId: newPatientId,
+                    title: "Morgenpflege und Mobilisation vorbereiten",
+                    reason: "Synthetischer Rehabilitationsplan",
+                    ownerRole: "care-assistant",
+                    ownerId: "u-assistant",
+                    priority: "routine",
+                    escalation: "Bei Abweichung Pflegefachperson informieren",
+                  },
+                  dueOffsetMinutes: 165,
+                  actorId: "u-assistant",
+                  patientIds,
                 }),
-              });
-              await adminRequest("/api/v1/admin/demo/assignments", userId, {
-                method: "POST",
-                body: JSON.stringify({ actorId: "u-assistant", patientIds }),
               });
             }, "Aufgabe und explizite AGS-Zuweisung wurden gespeichert.");
           }}

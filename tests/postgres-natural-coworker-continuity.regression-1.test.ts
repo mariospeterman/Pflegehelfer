@@ -2,6 +2,9 @@ import { createHash } from "node:crypto";
 import pg from "pg";
 import { describe, expect, it } from "vitest";
 import { ModelGateway } from "../src/ai/model-gateway.js";
+import { InMemoryReferenceStatePort } from "../src/core/clinical-data-port.js";
+import { PflegehelferService } from "../src/core/service.js";
+import { PostgresDemoScenarioStore } from "../src/infrastructure/demo-scenario-store.js";
 import { PostgresOperationalStore } from "../src/infrastructure/operational-store.js";
 import { buildApp } from "../src/server/app.js";
 
@@ -192,16 +195,28 @@ describe.runIf(Boolean(databaseUrl))(
     it("accepts an assistant-requested interruption atomically with the one-use receipt", async () => {
       const clientContextId = crypto.randomUUID();
       const store = new PostgresOperationalStore(databaseUrl!);
-      const inspection = new Pool({ connectionString: databaseUrl });
+      const inspection = new Pool({
+        connectionString: process.env.PFH_MIGRATION_DATABASE_URL ?? databaseUrl,
+        options: "-c pfh.organization_id=org-demo",
+      });
       const triggerSuffix = crypto.randomUUID().replaceAll("-", "");
       const triggerName = `pfh_test_rebind_${triggerSuffix}`;
       const functionName = `${triggerName}_fn`;
       let triggerInstalled = false;
       await store.initialize();
       await store.resetDemoState();
-      const app = buildApp(undefined, {
+      await inspection.query(
+        `DELETE FROM demo_scenario_runs WHERE organization_id='org-demo'`,
+      );
+      const scenarioStore = new PostgresDemoScenarioStore(databaseUrl!);
+      const activeScenario = await scenarioStore.initialize();
+      const service = new PflegehelferService(
+        new InMemoryReferenceStatePort(activeScenario.state),
+      );
+      const app = buildApp(service, {
         demoMode: true,
         operationalStore: store,
+        scenarioStore,
         modelGateway: new ModelGateway({ PFH_AI_MODE: "deterministic" }),
         // This targets the integrated acceptance transaction. Clinical
         // resource payloads remain a synthetic in-process projection fixture;
@@ -235,7 +250,7 @@ describe.runIf(Boolean(databaseUrl))(
               version: handover.version,
             },
           });
-        expect(workdayResponse.statusCode).toBe(200);
+        expect(workdayResponse.statusCode, workdayResponse.body).toBe(200);
         const started = await app.inject({
           method: "POST",
           url: "/api/v1/workday",
@@ -319,6 +334,22 @@ describe.runIf(Boolean(databaseUrl))(
             },
             payload,
           });
+        const expectAuditHeadsAligned = async () => {
+          const durable = await inspection.query<{
+            count: number;
+            head: string | null;
+          }>(
+            `SELECT count(*)::int count,
+                    (array_agg(entry_hash ORDER BY id DESC))[1] head
+             FROM audit_entries WHERE organization_id='org-demo'`,
+          );
+          const local = service.audit.snapshot();
+          expect(local).toHaveLength(durable.rows[0]!.count);
+          expect(local.at(-1)?.hash ?? "GENESIS").toBe(
+            durable.rows[0]!.head ?? "GENESIS",
+          );
+        };
+        await expectAuditHeadsAligned();
         const contextBeforeFailure = await store.resolveAssistantContext(
           "u-nurse",
           "registered-nurse",
@@ -331,7 +362,6 @@ describe.runIf(Boolean(databaseUrl))(
              (SELECT count(*)::int FROM command_receipts) receipts,
              (SELECT count(*)::int FROM clinical_projection_outbox) projections,
              (SELECT count(*)::int FROM provider_outbox) provider_jobs,
-             (SELECT count(*)::int FROM audit_entries) audit,
              (SELECT count(*)::int FROM domain_events) events`,
         );
         const proposalBeforeFailure = await inspection.query(
@@ -427,7 +457,6 @@ describe.runIf(Boolean(databaseUrl))(
              (SELECT count(*)::int FROM command_receipts) receipts,
              (SELECT count(*)::int FROM clinical_projection_outbox) projections,
              (SELECT count(*)::int FROM provider_outbox) provider_jobs,
-             (SELECT count(*)::int FROM audit_entries) audit,
              (SELECT count(*)::int FROM domain_events) events`,
         );
         expect(countsAfterFailure.rows).toEqual(countsBeforeFailure.rows);
@@ -458,6 +487,7 @@ describe.runIf(Boolean(databaseUrl))(
         expect(workdayRowsAfterFailure.rows).toEqual(
           workdayRowsBeforeFailure.rows,
         );
+        await expectAuditHeadsAligned();
         await inspection.query(
           `DROP TRIGGER ${triggerName} ON assistant_client_contexts`,
         );
@@ -502,9 +532,12 @@ describe.runIf(Boolean(databaseUrl))(
           );
           await inspection.query(`DROP FUNCTION IF EXISTS ${functionName}()`);
         }
-        await inspection.end();
         await app.close();
+        await inspection.query(
+          `DELETE FROM demo_scenario_runs WHERE organization_id='org-demo'`,
+        );
+        await inspection.end();
       }
-    });
+    }, 30_000);
   },
 );

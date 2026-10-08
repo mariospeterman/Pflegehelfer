@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-10-07T23:24:30+02:00",
+  "branch": "codex/sol-repair-2026-10-07",
+  "startingSha": "10e6a4c21cb6e69c4c14a28865a33b9d2c87a9e1",
+  "dirty": true,
+  "dataClass": "synthetic-only",
+  "status": "DONE_WITH_CONCERNS",
+  "checks": [
+    {
+      "command": "pnpm verify",
+      "result": "pass",
+      "testFilesPassed": 55,
+      "testsPassed": 490,
+      "testFilesSkipped": 9,
+      "testsSkipped": 26,
+      "build": "pass"
+    },
+    {
+      "command": "pnpm exec playwright test tests/e2e/workday-coworker.regression.spec.ts --project=desktop",
+      "result": "pass",
+      "testsPassed": 5
+    },
+    { "command": "pnpm verify:security", "result": "pass-smoke-only" },
+    { "command": "pnpm verify:ops", "result": "pass-synthetic-only" },
+    { "command": "pnpm audit --prod", "result": "pass" }
+  ],
+  "measurements": {
+    "initialPwaChunkMinifiedBytes": 2424130,
+    "initialPwaChunkGzipBytes": 702210,
+    "bundleBudget": "open"
+  },
+  "externalGates": [
+    "institutional OIDC and device/membership mapping",
+    "least-privilege PostgreSQL/RLS release",
+    "resource-native restart and multi-replica evidence",
+    "real model, ASR, TTS and provider acceptance",
+    "privacy, security and regulatory release records"
+  ]
+}

@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
+  buildSourceReadSetV1,
+  parseSourceReadSetV1,
+  type SourceReadSetV1,
+} from "./source-read-set.js";
+import {
   DomainError,
   type DemoUser,
   type Purpose,
@@ -299,12 +304,17 @@ export interface BoundIntentInput {
   purpose: Purpose;
   resourceVersion: number;
   payload: Record<string, string>;
+  sourceReadSet?: SourceReadSetV1;
   ttlMs?: number;
 }
 
-interface IntentRecord extends Omit<BoundIntentInput, "ttlMs"> {
+interface IntentRecord extends Omit<
+  BoundIntentInput,
+  "ttlMs" | "sourceReadSet"
+> {
   actorId: string;
   actorRole: Role;
+  sourceReadSet: SourceReadSetV1;
   expiresAt: number;
 }
 
@@ -334,6 +344,36 @@ export class OpaqueIntentBroker {
         403,
       );
     const token = randomUUID();
+    const sourceReadSet = input.sourceReadSet
+      ? parseSourceReadSetV1(input.sourceReadSet)
+      : buildSourceReadSetV1({
+          schemaVersion: 1,
+          evidenceAuthority: "memory-demo-not-fhir-evident",
+          capturedAt: new Date().toISOString(),
+          purpose: input.purpose,
+          policyVersion: "legacy-unbound-test-only",
+          patientId: input.patientId,
+          encounterId: input.encounterId,
+          resources: [
+            {
+              reference: `Patient/${input.patientId}`,
+              logicalReference: `Patient/${input.patientId}`,
+              version: String(input.resourceVersion),
+              patientId: input.patientId,
+              encounterId: input.encounterId,
+              claims: [],
+            },
+            {
+              reference: `Encounter/${input.encounterId}`,
+              logicalReference: `Encounter/${input.encounterId}`,
+              version: String(input.resourceVersion),
+              patientId: input.patientId,
+              encounterId: input.encounterId,
+              claims: [],
+            },
+          ],
+          selectors: [],
+        });
     this.intents.set(token, {
       actorId: actor.id,
       actorRole: actor.role,
@@ -343,6 +383,7 @@ export class OpaqueIntentBroker {
       purpose: input.purpose,
       resourceVersion: input.resourceVersion,
       payload: structuredClone(input.payload),
+      sourceReadSet,
       expiresAt: Date.now() + (input.ttlMs ?? 120_000),
     });
     return token;
@@ -371,7 +412,10 @@ export class OpaqueIntentBroker {
         "Assistenzaktion ist ungültig oder abgelaufen.",
         403,
       );
-    this.intents.set(token, structuredClone(record));
+    this.intents.set(token, {
+      ...structuredClone(record),
+      sourceReadSet: parseSourceReadSetV1(record.sourceReadSet),
+    });
   }
 
   consume(
@@ -407,6 +451,7 @@ export class OpaqueIntentBroker {
       purpose: record.purpose,
       resourceVersion: record.resourceVersion,
       payload: structuredClone(record.payload),
+      sourceReadSet: structuredClone(record.sourceReadSet),
     };
   }
 

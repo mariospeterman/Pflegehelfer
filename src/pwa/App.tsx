@@ -1,9 +1,16 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { AppSnapshot, Patient, Role } from "../core/types";
 import {
-  AssistantSurface,
-  type AssistantHandoff,
-  type ConversationOpening,
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import type { AppSnapshot, Patient, Role } from "../core/types";
+import type {
+  AssistantHandoff,
+  ConversationOpening,
 } from "./assistant/AssistantSurface";
 import type { WorkdayView } from "../core/workday";
 import type {
@@ -15,10 +22,27 @@ import {
   createAssistantContextBindingCoordinator,
   rotateAssistantClientContext,
 } from "./assistant-context";
+import type { WorkspaceDestination } from "./workspace/WorkspaceView";
 import {
-  WorkspaceView,
-  type WorkspaceDestination,
-} from "./workspace/WorkspaceView";
+  authenticatedFetch,
+  hasBffSession,
+  publishAccessRevoked,
+  redirectToLogin,
+  requestIntegrityHeaders,
+  requireAuthenticatedResponse,
+  subscribeAccessRevoked,
+} from "./auth";
+
+const AssistantSurface = lazy(() =>
+  import("./assistant/AssistantSurface").then((module) => ({
+    default: module.AssistantSurface,
+  })),
+);
+const WorkspaceView = lazy(() =>
+  import("./workspace/WorkspaceView").then((module) => ({
+    default: module.WorkspaceView,
+  })),
+);
 
 interface ConversationDescriptor {
   id: string;
@@ -86,19 +110,26 @@ async function api<T>(
   userId: string,
   init?: RequestInit,
 ): Promise<T> {
-  const response = await fetch(path, {
-    ...init,
-    headers: {
-      ...(init?.body ? { "content-type": "application/json" } : {}),
-      "x-demo-user": userId,
-      ...assistantClientContextHeaders(),
-      ...(init?.method === "POST"
-        ? { "x-command-id": crypto.randomUUID() }
-        : {}),
-      ...init?.headers,
-    },
-  });
+  const response = requireAuthenticatedResponse(
+    await authenticatedFetch(path, {
+      ...init,
+      headers: {
+        ...(init?.body ? { "content-type": "application/json" } : {}),
+        "x-demo-user": userId,
+        ...assistantClientContextHeaders(),
+        ...(init?.method === "POST"
+          ? { "x-command-id": crypto.randomUUID() }
+          : {}),
+        ...requestIntegrityHeaders(init?.method),
+        ...init?.headers,
+      },
+    }),
+  );
   const raw = await response.text();
+  if (path === "/api/v1/snapshot" && response.status === 403) {
+    publishAccessRevoked();
+    if (hasBffSession()) redirectToLogin();
+  }
   let result: T & { message?: string };
   try {
     result = JSON.parse(raw) as T & { message?: string };
@@ -107,6 +138,17 @@ async function api<T>(
   }
   if (!response.ok) throw new Error(result.message ?? "Aktion fehlgeschlagen.");
   return result;
+}
+
+function purgeSensitiveBrowserState(): void {
+  for (let index = sessionStorage.length - 1; index >= 0; index -= 1) {
+    const key = sessionStorage.key(index);
+    if (key?.startsWith("pflegehelfer:draft:") || key === "pfh-patient-context")
+      sessionStorage.removeItem(key);
+  }
+  navigator.serviceWorker?.controller?.postMessage({
+    type: "PFH_PURGE_SENSITIVE_CACHES",
+  });
 }
 
 function formatBirthDate(value: string): string {
@@ -395,7 +437,7 @@ function OrganizationEconomicsPanel({
     setError(null);
     try {
       const period = new Date().toISOString().slice(0, 7);
-      const response = await fetch(
+      const response = await authenticatedFetch(
         `/api/v1/admin/organization-economics/statement.csv?period=${period}`,
         {
           headers: {
@@ -687,6 +729,7 @@ function ContextPanel({
   onPatient,
   onNavigate,
   onUser,
+  onLogout,
   modal,
   theme,
   onTheme,
@@ -699,6 +742,7 @@ function ContextPanel({
   onPatient: (id: string | null) => Promise<boolean>;
   onNavigate: (destination: WorkspaceDestination) => void;
   onUser: (id: string) => void;
+  onLogout: (() => void) | null;
   modal: boolean;
   theme: "system" | "light" | "dark";
   onTheme: (theme: "system" | "light" | "dark") => void;
@@ -875,20 +919,26 @@ function ContextPanel({
         </section>
       )}
       <footer className="context-footer">
-        <label className="drawer-role-switcher">
-          <span>Demo-Rolle</span>
-          <select
-            value={snapshot.currentUser.id}
-            disabled={busy}
-            onChange={(event) => onUser(event.target.value)}
-          >
-            {snapshot.users.map((user) => (
-              <option value={user.id} key={user.id}>
-                {user.displayName} · {roleLabels[user.role]}
-              </option>
-            ))}
-          </select>
-        </label>
+        {onLogout ? (
+          <button className="ghost" disabled={busy} onClick={onLogout}>
+            Sicher abmelden
+          </button>
+        ) : (
+          <label className="drawer-role-switcher">
+            <span>Demo-Rolle</span>
+            <select
+              value={snapshot.currentUser.id}
+              disabled={busy}
+              onChange={(event) => onUser(event.target.value)}
+            >
+              {snapshot.users.map((user) => (
+                <option value={user.id} key={user.id}>
+                  {user.displayName} · {roleLabels[user.role]}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <label className="theme-select">
           <span>Darstellung</span>
           <select
@@ -1140,6 +1190,7 @@ export function App() {
     return stored === "light" || stored === "dark" ? stored : "system";
   });
   const generation = useRef(0);
+  const contextTransition = useRef(0);
   const assistantContextBinding = useRef(
     createAssistantContextBindingCoordinator(),
   );
@@ -1149,6 +1200,10 @@ export function App() {
       const current = ++generation.current;
       try {
         const data = await api<AppSnapshot>("/api/v1/snapshot", userId);
+        if (hasBffSession() && data.currentUser.id !== userId) {
+          setUserId(data.currentUser.id);
+          return;
+        }
         const requestedPatientId =
           selectedPatientOverride === undefined
             ? selectedPatientId
@@ -1183,6 +1238,10 @@ export function App() {
         setSelectedPatientId(preferredPatientId);
       } catch (failure) {
         if (current !== generation.current) return;
+        // Authentication loss publishes the access-revoked event above and
+        // follows the dedicated purge path. A transient network/5xx failure
+        // must keep the current read-only view and unsent local draft so staff
+        // can reconnect without losing interrupted work.
         setApiReady(false);
         setNotice(
           failure instanceof Error
@@ -1197,6 +1256,21 @@ export function App() {
   useEffect(() => {
     void load();
   }, [load]);
+  useEffect(
+    () =>
+      subscribeAccessRevoked(() => {
+        generation.current += 1;
+        assistantContextBinding.current.reset();
+        purgeSensitiveBrowserState();
+        setSnapshot(null);
+        setWorkday(null);
+        setConversations([]);
+        setHandoff(null);
+        setSelectedPatientId(null);
+        window.location.assign("/");
+      }),
+    [],
+  );
   useEffect(() => {
     if (!notice || !apiReady || !snapshot) return;
     const timer = window.setTimeout(() => setNotice(null), 6000);
@@ -1314,7 +1388,7 @@ export function App() {
     };
     const connect = async () => {
       try {
-        const response = await fetch("/api/v1/events", {
+        const response = await authenticatedFetch("/api/v1/events", {
           headers: {
             "x-demo-user": userId,
             ...(lastEventId ? { "last-event-id": String(lastEventId) } : {}),
@@ -1393,6 +1467,7 @@ export function App() {
 
   const choosePatient = async (id: string | null): Promise<boolean> => {
     if (assistantBusy || contextBusy) return false;
+    const transition = ++contextTransition.current;
     const requestGeneration = generation.current;
     const requestUserId = userId;
     setContextBusy(true);
@@ -1430,26 +1505,58 @@ export function App() {
       );
       return false;
     } finally {
-      if (requestGeneration === generation.current && requestUserId === userId)
-        setContextBusy(false);
+      if (contextTransition.current === transition) setContextBusy(false);
     }
   };
   const changeUser = (next: string) => {
     generation.current += 1;
+    contextTransition.current += 1;
     rotateAssistantClientContext();
     assistantContextBinding.current.reset();
     setContextBusy(false);
     sessionStorage.setItem("pfh-demo-user", next);
-    sessionStorage.removeItem("pfh-patient-context");
+    purgeSensitiveBrowserState();
     setSelectedPatientId(null);
     setDestination("Chat");
     setScopePickerOpen(false);
     setSnapshot(null);
     setWorkday(null);
     setConversations([]);
+    setHandoff(null);
     setNotice(null);
     setUserId(next);
   };
+  const logout = hasBffSession()
+    ? () => {
+        void (async () => {
+          try {
+            const response = await authenticatedFetch("/api/v1/auth/logout", {
+              method: "POST",
+              headers: requestIntegrityHeaders("POST"),
+            });
+            if (!response.ok && response.status !== 401)
+              throw new Error("Abmeldung wurde nicht bestätigt.");
+            const result = response.ok
+              ? ((await response.json()) as { redirectTo?: unknown })
+              : null;
+            purgeSensitiveBrowserState();
+            publishAccessRevoked();
+            const redirectTo =
+              typeof result?.redirectTo === "string" ? result.redirectTo : "/";
+            const target = new URL(redirectTo, window.location.origin);
+            if (!["http:", "https:"].includes(target.protocol))
+              throw new Error("Abmeldeziel ist ungültig.");
+            window.location.assign(target.toString());
+          } catch (failure) {
+            setNotice(
+              failure instanceof Error
+                ? failure.message
+                : "Abmeldung konnte nicht bestätigt werden.",
+            );
+          }
+        })();
+      }
+    : null;
 
   if (!snapshot)
     return (
@@ -1542,13 +1649,20 @@ export function App() {
         <ContextPanel
           snapshot={snapshot}
           patient={patient}
-          onPatient={choosePatient}
+          onPatient={(id) => {
+            if (connected) return choosePatient(id);
+            setNotice(
+              "Die Ansicht bleibt lesbar. Änderungen sind erst nach erneuter Verbindung möglich.",
+            );
+            return Promise.resolve(false);
+          }}
           onNavigate={setDestination}
           modal
           onUser={(id) => {
             setDrawerOpen(false);
             changeUser(id);
           }}
+          onLogout={logout}
           theme={theme}
           onTheme={setTheme}
           busy={contextBusy || assistantBusy}
@@ -1580,6 +1694,7 @@ export function App() {
           </div>
           <button
             className="header-scope-switcher"
+            disabled={!connected}
             aria-label={
               patient
                 ? `Aktiver Kontext: ${patient.displayName}, Zimmer ${patient.room}. Kontext wechseln`
@@ -1638,7 +1753,7 @@ export function App() {
             </button>
           </div>
         </header>
-        {scopePickerOpen && (
+        {scopePickerOpen && connected && (
           <>
             <button
               type="button"
@@ -1705,6 +1820,9 @@ export function App() {
         {notice && (
           <div className="global-notice" role="status">
             <span>{notice}</span>
+            {!apiReady && online && (
+              <button onClick={() => void load()}>Erneut verbinden</button>
+            )}
             <button
               aria-label="Hinweis schliessen"
               onClick={() => setNotice(null)}
@@ -1713,126 +1831,164 @@ export function App() {
             </button>
           </div>
         )}
-        {destination === "Chat" && (
-          <CountersignaturePanel
-            snapshot={snapshot}
+        <fieldset className="degraded-write-boundary" disabled={!connected}>
+          {destination === "Chat" && (
+            <CountersignaturePanel
+              snapshot={snapshot}
+              userId={userId}
+              activePatientId={selectedPatientId}
+              activeEncounterId={patient?.encounterId ?? null}
+              done={async (message) => {
+                await load();
+                setNotice(message);
+              }}
+            />
+          )}
+          {destination === "Provider" &&
+            ["management", "it", "quality-safety"].includes(
+              snapshot.currentUser.role,
+            ) && (
+              <OrganizationEconomicsPanel
+                userId={userId}
+                canEdit={["management", "it"].includes(
+                  snapshot.currentUser.role,
+                )}
+              />
+            )}
+        </fieldset>
+        <Suspense
+          fallback={
+            <section className="workspace-card" role="status">
+              Ansicht wird sicher geladen…
+            </section>
+          }
+        >
+          {destination === "Chat" ? (
+            <AssistantSurface
+              patient={patient}
+              userId={userId}
+              online={connected}
+              onExecuted={async (message, activePatientId) => {
+                if (activePatientId) {
+                  assistantContextBinding.current.markBound({
+                    userId,
+                    patientId: activePatientId,
+                  });
+                  setSelectedPatientId(activePatientId);
+                  sessionStorage.setItem(
+                    "pfh-patient-context",
+                    activePatientId,
+                  );
+                }
+                await load(activePatientId);
+                setNotice(message);
+              }}
+              onHandoff={setHandoff}
+              snapshotRevision={revision}
+              opening={opening}
+              launchPrompt={launchPrompt}
+              onSelectPatient={(id) => void choosePatient(id)}
+              externallyBusy={contextBusy}
+              onBusyChange={setAssistantBusy}
+              onNavigate={setDestination}
+              workdayStage={workday?.stage ?? null}
+            />
+          ) : (
+            <fieldset
+              className="degraded-write-boundary"
+              disabled={!connected}
+              aria-label={
+                connected
+                  ? undefined
+                  : "Nur Lesen, bis die Verbindung wiederhergestellt ist"
+              }
+            >
+              <WorkspaceView
+                destination={destination}
+                snapshot={snapshot}
+                patient={patient}
+                userId={userId}
+                workday={
+                  ["care-assistant", "registered-nurse"].includes(
+                    snapshot.currentUser.role,
+                  )
+                    ? workday
+                    : null
+                }
+                busy={contextBusy || assistantBusy}
+                onPatient={(id) => {
+                  const returnDestination = [
+                    "Handover",
+                    "Plans",
+                    "Tasks",
+                  ].includes(destination)
+                    ? destination
+                    : "Profile";
+                  void choosePatient(id).then((changed) => {
+                    if (changed) setDestination(returnDestination);
+                  });
+                }}
+                onError={setNotice}
+                onNavigate={setDestination}
+                onWorkdayAction={async (command) => {
+                  const next = await api<WorkdayView>(
+                    "/api/v1/workday",
+                    userId,
+                    {
+                      method: "POST",
+                      body: JSON.stringify(command),
+                    },
+                  );
+                  setWorkday(next);
+                  const activePatientId = next.activeEpisode?.patientId ?? null;
+                  if (activePatientId) {
+                    if (
+                      [
+                        "start-episode",
+                        "interrupt-and-start",
+                        "resume-episode",
+                      ].includes(command.type)
+                    )
+                      await api("/api/v1/assistant/context", userId, {
+                        method: "POST",
+                        body: JSON.stringify({ patientId: activePatientId }),
+                      });
+                    assistantContextBinding.current.markBound({
+                      userId,
+                      patientId: activePatientId,
+                    });
+                    setSelectedPatientId(activePatientId);
+                    sessionStorage.setItem(
+                      "pfh-patient-context",
+                      activePatientId,
+                    );
+                  }
+                  if (
+                    ["complete-episode", "close-shift"].includes(command.type)
+                  )
+                    await load(activePatientId || selectedPatientId);
+                }}
+              />
+            </fieldset>
+          )}
+        </Suspense>
+      </main>
+      {handoff && patient && (
+        <fieldset className="degraded-write-boundary" disabled={!connected}>
+          <DraftHandoffSheet
+            handoff={handoff}
+            patient={patient}
             userId={userId}
-            activePatientId={selectedPatientId}
-            activeEncounterId={patient?.encounterId ?? null}
+            close={() => {
+              setHandoff(null);
+              setNotice("Entwurf verworfen. Es wurde nichts gesendet.");
+            }}
             done={async (message) => {
               await load();
               setNotice(message);
             }}
           />
-        )}
-        {destination === "Provider" &&
-          ["management", "it", "quality-safety"].includes(
-            snapshot.currentUser.role,
-          ) && (
-            <OrganizationEconomicsPanel
-              userId={userId}
-              canEdit={["management", "it"].includes(snapshot.currentUser.role)}
-            />
-          )}
-        {destination === "Chat" ? (
-          <AssistantSurface
-            patient={patient}
-            userId={userId}
-            online={connected}
-            onExecuted={async (message, activePatientId) => {
-              if (activePatientId) {
-                assistantContextBinding.current.markBound({
-                  userId,
-                  patientId: activePatientId,
-                });
-                setSelectedPatientId(activePatientId);
-                sessionStorage.setItem("pfh-patient-context", activePatientId);
-              }
-              await load(activePatientId);
-              setNotice(message);
-            }}
-            onHandoff={setHandoff}
-            snapshotRevision={revision}
-            opening={opening}
-            launchPrompt={launchPrompt}
-            onSelectPatient={(id) => void choosePatient(id)}
-            externallyBusy={contextBusy}
-            onBusyChange={setAssistantBusy}
-            onNavigate={setDestination}
-            workdayStage={workday?.stage ?? null}
-          />
-        ) : (
-          <WorkspaceView
-            destination={destination}
-            snapshot={snapshot}
-            patient={patient}
-            userId={userId}
-            workday={
-              ["care-assistant", "registered-nurse"].includes(
-                snapshot.currentUser.role,
-              )
-                ? workday
-                : null
-            }
-            busy={contextBusy || assistantBusy}
-            onPatient={(id) => {
-              const returnDestination = ["Handover", "Plans", "Tasks"].includes(
-                destination,
-              )
-                ? destination
-                : "Profile";
-              void choosePatient(id).then((changed) => {
-                if (changed) setDestination(returnDestination);
-              });
-            }}
-            onError={setNotice}
-            onNavigate={setDestination}
-            onWorkdayAction={async (command) => {
-              const next = await api<WorkdayView>("/api/v1/workday", userId, {
-                method: "POST",
-                body: JSON.stringify(command),
-              });
-              setWorkday(next);
-              const activePatientId = next.activeEpisode?.patientId ?? null;
-              if (activePatientId) {
-                if (
-                  [
-                    "start-episode",
-                    "interrupt-and-start",
-                    "resume-episode",
-                  ].includes(command.type)
-                )
-                  await api("/api/v1/assistant/context", userId, {
-                    method: "POST",
-                    body: JSON.stringify({ patientId: activePatientId }),
-                  });
-                assistantContextBinding.current.markBound({
-                  userId,
-                  patientId: activePatientId,
-                });
-                setSelectedPatientId(activePatientId);
-                sessionStorage.setItem("pfh-patient-context", activePatientId);
-              }
-              if (["complete-episode", "close-shift"].includes(command.type))
-                await load(activePatientId || selectedPatientId);
-            }}
-          />
-        )}
-      </main>
-      {handoff && patient && (
-        <DraftHandoffSheet
-          handoff={handoff}
-          patient={patient}
-          userId={userId}
-          close={() => {
-            setHandoff(null);
-            setNotice("Entwurf verworfen. Es wurde nichts gesendet.");
-          }}
-          done={async (message) => {
-            await load();
-            setNotice(message);
-          }}
-        />
+        </fieldset>
       )}
     </div>
   );

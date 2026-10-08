@@ -6,6 +6,7 @@ import {
   type CriticalEntity,
 } from "../../core/critical-entities";
 import { assistantClientContextHeaders } from "../assistant-context";
+import { authenticatedFetch, requestIntegrityHeaders } from "../auth";
 import type { VoiceSubmission } from "./openui-client";
 
 export type ConversationStarter =
@@ -13,7 +14,7 @@ export type ConversationStarter =
 
 export interface MutableSubmissionChannel {
   set(prompt: string, voice: VoiceSubmission): void;
-  take(prompt: string): VoiceSubmission | null;
+  take(prompt: string, operationId: string): VoiceSubmission | null;
 }
 
 interface VoiceReview {
@@ -141,7 +142,7 @@ export function ClinicalComposer({
 
   useEffect(() => {
     const controller = new AbortController();
-    void fetch("/api/v1/ai/status", {
+    void authenticatedFetch("/api/v1/ai/status", {
       headers: {
         "x-demo-user": userId,
         ...assistantClientContextHeaders(),
@@ -233,7 +234,7 @@ export function ClinicalComposer({
     if (patient) parameters.set("patientId", patient.id);
     const form = new FormData();
     form.set("file", file, file.name);
-    const response = await fetch(
+    const response = await authenticatedFetch(
       `/api/v1/workspace/attachments?${parameters.toString()}`,
       {
         method: "POST",
@@ -242,6 +243,7 @@ export function ClinicalComposer({
           ...assistantClientContextHeaders(),
           "x-command-id": crypto.randomUUID(),
           "x-content-sha256": sha256,
+          ...requestIntegrityHeaders("POST"),
         },
         body: form,
       },
@@ -270,12 +272,6 @@ export function ClinicalComposer({
         );
         return;
       }
-      submissionChannel.set(prompt, {
-        inputModality: "voice",
-        voiceTranscriptConfirmed: true,
-        voiceReceiptId: voice.receiptId,
-        voiceConfirmedEntityIds: [...voice.confirmed],
-      });
     }
     onError(null);
     try {
@@ -285,13 +281,20 @@ export function ClinicalComposer({
       const submittedPrompt = storedAttachment
         ? `${prompt}\n\nAnhang gespeichert: ${storedAttachment.fileName}.`
         : prompt;
-      setValue("");
-      setVoice(null);
-      setAttachment(null);
+      if (voice)
+        submissionChannel.set(submittedPrompt, {
+          inputModality: "voice",
+          voiceTranscriptConfirmed: true,
+          voiceReceiptId: voice.receiptId,
+          voiceConfirmedEntityIds: [...voice.confirmed],
+        });
       await processMessage({
         role: "user",
         content: [{ type: "text", text: submittedPrompt }],
       });
+      setValue("");
+      setVoice(null);
+      setAttachment(null);
     } catch (error) {
       onError(
         error instanceof Error
@@ -368,17 +371,21 @@ export function ClinicalComposer({
           chunks.current = [];
           const form = new FormData();
           form.set("file", blob, "utterance.webm");
-          const response = await fetch("/api/v1/assistant/transcribe", {
-            method: "POST",
-            headers: {
-              "x-demo-user": userId,
-              ...assistantClientContextHeaders(),
-              "x-command-id": crypto.randomUUID(),
-              "x-pfh-purpose": "direct-care",
+          const response = await authenticatedFetch(
+            "/api/v1/assistant/transcribe",
+            {
+              method: "POST",
+              headers: {
+                "x-demo-user": userId,
+                ...assistantClientContextHeaders(),
+                "x-command-id": crypto.randomUUID(),
+                "x-pfh-purpose": "direct-care",
+                ...requestIntegrityHeaders("POST"),
+              },
+              body: form,
+              signal: controller.signal,
             },
-            body: form,
-            signal: controller.signal,
-          });
+          );
           const body = (await response.json()) as {
             transcription?: {
               text: string;

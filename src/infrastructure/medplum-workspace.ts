@@ -17,14 +17,23 @@ import type {
 import { z } from "zod";
 import { verifyAuditEntries } from "../core/audit.js";
 import {
+  fromFhirResourceSet,
   fhirResourceId,
   legacyFhirResourceId,
   managedProjectionTag,
   tenantTag,
   tenantTagSystem,
+  type CanonicalClinicalState,
 } from "../core/fhir-resource-set.js";
-import { siteConfiguration } from "../core/site-config.js";
+import { actionSchema, siteConfiguration } from "../core/site-config.js";
 import type { CommandReceipt, ServiceCheckpoint } from "../core/service.js";
+import { DomainError, type Role } from "../core/types.js";
+import {
+  buildSourceReadSetV1,
+  parseSourceReadSetV1,
+  type SourceReadResource,
+  type SourceReadSetV1,
+} from "../core/source-read-set.js";
 
 const checkpointId = fhirResourceId("Binary", "workflow-control-plane-v1");
 const legacyCheckpointId = legacyFhirResourceId(
@@ -58,6 +67,17 @@ const transactionalClinicalResourceTypes: readonly ResourceType[] = [
 ];
 const dataClassificationSystem =
   "https://pflegehelfer.example.invalid/data-classification";
+const observationApprovalStateSystem =
+  "https://pflegehelfer.example.invalid/observation-approval-state";
+const communicationWorkflowStateSystem =
+  "https://pflegehelfer.example.invalid/communication-workflow-state";
+const domainIdentifierSystems: Record<string, string> = {
+  Patient: "https://pflegehelfer.example.invalid/patient-id",
+  Encounter: "https://pflegehelfer.example.invalid/encounter-id",
+  Task: "https://pflegehelfer.example.invalid/task-id",
+  Observation: "https://pflegehelfer.example.invalid/observation-id",
+  Communication: "https://pflegehelfer.example.invalid/communication-id",
+};
 const legacyResourceReferencePattern = new RegExp(
   `^(?:${managedClinicalResourceTypes.join("|")})/[A-Za-z0-9.-]{1,64}$`,
 );
@@ -100,6 +120,45 @@ const patientRecord = identifiedRecord.extend({
 const patientBoundRecord = identifiedRecord.extend({
   patientId: z.string().min(1).max(160),
 });
+const commandReceiptAuthorizationSchema = z
+  .object({
+    actorId: z.string().min(1),
+    actorRole: z.custom<Role>(
+      (value) =>
+        typeof value === "string" && value in siteConfiguration.roleProfiles,
+    ),
+    siteId: z.string().min(1),
+    departmentId: z.string().min(1),
+    route: z.string().min(1),
+    purpose: z.enum([
+      "direct-care",
+      "operations",
+      "administration",
+      "quality-review",
+      "emergency",
+    ]),
+    actions: z.array(actionSchema),
+    patientId: z.string().min(1).nullable(),
+    encounterId: z.string().min(1).nullable(),
+    patientScopes: z.array(
+      z
+        .object({
+          patientId: z.string().min(1),
+          encounterId: z.string().min(1),
+        })
+        .strict(),
+    ),
+    workdayAuthority: z
+      .object({
+        sessionId: z.string().min(1),
+        handoverId: z.string().min(1),
+        handoverVersion: z.number().int().positive(),
+        handoverContentHash: z.string().min(1),
+      })
+      .strict()
+      .nullable(),
+  })
+  .strict();
 const auditRecord = z
   .object({
     id: z.string().min(1).max(160),
@@ -166,6 +225,10 @@ const checkpointSchema = z
                 requestHash: z.string().regex(/^[a-f0-9]{64}$/),
                 statusCode: z.number().int().min(200).max(299),
                 payload: z.string().max(64 * 1024),
+                // Legacy checkpoint receipts are retained only long enough to
+                // parse the clinical checkpoint. They are filtered below and
+                // can never be replayed without a v2 authorization envelope.
+                authorization: commandReceiptAuthorizationSchema.optional(),
               })
               .strict(),
           )
@@ -285,6 +348,10 @@ export function deserializeCheckpoint(
     ...legacyCheckpoint,
     dataClass: legacyCheckpoint.dataClass ?? "institution-local",
     state: currentState,
+    commandReceipts: (legacyCheckpoint.commandReceipts ?? []).filter(
+      (receipt): receipt is CommandReceipt =>
+        commandReceiptSchema.safeParse(receipt).success,
+    ),
   };
   const assertUnique = (label: string, records: Array<{ id: string }>) => {
     if (new Set(records.map((record) => record.id)).size !== records.length)
@@ -356,6 +423,7 @@ const commandReceiptSchema = z
     requestHash: z.string().regex(/^[a-f0-9]{64}$/),
     statusCode: z.number().int().min(200).max(299),
     payload: z.string().max(64 * 1024),
+    authorization: commandReceiptAuthorizationSchema,
   })
   .strict();
 
@@ -369,7 +437,7 @@ export function serializeCommandReceipt(
 ): Binary {
   const payload = JSON.stringify(commandReceiptSchema.parse(receipt));
   const envelope = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     sha256: createHash("sha256").update(payload).digest("hex"),
     ...(hmacKey
       ? {
@@ -398,7 +466,7 @@ export function serializeCommandReceipt(
       tag: [
         {
           system: "https://pflegehelfer.example.invalid/control-plane",
-          code: "command-receipt-v1",
+          code: "command-receipt-v2",
         },
         tenantTag(),
       ],
@@ -425,7 +493,7 @@ export function deserializeCommandReceipt(
     hmacKeyId?: unknown;
     payload?: unknown;
   };
-  if (envelope.schemaVersion !== 1)
+  if (envelope.schemaVersion !== 2)
     throw new Error("Medplum command receipt has an unsupported version.");
   const payload = JSON.stringify(envelope.payload);
   const actualHash = createHash("sha256").update(payload).digest("hex");
@@ -471,10 +539,20 @@ export interface ClinicalWorkspace {
   loadResourceVersions?(
     references: readonly string[],
   ): Promise<Record<string, string | null>>;
+  loadManagedProjectionInventory?(): Promise<Record<string, number>>;
+  loadCanonicalClinicalState?(): Promise<CanonicalClinicalState>;
   verifyProjection?(
     resources: Resource[],
     removedReferences?: readonly string[],
   ): Promise<boolean>;
+  captureSourceReadSet(
+    sourceReadSet: SourceReadSetV1,
+    expectedResources?: readonly Resource[],
+  ): Promise<SourceReadSetV1>;
+  refreshSourceReadSet(
+    sourceReadSet: SourceReadSetV1,
+    expectedResources?: readonly Resource[],
+  ): Promise<SourceReadSetV1>;
   loadCheckpoint(): Promise<ServiceCheckpoint | null>;
   loadCommandReceipt(key: string): Promise<CommandReceipt | null>;
   status(): Promise<ClinicalWorkspaceStatus>;
@@ -496,8 +574,24 @@ export class InMemoryClinicalWorkspace implements ClinicalWorkspace {
       Object.fromEntries(references.map((reference) => [reference, null])),
     );
   }
+  loadManagedProjectionInventory(): Promise<Record<string, number>> {
+    return Promise.resolve({});
+  }
   verifyProjection(): Promise<boolean> {
     return Promise.resolve(true);
+  }
+  captureSourceReadSet(
+    sourceReadSet: SourceReadSetV1,
+  ): Promise<SourceReadSetV1> {
+    const parsed = parseSourceReadSetV1(sourceReadSet);
+    if (parsed.evidenceAuthority !== "memory-demo-not-fhir-evident")
+      return Promise.reject(new Error("MEMORY_SOURCE_READ_AUTHORITY_INVALID"));
+    return Promise.resolve(parsed);
+  }
+  refreshSourceReadSet(
+    sourceReadSet: SourceReadSetV1,
+  ): Promise<SourceReadSetV1> {
+    return this.captureSourceReadSet(sourceReadSet);
   }
   loadCheckpoint(): Promise<ServiceCheckpoint | null> {
     return Promise.resolve(null);
@@ -865,6 +959,390 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
     return versions;
   }
 
+  async loadCanonicalClinicalState(): Promise<CanonicalClinicalState> {
+    await this.connect();
+    const canonicalTypes = [
+      "Practitioner",
+      "Patient",
+      "Task",
+      "Observation",
+      "Communication",
+      "DocumentReference",
+      "QuestionnaireResponse",
+    ] satisfies ResourceType[];
+    const scopedTenantTag = `${tenantTagSystem}|${tenantTag().code}`;
+    const scopedProjectionTag = `${managedProjectionTag.system}|${managedProjectionTag.code}`;
+    const readPass = async (): Promise<{
+      resources: Resource[];
+      fence: string;
+    }> => {
+      const resources: Resource[] = [];
+      for (const resourceType of canonicalTypes) {
+        const filter = `_tag=${encodeURIComponent(scopedTenantTag)}&_tag=${encodeURIComponent(scopedProjectionTag)}`;
+        const count = await this.client.search(
+          resourceType,
+          `${filter}&_summary=count&_total=accurate`,
+        );
+        if (!Number.isInteger(count.total) || (count.total ?? -1) < 0)
+          throw new Error(`CANONICAL_RESOURCE_COUNT_UNPROVEN:${resourceType}`);
+        const collected: Resource[] = [];
+        let pageCount = 0;
+        for await (const page of this.client.searchResourcePages(
+          resourceType,
+          new URLSearchParams(`${filter}&_count=100&_total=accurate`),
+        )) {
+          pageCount += 1;
+          if (pageCount > 100 || collected.length + page.length > 10_000)
+            throw new Error(
+              `CANONICAL_RESOURCE_SEARCH_INCOMPLETE:${resourceType}`,
+            );
+          collected.push(...page);
+        }
+        if (collected.length !== count.total)
+          throw new Error(`CANONICAL_RESOURCE_COUNT_MISMATCH:${resourceType}`);
+        const references = collected.map((resource) => {
+          if (!resource.id)
+            throw new Error(`CANONICAL_RESOURCE_ID_MISSING:${resourceType}`);
+          if (!resource.meta?.versionId)
+            throw new Error(
+              `CANONICAL_DOMAIN_VERSION_MISSING:${resource.resourceType}/${resource.id}`,
+            );
+          return `${resource.resourceType}/${resource.id}@${resource.meta.versionId}`;
+        });
+        if (new Set(references).size !== references.length)
+          throw new Error(`CANONICAL_RESOURCE_PAGE_DUPLICATE:${resourceType}`);
+        resources.push(...collected);
+      }
+      return {
+        resources,
+        fence: resources
+          .map(
+            (resource) =>
+              `${resource.resourceType}/${resource.id}@${resource.meta?.versionId}`,
+          )
+          .sort()
+          .join("\n"),
+      };
+    };
+    let previous = await readPass();
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const current = await readPass();
+      if (current.fence === previous.fence)
+        return fromFhirResourceSet(current.resources, {
+          requireServerVersion: true,
+        });
+      previous = current;
+    }
+    throw new Error("CANONICAL_RESOURCE_SNAPSHOT_UNSTABLE");
+  }
+
+  async loadManagedProjectionInventory(): Promise<Record<string, number>> {
+    await this.connect();
+    const scopedTenantTag = `${tenantTagSystem}|${tenantTag().code}`;
+    const scopedProjectionTag = `${managedProjectionTag.system}|${managedProjectionTag.code}`;
+    return Object.fromEntries(
+      await Promise.all(
+        managedClinicalResourceTypes.map(async (resourceType) => {
+          const filter = `_tag=${encodeURIComponent(scopedTenantTag)}&_tag=${encodeURIComponent(scopedProjectionTag)}`;
+          const count = await this.client.search(
+            resourceType,
+            `${filter}&_summary=count&_total=accurate`,
+          );
+          if (!Number.isInteger(count.total) || (count.total ?? -1) < 0)
+            throw new Error(
+              `MANAGED_PROJECTION_COUNT_UNPROVEN:${resourceType}`,
+            );
+          return [resourceType, count.total!] as const;
+        }),
+      ),
+    );
+  }
+
+  private async readSourceReadSet(
+    input: SourceReadSetV1,
+    requireDraftMatch: boolean,
+    expectedResources: readonly Resource[] = [],
+  ): Promise<SourceReadSetV1> {
+    await this.connect();
+    const reviewed = parseSourceReadSetV1(input);
+    const physicalReference = (logicalReference: string): string => {
+      const [resourceType, domainId] = logicalReference.split("/");
+      if (!resourceType || !domainId)
+        throw new Error(
+          `INVALID_CLINICAL_RESOURCE_REFERENCE:${logicalReference}`,
+        );
+      return `${resourceType}/${fhirResourceId(resourceType, domainId)}`;
+    };
+    const tagCode = (resource: Resource, system: string) =>
+      resource.meta?.tag?.find((tag) => tag.system === system)?.code ?? null;
+    const referenceOf = (resource: Resource): string => {
+      if (!resource.id) throw new Error("SOURCE_READ_RESOURCE_ID_MISSING");
+      return `${resource.resourceType}/${resource.id}`;
+    };
+    const logicalReferenceOf = (resource: Resource): string => {
+      const system = domainIdentifierSystems[resource.resourceType];
+      const identified = resource as Resource & {
+        identifier?: Array<{ system?: string; value?: string }>;
+      };
+      const domainId = identified.identifier?.find(
+        (identifier) => identifier.system === system,
+      )?.value;
+      // Authorized imported/native resources need not carry Pflegehelfer's
+      // projection identifier. Their server-owned physical reference remains
+      // the stable logical handle; managedProjection tags are never required
+      // for read evidence.
+      return domainId
+        ? `${resource.resourceType}/${domainId}`
+        : referenceOf(resource);
+    };
+    const expectedPhysicalByLogical = new Map(
+      reviewed.resources.map((resource) => [
+        resource.logicalReference,
+        physicalReference(resource.logicalReference),
+      ]),
+    );
+    const resourcesByReference = new Map<string, Resource>();
+    const expectedByReference = new Map<string, Resource>(
+      expectedResources.flatMap((resource) =>
+        resource.id
+          ? [[`${resource.resourceType}/${resource.id}`, resource] as const]
+          : [],
+      ),
+    );
+    const contentDigest = (resource: Resource): string => {
+      const normalized = structuredClone(resource);
+      if (normalized.meta) {
+        delete normalized.meta.versionId;
+        delete normalized.meta.lastUpdated;
+      }
+      const canonical = (value: unknown): string => {
+        if (value === null || typeof value !== "object")
+          return JSON.stringify(value);
+        if (Array.isArray(value))
+          return `[${value.map((item) => canonical(item)).join(",")}]`;
+        const record = value as Record<string, unknown>;
+        return `{${Object.keys(record)
+          .sort()
+          .map((key) => `${JSON.stringify(key)}:${canonical(record[key])}`)
+          .join(",")}}`;
+      };
+      return createHash("sha256").update(canonical(normalized)).digest("hex");
+    };
+    const selectorResults = [] as SourceReadSetV1["selectors"];
+    for (const selector of reviewed.selectors) {
+      const patientReference = `Patient/${fhirResourceId("Patient", selector.patientId)}`;
+      const encounterReference = `Encounter/${fhirResourceId("Encounter", selector.encounterId)}`;
+      const sort =
+        selector.order === "due-asc"
+          ? "_lastUpdated"
+          : selector.order === "effective-desc"
+            ? "-date"
+            : "-sent";
+      const query = new URLSearchParams({
+        patient: patientReference,
+        encounter: encounterReference,
+        _count: "100",
+        _total: "accurate",
+        _sort: sort,
+      });
+      const existing: Resource[] = [];
+      let pageCount = 0;
+      for await (const page of this.client.searchResourcePages(
+        selector.resourceType,
+        query,
+      )) {
+        pageCount += 1;
+        if (pageCount > 100 || existing.length + page.length > 10_000)
+          throw new Error("SOURCE_READ_SELECTOR_INCOMPLETE");
+        existing.push(...page);
+      }
+      const matching = existing.filter((resource) => {
+        const candidate = resource as Resource & {
+          for?: { reference?: string };
+          subject?: { reference?: string };
+          encounter?: { reference?: string };
+          businessStatus?: { coding?: Array<{ code?: string }> };
+        };
+        const patientMatches =
+          (candidate.for?.reference ?? candidate.subject?.reference) ===
+          patientReference;
+        if (
+          !patientMatches ||
+          candidate.encounter?.reference !== encounterReference
+        )
+          return false;
+        if (selector.predicate === "task-open") {
+          const state = candidate.businessStatus?.coding?.find(({ code }) =>
+            Boolean(code),
+          )?.code;
+          if (!state)
+            throw new Error(
+              `SOURCE_READ_SELECTOR_STATE_MISSING:${referenceOf(resource)}`,
+            );
+          return state !== "completed";
+        }
+        if (selector.predicate === "observation-accepted") {
+          const state = tagCode(resource, observationApprovalStateSystem);
+          if (!state)
+            throw new Error(
+              `SOURCE_READ_SELECTOR_STATE_MISSING:${referenceOf(resource)}`,
+            );
+          return state === "accepted";
+        }
+        const state = tagCode(resource, communicationWorkflowStateSystem);
+        if (!state)
+          throw new Error(
+            `SOURCE_READ_SELECTOR_STATE_MISSING:${referenceOf(resource)}`,
+          );
+        return state !== "closed";
+      });
+      matching.sort((left, right) => {
+        const leftRecord = left as Resource & {
+          restriction?: { period?: { end?: string } };
+          executionPeriod?: { end?: string };
+          effectiveDateTime?: string;
+          sent?: string;
+        };
+        const rightRecord = right as typeof leftRecord;
+        const leftValue =
+          selector.order === "due-asc"
+            ? (leftRecord.restriction?.period?.end ??
+              leftRecord.executionPeriod?.end ??
+              "9999")
+            : selector.order === "effective-desc"
+              ? (leftRecord.effectiveDateTime ?? "")
+              : (leftRecord.sent ?? "");
+        const rightValue =
+          selector.order === "due-asc"
+            ? (rightRecord.restriction?.period?.end ??
+              rightRecord.executionPeriod?.end ??
+              "9999")
+            : selector.order === "effective-desc"
+              ? (rightRecord.effectiveDateTime ?? "")
+              : (rightRecord.sent ?? "");
+        const direction = selector.order === "due-asc" ? 1 : -1;
+        return (
+          direction * leftValue.localeCompare(rightValue) ||
+          referenceOf(left).localeCompare(referenceOf(right))
+        );
+      });
+      for (const resource of matching)
+        resourcesByReference.set(referenceOf(resource), resource);
+      const orderedReferences = matching.map(referenceOf);
+      const membershipReferences = [...orderedReferences].sort();
+      const selectedReferences = orderedReferences.slice(0, selector.limit);
+      if (requireDraftMatch) {
+        const expectedMembership = selector.membershipReferences
+          .map((reference) =>
+            reviewed.evidenceAuthority === "fhir-meta-versionId"
+              ? reference
+              : physicalReference(reference),
+          )
+          .sort();
+        const expectedSelected = selector.selectedReferences.map((reference) =>
+          reviewed.evidenceAuthority === "fhir-meta-versionId"
+            ? reference
+            : physicalReference(reference),
+        );
+        if (
+          JSON.stringify(expectedMembership) !==
+            JSON.stringify(membershipReferences) ||
+          JSON.stringify(expectedSelected) !==
+            JSON.stringify(selectedReferences)
+        )
+          throw new Error(`SOURCE_READ_SET_DRAFT_STALE:${selector.id}`);
+      }
+      selectorResults.push({
+        ...selector,
+        totalCount: membershipReferences.length,
+        // searchResourcePages exposes resource arrays, not the raw Bundle
+        // total/next-link evidence. We therefore cannot prove that the
+        // selector exhausted the server result set and must fail closed on
+        // completeness and absence claims even after consuming every yielded
+        // page. Membership/version evidence remains usable for positive reads.
+        complete: false,
+        absenceObserved: false,
+        membershipReferences,
+        selectedReferences,
+      });
+    }
+    for (const reviewedResource of reviewed.resources) {
+      const reference =
+        reviewed.evidenceAuthority === "fhir-meta-versionId"
+          ? reviewedResource.reference
+          : expectedPhysicalByLogical.get(reviewedResource.logicalReference)!;
+      if (resourcesByReference.has(reference)) continue;
+      const [resourceType, id] = reference.split("/");
+      try {
+        const resource = await this.client.readResource(
+          resourceType as ResourceType,
+          id!,
+        );
+        resourcesByReference.set(reference, resource);
+      } catch (error) {
+        if (isNotFoundError(error))
+          throw new Error(`SOURCE_READ_RESOURCE_MISSING:${reference}`);
+        throw error;
+      }
+    }
+    const reviewedByLogical = new Map(
+      reviewed.resources.map((resource) => [
+        resource.logicalReference,
+        resource,
+      ]),
+    );
+    const resources: SourceReadResource[] = [
+      ...resourcesByReference.values(),
+    ].map((resource) => {
+      const reference = referenceOf(resource);
+      const logicalReference = logicalReferenceOf(resource);
+      const version = resource.meta?.versionId;
+      if (!version)
+        throw new Error(`MEDPLUM_RESOURCE_VERSION_MISSING:${reference}`);
+      const prior = reviewedByLogical.get(logicalReference);
+      const expected = expectedByReference.get(reference);
+      if (
+        requireDraftMatch &&
+        prior &&
+        (!expected || contentDigest(expected) !== contentDigest(resource))
+      )
+        throw new Error(`SOURCE_READ_RESOURCE_CONTENT_CHANGED:${reference}`);
+      return {
+        reference,
+        logicalReference,
+        version,
+        ...(prior?.patientId ? { patientId: prior.patientId } : {}),
+        ...(prior?.encounterId ? { encounterId: prior.encounterId } : {}),
+        claims: prior?.claims ?? [],
+      };
+    });
+    return buildSourceReadSetV1({
+      schemaVersion: 1,
+      evidenceAuthority: "fhir-meta-versionId",
+      capturedAt: new Date().toISOString(),
+      purpose: reviewed.purpose,
+      policyVersion: reviewed.policyVersion,
+      patientId: reviewed.patientId,
+      encounterId: reviewed.encounterId,
+      resources,
+      selectors: selectorResults,
+    });
+  }
+
+  captureSourceReadSet(
+    sourceReadSet: SourceReadSetV1,
+    expectedResources: readonly Resource[] = [],
+  ): Promise<SourceReadSetV1> {
+    return this.readSourceReadSet(sourceReadSet, true, expectedResources);
+  }
+
+  refreshSourceReadSet(
+    sourceReadSet: SourceReadSetV1,
+    expectedResources: readonly Resource[] = [],
+  ): Promise<SourceReadSetV1> {
+    return this.readSourceReadSet(sourceReadSet, false, expectedResources);
+  }
+
   async verifyProjection(
     resources: Resource[],
     removedReferences: readonly string[] = [],
@@ -1131,6 +1609,15 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
       );
     } catch (error) {
       if (isNotFoundError(error)) return null;
+      if (
+        error instanceof Error &&
+        error.message === "Medplum command receipt has an unsupported version."
+      )
+        throw new DomainError(
+          "INVALID_STATE",
+          "Der frühere Operationsbeleg kann nach dem Sicherheitsupgrade nicht automatisch wiederaufgenommen werden. Bitte den Status prüfen, bevor eine neue Aktion gestartet wird.",
+          409,
+        );
       throw error;
     }
   }
@@ -1163,6 +1650,7 @@ export class MedplumClinicalWorkspace implements ClinicalWorkspace {
         "Observation",
         "Communication",
         "DocumentReference",
+        "QuestionnaireResponse",
         "CarePlan",
         "Goal",
       ] satisfies ResourceType[];

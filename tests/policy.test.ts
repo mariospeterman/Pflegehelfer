@@ -342,6 +342,7 @@ describe("least-privilege policy", () => {
     expect(firstSweep.communications[0]).toMatchObject({
       id: message.id,
       state: "escalated",
+      priority: message.priority,
       recipientId: "u-physician",
       escalationRecipientRole: "physician",
     });

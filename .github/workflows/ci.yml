@@ -9,13 +9,183 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with: { version: 11.19.0 }
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with: { node-version: 24.19.0, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: pnpm verify
       - run: pnpm verify:security
       - run: pnpm verify:e2e
       - run: pnpm verify:ops
+
+  real-stack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      PFH_RUNTIME_PROFILE: integrated-demo
+      PFH_DEMO_MODE: "true"
+      PFH_STORAGE_MODE: medplum
+      PFH_AI_MODE: deterministic
+      PFH_DEEP_LLM_MODE: deterministic
+      PFH_ASR_MODE: browser
+      PFH_TTS_MODE: browser
+      PFH_ALLOW_EXTERNAL_AI: "false"
+      PFH_MEDPLUM_INTEGRATION_TEST: "true"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with: { version: 11.19.0 }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with: { node-version: 24.19.0, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - name: Prepare isolated E2E namespace
+        run: |
+          nonce="gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          project="pfh-e2e-${nonce}"
+          app_port="$((42000 + GITHUB_RUN_ID % 1000))"
+          echo "PFH_E2E_RUN_NONCE=$nonce" >> "$GITHUB_ENV"
+          echo "PFH_COMPOSE_PROJECT=$project" >> "$GITHUB_ENV"
+          echo "PFH_APP_HOST_PORT=$app_port" >> "$GITHUB_ENV"
+          echo "PFH_OPERATIONAL_HOST_PORT=$((app_port + 1000))" >> "$GITHUB_ENV"
+          echo "PFH_MEDPLUM_HOST_PORT=$((app_port + 2000))" >> "$GITHUB_ENV"
+          echo "PFH_MEDPLUM_APP_HOST_PORT=$((app_port + 3000))" >> "$GITHUB_ENV"
+          echo "PFH_PROVIDER_HOST_PORT=$((app_port + 4000))" >> "$GITHUB_ENV"
+          echo "PFH_IDP_HOST_PORT=$((app_port + 5000))" >> "$GITHUB_ENV"
+          echo "PFH_E2E_BASE_URL=http://127.0.0.1:$app_port" >> "$GITHUB_ENV"
+          echo "PFH_BUILD_SHA=$GITHUB_SHA" >> "$GITHUB_ENV"
+          echo "PFH_IMAGE=pflegehelfer-e2e:$GITHUB_SHA" >> "$GITHUB_ENV"
+      - name: Validate isolated E2E namespace
+        run: pnpm e2e:guard
+      - name: Build and tag the exact application image once
+        run: |
+          pnpm demo:env
+          docker build \
+            --build-arg "PFH_BUILD_SHA=$PFH_BUILD_SHA" \
+            --tag "$PFH_IMAGE" .
+      - name: Install real-stack browser
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Start isolated synthetic stack
+        run: |
+          docker compose -p "$PFH_COMPOSE_PROJECT" --env-file .env.demo \
+            up -d --no-build --wait --wait-timeout 900 \
+            pflegehelfer-postgres medplum-postgres medplum-redis medplum-server medplum-app provider-simulator
+      - name: Provision restricted runtime principal
+        run: |
+          set -a
+          source .env.demo
+          set +a
+          owner_url="$(node -e 'const u=new URL(process.env.PFH_OPERATIONAL_DATABASE_URL);u.port=process.env.PFH_OPERATIONAL_HOST_PORT;process.stdout.write(u.href)')"
+          runtime_url="$(node -e 'const u=new URL(process.env.PFH_OPERATIONAL_DATABASE_URL);u.port=process.env.PFH_OPERATIONAL_HOST_PORT;u.username="pflegehelfer_runtime";u.password=process.env.PFH_RUNTIME_POSTGRES_PASSWORD;process.stdout.write(u.href)')"
+          echo "::add-mask::$PFH_OPERATIONAL_DATABASE_URL"
+          echo "::add-mask::$owner_url"
+          echo "::add-mask::$runtime_url"
+          echo "PFH_MIGRATION_DATABASE_URL=$owner_url" >> "$GITHUB_ENV"
+          echo "PFH_OPERATIONAL_DATABASE_URL=$runtime_url" >> "$GITHUB_ENV"
+          echo "PFH_FHIR_BASE_URL=http://127.0.0.1:$PFH_MEDPLUM_HOST_PORT/" >> "$GITHUB_ENV"
+          echo "MEDPLUM_APP_BASE_URL=http://127.0.0.1:$PFH_MEDPLUM_APP_HOST_PORT/" >> "$GITHUB_ENV"
+          echo "PFH_PROVIDER_SIMULATOR_BASE_URL=http://127.0.0.1:$PFH_PROVIDER_HOST_PORT" >> "$GITHUB_ENV"
+          for name in MEDPLUM_DEFAULT_SUPER_ADMIN_CLIENT_ID MEDPLUM_DEFAULT_SUPER_ADMIN_CLIENT_SECRET PFH_PROVIDER_SIMULATOR_TOKEN; do
+            value="${!name}"
+            echo "::add-mask::$value"
+            echo "$name=$value" >> "$GITHUB_ENV"
+          done
+      - name: Apply owner migrations before any runtime test
+        run: |
+          PFH_OIDC_MEMBERSHIPS_JSON="$(node -e '
+            const base = process.env.PFH_E2E_BASE_URL;
+            process.stdout.write(JSON.stringify([
+              {organizationId:"org-demo",issuer:`http://127.0.0.1:${process.env.PFH_IDP_HOST_PORT}`,subject:"synthetic-org-demo-nora",actorId:"u-nurse",membershipVersion:1,policyVersion:"directory-v2-ci",active:true},
+              {organizationId:"org-demo",issuer:`${base}/synthetic-idp`,subject:"synthetic-org-demo-nora",actorId:"u-nurse",membershipVersion:1,policyVersion:"directory-v2-ci",active:true}
+            ]));')"
+          export PFH_OIDC_MEMBERSHIPS_JSON
+          PFH_DEMO_MODE=true pnpm db:migrate
+      - name: Seed authenticated Medplum project
+        run: pnpm demo:seed
+      - name: Mandatory PostgreSQL, Medplum and provider acceptance
+        run: |
+          PFH_TEST_IDP=true PORT="$PFH_IDP_HOST_PORT" HOST=127.0.0.1 \
+            PFH_TEST_IDP_ISSUER="http://127.0.0.1:$PFH_IDP_HOST_PORT" \
+            PFH_TEST_IDP_CLIENT_ID=pflegehelfer-test \
+            PFH_TEST_IDP_REDIRECT_URI="$PFH_E2E_BASE_URL/api/v1/auth/callback" \
+            PFH_TEST_IDP_POST_LOGOUT_REDIRECT_URI="$PFH_E2E_BASE_URL/api/v1/auth/logout/callback" \
+            pnpm exec tsx src/server/test-idp.ts > /tmp/pfh-test-idp.log 2>&1 &
+          idp_pid=$!
+          trap 'kill "$idp_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent "http://127.0.0.1:$PFH_IDP_HOST_PORT/health" >/dev/null; then break; fi
+            if [ "$attempt" = 30 ]; then exit 1; fi
+            sleep 1
+          done
+          export PFH_TEST_OIDC_ISSUER="http://127.0.0.1:$PFH_IDP_HOST_PORT"
+          export PFH_TEST_OIDC_REDIRECT_URI="$PFH_E2E_BASE_URL/api/v1/auth/callback"
+          export PFH_TEST_OIDC_POST_LOGOUT_REDIRECT_URI="$PFH_E2E_BASE_URL/api/v1/auth/logout/callback"
+          pnpm exec vitest run --maxWorkers=1 \
+            tests/migrations.test.ts \
+            tests/postgres-oidc-bff.test.ts \
+            tests/postgres-legacy-capability-upgrade.test.ts \
+            tests/postgres-operational-store.test.ts \
+            tests/postgres-atomic-acceptance.test.ts \
+            tests/postgres-clinical-projection-order.regression-1.test.ts \
+            tests/postgres-natural-coworker-continuity.regression-1.test.ts \
+            tests/postgres-provider-worker.test.ts \
+            tests/postgres-sync-summary.regression-1.test.ts \
+            tests/postgres-workspace-collaboration.test.ts \
+            tests/medplum-concurrency.integration.test.ts \
+            tests/provider-simulator-process.test.ts
+      - name: Start built BFF/PWA and prove authenticated stack wiring
+        run: |
+          docker compose -p "$PFH_COMPOSE_PROJECT" --env-file .env.demo --profile showcase \
+            up -d --no-build --wait --wait-timeout 900 pflegehelfer
+          base="$PFH_E2E_BASE_URL"
+          cookie_jar=/tmp/pfh-synthetic-cookie.jar
+          login_headers=/tmp/pfh-login.headers
+          authorize_headers=/tmp/pfh-authorize.headers
+          curl --fail --silent --show-error -D "$login_headers" -o /dev/null \
+            -c "$cookie_jar" "$base/api/v1/auth/login?returnTo=%2F"
+          authorization_url="$(awk 'BEGIN{IGNORECASE=1} /^location:/{sub(/\r$/,""); print $2}' "$login_headers")"
+          test -n "$authorization_url"
+          separator='?'
+          case "$authorization_url" in *\?*) separator='&' ;; esac
+          curl --fail --silent --show-error -D "$authorize_headers" -o /dev/null \
+            -b "$cookie_jar" -c "$cookie_jar" \
+            "${authorization_url}${separator}login_hint=nora.nurse"
+          callback_url="$(awk 'BEGIN{IGNORECASE=1} /^location:/{sub(/\r$/,""); print $2}' "$authorize_headers")"
+          test -n "$callback_url"
+          curl --fail --silent --show-error -o /dev/null \
+            -b "$cookie_jar" -c "$cookie_jar" "$callback_url"
+          curl --fail --silent --show-error -b "$cookie_jar" \
+            "$base/api/v1/auth/session" | grep -q '"authenticated":true'
+          curl --fail --silent --show-error -b "$cookie_jar" \
+            "$base/api/v1/snapshot" | grep -q '"currentUser"'
+          curl --fail --silent --show-error "$base/ready" | grep -q '"status":"ready"'
+          curl --fail --silent --show-error "$base/api/v1/build-info" | \
+            node -e '
+              let raw = "";
+              process.stdin.setEncoding("utf8");
+              process.stdin.on("data", (chunk) => { raw += chunk; });
+              process.stdin.on("end", () => {
+                const info = JSON.parse(raw);
+                const expected = process.env.PFH_BUILD_SHA.toLowerCase();
+                if (info.api?.sourceSha !== expected || info.pwa?.sourceSha !== expected ||
+                    info.api?.dirty !== false || info.pwa?.dirty !== false ||
+                    info.matchingSource !== true)
+                  throw new Error("served API/PWA build identity does not match PFH_BUILD_SHA");
+              });'
+      - name: Browser build-identity acceptance
+        run: pnpm verify:e2e:real-stack
+      - name: Tenant RLS adversarial checks
+        run: pnpm exec vitest run --maxWorkers=1 tests/postgres-rls.test.ts
+      - name: Dump isolated service diagnostics
+        if: failure()
+        run: |
+          pnpm e2e:guard
+          docker compose -p "$PFH_COMPOSE_PROJECT" --env-file .env.demo ps --all
+          docker compose -p "$PFH_COMPOSE_PROJECT" --env-file .env.demo logs \
+            --no-color --tail=300 pflegehelfer pflegehelfer-migrate test-idp
+      - name: Stop isolated stack
+        if: always()
+        run: |
+          pnpm e2e:guard
+          docker compose -p "$PFH_COMPOSE_PROJECT" --env-file .env.demo down -v --remove-orphans

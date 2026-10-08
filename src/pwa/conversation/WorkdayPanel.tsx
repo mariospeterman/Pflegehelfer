@@ -1,12 +1,16 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Patient } from "../../core/types";
 import type { WorkdayCommand, WorkdayView } from "../../core/workday";
+import { assistantClientContextHeaders } from "../assistant-context";
+import { authenticatedFetch, requestIntegrityHeaders } from "../auth";
+import { claimPlayback } from "./playback-owner";
 
 export function WorkdayPanel({
   workday,
   patients,
   busy,
   view,
+  userId,
   onPatient,
   onAction,
   onError,
@@ -16,6 +20,7 @@ export function WorkdayPanel({
   patients: Patient[];
   busy: boolean;
   view: "handover" | "plan" | "tasks";
+  userId: string;
   onPatient: (patientId: string) => void;
   onAction: (command: WorkdayCommand) => Promise<void>;
   onError: (message: string) => void;
@@ -32,9 +37,17 @@ export function WorkdayPanel({
   });
   const [readout, setReadout] = useState<{
     patientId: string | null;
-    state: "idle" | "playing" | "paused";
+    state: "idle" | "preparing" | "playing" | "paused";
   }>({ patientId: null, state: "idle" });
   const [readoutError, setReadoutError] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioUrlRef = useRef<string | null>(null);
+  const readoutRequestRef = useRef<{
+    generation: number;
+    abort: AbortController;
+  } | null>(null);
+  const readoutGenerationRef = useRef(0);
+  const releasePlaybackRef = useRef<(() => void) | null>(null);
   const [reviewEvidence, setReviewEvidence] = useState<string | null>(null);
   const [additionalOpen, setAdditionalOpen] = useState(false);
   const [additionalPatientId, setAdditionalPatientId] = useState(
@@ -42,6 +55,16 @@ export function WorkdayPanel({
   );
   const [additionalTitle, setAdditionalTitle] = useState("");
   const [actionBusy, setActionBusy] = useState(false);
+  const readoutContentRevision = JSON.stringify({
+    handoverVersion: workday.handover.version,
+    items: workday.handover.items,
+    plan: workday.plan,
+    patients: patients.map(({ id, displayName, room }) => ({
+      id,
+      displayName,
+      room,
+    })),
+  });
   const blocked = busy || actionBusy;
   const patientFor = (id: string) =>
     patients.find((patient) => patient.id === id) ?? null;
@@ -70,10 +93,12 @@ export function WorkdayPanel({
     );
     return [
       `${patient?.displayName ?? "Patient"}, Zimmer ${patient?.room ?? "unbekannt"}.`,
-      `Wichtig zu wissen: ${item?.currentImportant.join("; ") || "keine besonderen Hinweise"}.`,
-      `Was in der letzten Schicht passiert ist: ${item?.recentChanges.join("; ") || "keine neuen freigegebenen Einträge"}.`,
+      `Wichtig zu wissen: ${item?.currentImportant.join("; ") || "keine freigegebenen Angaben verfügbar"}.`,
+      `Was in der letzten Schicht passiert ist: ${item?.recentChanges.join("; ") || "keine freigegebenen Angaben verfügbar"}.`,
       `Wichtige nächste Schritte: ${[
-        ...(plan ? [`${plan.title}. ${plan.reason}`] : ["keine Planung"]),
+        ...(plan
+          ? [`${plan.title}. ${plan.reason}`]
+          : ["keine freigegebene Planung verfügbar"]),
         ...(item?.openQuestions ?? []),
       ].join("; ")}.`,
     ].join(" ");
@@ -101,7 +126,12 @@ export function WorkdayPanel({
 
   useEffect(
     () => () => {
+      readoutRequestRef.current?.abort.abort();
+      readoutRequestRef.current = null;
+      audioRef.current?.pause();
+      if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
       window.speechSynthesis?.cancel();
+      releasePlaybackRef.current?.();
     },
     [],
   );
@@ -115,39 +145,145 @@ export function WorkdayPanel({
       .finally(() => setActionBusy(false));
   };
 
-  const toggleReadout = (patientId: string) => {
-    if (!("speechSynthesis" in window)) {
-      setReadoutError("Vorlesen wird von diesem Browser nicht unterstützt.");
-      return;
-    }
+  const stopReadout = () => {
+    readoutRequestRef.current?.abort.abort();
+    readoutRequestRef.current = null;
+    audioRef.current?.pause();
+    audioRef.current = null;
+    if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
+    audioUrlRef.current = null;
+    window.speechSynthesis?.cancel();
+    releasePlaybackRef.current?.();
+    releasePlaybackRef.current = null;
+    setReadout({ patientId: null, state: "idle" });
+  };
+
+  useEffect(() => {
+    if (readout.patientId && readout.patientId !== expanded) stopReadout();
+  }, [expanded, readout.patientId]);
+
+  useEffect(() => stopReadout, [readoutContentRevision, userId]);
+
+  const toggleReadout = async (patientId: string) => {
     setReadoutError(null);
     if (readout.patientId === patientId && readout.state === "playing") {
-      window.speechSynthesis.pause();
+      if (audioRef.current) audioRef.current.pause();
+      else window.speechSynthesis?.pause();
       setReadout({ patientId, state: "paused" });
       return;
     }
     if (readout.patientId === patientId && readout.state === "paused") {
-      window.speechSynthesis.resume();
+      if (audioRef.current) await audioRef.current.play();
+      else window.speechSynthesis?.resume();
       setReadout({ patientId, state: "playing" });
       return;
     }
-    window.speechSynthesis.cancel();
-    if (window.speechSynthesis.paused) window.speechSynthesis.resume();
-    const utterance = new SpeechSynthesisUtterance(readoutText(patientId));
-    utterance.lang = "de-CH";
-    const voice = window.speechSynthesis
-      .getVoices()
-      .find((candidate) => /^de(-CH|-DE)?$/i.test(candidate.lang));
-    if (voice) utterance.voice = voice;
-    utterance.onend = () => setReadout({ patientId: null, state: "idle" });
-    utterance.onerror = () => {
+    const reset = (generation: number, audio?: HTMLAudioElement) => {
+      if (
+        readoutRequestRef.current?.generation !== generation ||
+        (audio && audioRef.current !== audio)
+      )
+        return;
+      readoutRequestRef.current = null;
+      audioRef.current = null;
+      if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
+      audioUrlRef.current = null;
+      releasePlaybackRef.current?.();
+      releasePlaybackRef.current = null;
       setReadout({ patientId: null, state: "idle" });
-      setReadoutError(
-        "Vorlesen wurde vom Browser beendet. Bitte erneut versuchen.",
-      );
     };
-    window.speechSynthesis.speak(utterance);
-    setReadout({ patientId, state: "playing" });
+    stopReadout();
+    const generation = ++readoutGenerationRef.current;
+    const abort = new AbortController();
+    readoutRequestRef.current = { generation, abort };
+    releasePlaybackRef.current = claimPlayback(stopReadout);
+    setReadout({ patientId, state: "preparing" });
+    const current = () =>
+      readoutRequestRef.current?.generation === generation &&
+      !abort.signal.aborted;
+    try {
+      const statusResponse = await authenticatedFetch("/api/v1/ai/status", {
+        signal: abort.signal,
+        headers: {
+          "x-demo-user": userId,
+          ...assistantClientContextHeaders(),
+        },
+      });
+      const status = (await statusResponse.json()) as {
+        tts?: { mode?: string; ready?: boolean; acceptance?: string };
+        message?: string;
+      };
+      if (!current()) return;
+      if (!statusResponse.ok)
+        throw new Error(status.message ?? "Sprachausgabe nicht verfügbar.");
+      const text = readoutText(patientId);
+      if (
+        status.tts?.ready &&
+        status.tts.acceptance === "accepted" &&
+        status.tts.mode !== "browser-demo"
+      ) {
+        const response = await authenticatedFetch("/api/v1/assistant/speech", {
+          method: "POST",
+          signal: abort.signal,
+          headers: {
+            "content-type": "application/json",
+            "x-demo-user": userId,
+            ...assistantClientContextHeaders(),
+            "x-command-id": crypto.randomUUID(),
+            ...requestIntegrityHeaders("POST"),
+          },
+          body: JSON.stringify({ text }),
+        });
+        if (!response.ok) {
+          const failure = (await response.json()) as { message?: string };
+          throw new Error(failure.message ?? "Sprachausgabe fehlgeschlagen.");
+        }
+        const blob = await response.blob();
+        if (!current()) return;
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        audioRef.current = audio;
+        audioUrlRef.current = url;
+        audio.onended = () => reset(generation, audio);
+        audio.onerror = () => {
+          if (current()) {
+            reset(generation, audio);
+            setReadoutError("Die Audiodatei konnte nicht abgespielt werden.");
+          }
+        };
+        setReadout({ patientId, state: "playing" });
+        await audio.play();
+        return;
+      }
+      if (status.tts?.mode === "browser-demo" && "speechSynthesis" in window) {
+        if (!current()) return;
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = "de-CH";
+        const voice = window.speechSynthesis
+          .getVoices()
+          .find((candidate) => /^de(-CH|-DE)?$/i.test(candidate.lang));
+        if (voice) utterance.voice = voice;
+        utterance.onend = () => reset(generation);
+        utterance.onerror = () => {
+          if (current()) {
+            reset(generation);
+            setReadoutError("Browser-Vorlesen wurde abgebrochen.");
+          }
+        };
+        window.speechSynthesis.speak(utterance);
+        setReadout({ patientId, state: "playing" });
+        return;
+      }
+      throw new Error("Sprachausgabe ist in diesem Modus nicht freigegeben.");
+    } catch (error) {
+      if (abort.signal.aborted) return;
+      reset(generation);
+      setReadoutError(
+        error instanceof Error
+          ? error.message
+          : "Sprachausgabe fehlgeschlagen.",
+      );
+    }
   };
 
   const completedCount = workday.plan.filter(
@@ -240,8 +376,7 @@ export function WorkdayPanel({
                         readout.patientId &&
                         readout.patientId !== patientId
                       ) {
-                        window.speechSynthesis?.cancel();
-                        setReadout({ patientId: null, state: "idle" });
+                        stopReadout();
                       }
                       setExpanded(expanded === patientId ? null : patientId);
                     }}
@@ -276,14 +411,14 @@ export function WorkdayPanel({
                           <dt>Wichtig zu wissen</dt>
                           <dd>
                             {item?.currentImportant.join(" · ") ||
-                              "Keine besonderen Hinweise"}
+                              "Keine freigegebenen Angaben verfügbar"}
                           </dd>
                         </div>
                         <div>
                           <dt>Was in der letzten Schicht passiert ist</dt>
                           <dd>
                             {item?.recentChanges.join(" · ") ||
-                              "Keine neuen freigegebenen Einträge"}
+                              "Keine freigegebenen Angaben verfügbar"}
                           </dd>
                         </div>
                         <div>
@@ -291,7 +426,7 @@ export function WorkdayPanel({
                           <dd>
                             {plan
                               ? `${plan.title} · ${plan.reason}`
-                              : "Keine Planung"}
+                              : "Keine freigegebene Planung verfügbar"}
                             {item?.openQuestions.length
                               ? ` · ${item.openQuestions.join(" · ")}`
                               : ""}
@@ -311,7 +446,7 @@ export function WorkdayPanel({
                                 ? "weiterlesen"
                                 : "vorlesen"
                           }`}
-                          onClick={() => toggleReadout(patientId)}
+                          onClick={() => void toggleReadout(patientId)}
                           disabled={blocked}
                         >
                           <span aria-hidden="true">▷</span>
@@ -328,13 +463,7 @@ export function WorkdayPanel({
                             <button
                               type="button"
                               className="handover-readout-button"
-                              onClick={() => {
-                                window.speechSynthesis.cancel();
-                                setReadout({
-                                  patientId: null,
-                                  state: "idle",
-                                });
-                              }}
+                              onClick={stopReadout}
                             >
                               Stop
                             </button>

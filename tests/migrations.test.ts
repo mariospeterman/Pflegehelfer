@@ -27,10 +27,50 @@ describe("immutable migration ledger", () => {
       { version: 12, name: "012_workspace_collaboration.sql" },
       { version: 13, name: "013_demo_scenario_runs.sql" },
       { version: 14, name: "014_demo_scenario_ledger_repair.sql" },
+      { version: 15, name: "015_assistant_request_claims.sql" },
+      { version: 16, name: "016_fenced_assistant_request_claims.sql" },
+      {
+        version: 17,
+        name: "017_sanitize_assistant_request_archives.sql",
+      },
+      {
+        version: 18,
+        name: "018_bind_voice_authority_to_request.sql",
+      },
+      { version: 19, name: "019_force_tenant_rls.sql" },
+      { version: 20, name: "020_oidc_bff_sessions.sql" },
+      { version: 21, name: "021_bind_runtime_principal_tenant.sql" },
+      { version: 22, name: "022_bind_oidc_login_to_browser.sql" },
+      {
+        version: 23,
+        name: "023_sanitize_legacy_assistant_messages.sql",
+      },
+      {
+        version: 24,
+        name: "024_bind_proposals_to_source_read_set.sql",
+      },
+      { version: 25, name: "025_oidc_rp_initiated_logout.sql" },
+      { version: 26, name: "026_oidc_principal_memberships.sql" },
+      { version: 27, name: "027_provider_resource_ordering.sql" },
+      {
+        version: 28,
+        name: "028_resource_scoped_clinical_projection.sql",
+      },
+      { version: 29, name: "029_site_scoped_provider_delivery.sql" },
+      { version: 30, name: "030_common_application_command_boundary.sql" },
     ]);
     expect(
       migrations.every(({ checksum }) => /^[a-f0-9]{64}$/.test(checksum)),
     ).toBe(true);
+    expect(migrations.find(({ version }) => version === 27)?.sql).toContain(
+      "MIGRATION_ORDER_UNPROVEN",
+    );
+    expect(migrations.find(({ version }) => version === 28)?.sql).toContain(
+      "payload_schema_version",
+    );
+    expect(migrations.find(({ version }) => version === 29)?.sql).toContain(
+      "MIGRATION_SITE_UNPROVEN",
+    );
   });
 
   it("fails closed when an executed migration changes", async () => {

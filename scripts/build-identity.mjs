@@ -2,11 +2,22 @@ import { execFileSync, spawnSync } from "node:child_process";
 
 const SHA_PATTERN = /^[0-9a-f]{40,64}$/i;
 
-function normalizedSha(value) {
+export function normalizedSha(value) {
   const candidate = value?.trim();
   return candidate && SHA_PATTERN.test(candidate)
     ? candidate.toLowerCase()
     : null;
+}
+
+export function validateSuppliedBuildSha(environment = process.env) {
+  const supplied = environment.PFH_BUILD_SHA?.trim();
+  if (!supplied) return null;
+  const normalized = normalizedSha(supplied);
+  if (!normalized)
+    throw new Error(
+      "PFH_BUILD_SHA must be an exact 40-64 character hexadecimal source SHA.",
+    );
+  return normalized;
 }
 
 export function resolveBuildIdentity(environment = process.env) {

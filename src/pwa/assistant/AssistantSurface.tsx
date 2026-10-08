@@ -35,16 +35,23 @@ export interface ConversationOpening {
 }
 
 function createSubmissionChannel(): MutableSubmissionChannel {
-  const pending = new Map<string, VoiceSubmission>();
+  let pending: {
+    prompt: string;
+    voice: VoiceSubmission;
+    operationId: string | null;
+  } | null = null;
   return {
     set(prompt, voice) {
-      pending.clear();
-      pending.set(prompt, voice);
+      pending = { prompt, voice, operationId: null };
     },
-    take(prompt) {
-      const voice = pending.get(prompt) ?? null;
-      pending.delete(prompt);
-      return voice;
+    take(prompt, operationId) {
+      if (!pending || pending.prompt !== prompt) return null;
+      if (pending.operationId && pending.operationId !== operationId) {
+        pending = null;
+        return null;
+      }
+      pending.operationId = operationId;
+      return pending.voice;
     },
   };
 }
@@ -61,6 +68,21 @@ function ClinicalUserMessage({ message }: { message: UserMessage }) {
     <div className="user-message openui-agent-thread-message-user">
       <span>Du</span>
       <p>{text}</p>
+    </div>
+  );
+}
+
+function LocalizedThreadError() {
+  const threadError = useThread((state) => state.threadError);
+  const isRunning = useThread((state) => state.isRunning);
+  if (!threadError || isRunning) return null;
+  return (
+    <div className="assistant-error conversation-thread-error" role="alert">
+      <strong>Gespräch unterbrochen</strong>
+      <span>
+        {threadError.message ||
+          "Das Gespräch konnte nicht fortgesetzt werden. Bitte versuche es erneut."}
+      </span>
     </div>
   );
 }
@@ -150,7 +172,7 @@ export function AssistantSurface({
   snapshotRevision: string;
   opening: ConversationOpening;
   launchPrompt: { id: number; text: string; autoSubmit?: boolean } | null;
-  onSelectPatient: (patientId: string) => void;
+  onSelectPatient: (patientId: string | null) => void;
   onBusyChange: (busy: boolean) => void;
   externallyBusy: boolean;
   onNavigate: (destination: WorkspaceDestination) => void;
@@ -176,6 +198,7 @@ export function AssistantSurface({
       value={{
         userId,
         patient,
+        connected: online,
         onPatient: onSelectPatient,
         onHandoff,
         onExecuted,
@@ -261,6 +284,7 @@ export function AssistantSurface({
                   assistantMessage={ClinicalAssistantMessage}
                   userMessage={ClinicalUserMessage}
                 />
+                <LocalizedThreadError />
               </div>
             </AgentInterface.ScrollArea>
             <AgentInterface.Composer>

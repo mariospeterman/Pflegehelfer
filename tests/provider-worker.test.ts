@@ -11,6 +11,7 @@ import {
   type ProviderOutboxJob,
 } from "../src/core/provider-integration/index.js";
 import { PflegehelferService } from "../src/core/service.js";
+import { fhirResourceId } from "../src/core/fhir-resource-set.js";
 
 function command(key: string): CanonicalClinicalCommand {
   const id = randomUUID();
@@ -159,13 +160,13 @@ describe("bounded provider delivery worker", () => {
       canonicalClinicalCommandSchema.parse(pending[0]!.command),
     ).not.toThrow();
     expect(pending[0]!.command).toMatchObject({
-      patientReference: "Patient/p-anna",
-      encounterReference: "Encounter/enc-anna-2026",
+      patientReference: `Patient/${fhirResourceId("Patient", "p-anna")}`,
+      encounterReference: `Encounter/${fhirResourceId("Encounter", "enc-anna-2026")}`,
       resource: {
-        id: draft.id,
+        id: fhirResourceId("Observation", draft.id),
         body: {
-          patientId: "p-anna",
-          encounterId: "enc-anna-2026",
+          patientId: fhirResourceId("Patient", "p-anna"),
+          encounterId: fhirResourceId("Encounter", "enc-anna-2026"),
         },
       },
     });
@@ -314,6 +315,10 @@ describe("bounded provider delivery worker", () => {
       }).runOnce(),
     ).resolves.toMatchObject({ retrying: 0, manual: 1 });
     expect(unsafeStore.failures[0]?.retryAt).toBeNull();
+    expect(unsafeStore.failures[0]).toMatchObject({
+      errorCode: "UNCERTAIN_REMOTE_OUTCOME",
+      errorClassification: "version-conflict",
+    });
   });
 
   it("fails closed before adapter execution when delivery authority is revoked", async () => {

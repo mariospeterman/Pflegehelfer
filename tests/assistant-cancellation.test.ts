@@ -13,6 +13,54 @@ afterEach(async () => {
 });
 
 describe("assistant request cancellation", () => {
+  it("replays one durable response for a retried assistant command", async () => {
+    const operationalStore = new InMemoryOperationalStore();
+    const append = vi.spyOn(operationalStore, "appendConversationTurn");
+    const app = buildApp(undefined, {
+      demoMode: true,
+      operationalStore,
+      modelGateway: new ModelGateway({ PFH_AI_MODE: "deterministic" }),
+    });
+    apps.push(app);
+    await app.inject({
+      method: "POST",
+      url: "/api/v1/assistant/context",
+      headers: {
+        "x-demo-user": "u-assistant",
+        "x-command-id": crypto.randomUUID(),
+      },
+      payload: { patientId: "p-luca" },
+    });
+    const commandId = crypto.randomUUID();
+    const request = {
+      method: "POST" as const,
+      url: "/api/v1/assistant/query",
+      headers: {
+        "x-demo-user": "u-assistant",
+        "x-command-id": commandId,
+      },
+      payload: {
+        patientId: "p-luca",
+        prompt: "Zeige mir die freigegebene Übersicht.",
+        inputModality: "typed" as const,
+      },
+    };
+
+    const first = await app.inject(request);
+    const replay = await app.inject(request);
+
+    expect(first.statusCode).toBe(200);
+    expect(replay.statusCode).toBe(200);
+    expect(replay.json()).toEqual(first.json());
+    expect(append).toHaveBeenCalledTimes(1);
+
+    const mismatch = await app.inject({
+      ...request,
+      payload: { ...request.payload, prompt: "Andere Anfrage." },
+    });
+    expect(mismatch.statusCode).toBe(409);
+  });
+
   it("retains one-use authority after a normally delivered HTTP response", async () => {
     const operationalStore = new InMemoryOperationalStore();
     const app = buildApp(undefined, {
@@ -92,7 +140,7 @@ describe("assistant request cancellation", () => {
   });
 
   it.each(["/api/v1/assistant/query", "/api/v1/assistant/query/stream"])(
-    "revokes authority when the client disconnects during durable insertion at %s",
+    "keeps the atomically committed pending review when the response is lost at %s",
     async (url) => {
       const operationalStore = new InMemoryOperationalStore();
       const app = buildApp(undefined, {
@@ -162,21 +210,22 @@ describe("assistant request cancellation", () => {
         clientRequest.end(body);
       });
       await insertionReached;
-      await new Promise((resolve) => setTimeout(resolve, 20));
 
       expect(stored).toBeDefined();
       const authority = stored!;
-      await expect(
-        operationalStore.loadIntentAuthority({
-          tokenHash: authority.tokenHash,
-          actorId: authority.record.actorId,
-          sessionId: authority.sessionId,
-          threadId: authority.threadId,
-          contextRevision: authority.contextRevision,
-          patientId: authority.record.patientId,
-          encounterId: authority.record.encounterId,
-        }),
-      ).resolves.toBeNull();
+      await vi.waitFor(async () => {
+        await expect(
+          operationalStore.loadIntentAuthority({
+            tokenHash: authority.tokenHash,
+            actorId: authority.record.actorId,
+            sessionId: authority.sessionId,
+            threadId: authority.threadId,
+            contextRevision: authority.contextRevision,
+            patientId: authority.record.patientId,
+            encounterId: authority.record.encounterId,
+          }),
+        ).resolves.toMatchObject({ command: "care-update:draft" });
+      });
     },
   );
 
@@ -203,28 +252,19 @@ describe("assistant request cancellation", () => {
         payload: { patientId: "p-anna" },
       });
 
-      let stored:
-        | Parameters<InMemoryOperationalStore["storeIntentAuthority"]>[0]
-        | undefined;
-      const originalStore =
-        operationalStore.storeIntentAuthority.bind(operationalStore);
-      vi.spyOn(operationalStore, "storeIntentAuthority").mockImplementation(
-        async (input) => {
-          stored = input;
-          await originalStore(input);
-        },
-      );
+      const storeAuthority = vi.spyOn(operationalStore, "storeIntentAuthority");
       vi.spyOn(
         operationalStore,
         "appendConversationTurn",
       ).mockRejectedValueOnce(new Error("synthetic-thread-write-failure"));
 
+      const commandId = crypto.randomUUID();
       const response = await app.inject({
         method: "POST",
         url,
         headers: {
           "x-demo-user": "u-nurse",
-          "x-command-id": crypto.randomUUID(),
+          "x-command-id": commandId,
         },
         payload: {
           patientId: "p-anna",
@@ -238,19 +278,23 @@ describe("assistant request cancellation", () => {
         expect(response.body).toContain(
           "Die Assistenzantwort konnte nicht sicher übertragen werden.",
         );
-      expect(stored).toBeDefined();
-      const authority = stored!;
-      await expect(
-        operationalStore.loadIntentAuthority({
-          tokenHash: authority.tokenHash,
-          actorId: authority.record.actorId,
-          sessionId: authority.sessionId,
-          threadId: authority.threadId,
-          contextRevision: authority.contextRevision,
-          patientId: authority.record.patientId,
-          encounterId: authority.record.encounterId,
-        }),
-      ).resolves.toBeNull();
+      expect(storeAuthority).not.toHaveBeenCalled();
+
+      const retry = await app.inject({
+        method: "POST",
+        url,
+        headers: {
+          "x-demo-user": "u-nurse",
+          "x-command-id": commandId,
+        },
+        payload: {
+          patientId: "p-anna",
+          prompt: "Mobilisiert, Puls 82.",
+          inputModality: "typed",
+        },
+      });
+      expect(retry.statusCode).toBe(200);
+      expect(storeAuthority).toHaveBeenCalledTimes(1);
     },
   );
 });

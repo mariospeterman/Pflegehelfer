@@ -27,6 +27,7 @@
     "vite.config.ts",
     "vitest.config.ts",
     "playwright.config.ts",
+    "playwright.real-stack.config.ts",
     "tests"
   ]
 }

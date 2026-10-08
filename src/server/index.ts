@@ -24,6 +24,8 @@ import { loadOrganizationCommercialConfig } from "../core/organization-economics
 import { siteConfiguration } from "../core/site-config.js";
 import { runtimeProfileFromEnvironment } from "./runtime-profile.js";
 import { installDemoScenarioRuntime } from "../core/demo-scenario-runtime.js";
+import { scenarioDigest } from "../core/demo-scenario.js";
+import { validateCanonicalClinicalReferences } from "../core/fhir-resource-set.js";
 
 const port = Number.parseInt(process.env.PORT ?? "4173", 10);
 const host = process.env.HOST ?? "127.0.0.1";
@@ -66,16 +68,22 @@ const commercialConfiguration = loadOrganizationCommercialConfig();
 if (commercialConfiguration.organizationId !== siteConfiguration.institutionId)
   throw new Error("COMMERCIAL_CONFIGURATION_SCOPE_MISMATCH");
 await commercialStore.initialize(commercialConfiguration);
-const [projectedCheckpoint, locallyAcceptedCheckpoint] = await Promise.all([
-  workspace.loadCheckpoint(),
-  operationalStore.loadLatestAcceptedCheckpoint(),
-]);
-const recoveryCheckpoint = locallyAcceptedCheckpoint ?? projectedCheckpoint;
-if (recoveryCheckpoint) service.restoreCheckpoint(recoveryCheckpoint);
+const projectedCheckpoint = demoMode ? null : await workspace.loadCheckpoint();
+if (projectedCheckpoint) service.restoreCheckpoint(projectedCheckpoint);
+else if (!demoMode)
+  throw new Error(
+    "RESOURCE_NATIVE_CUTOVER_RECEIPT_REQUIRED: normal startup will not infer authorization or clinical authority from an unverified FHIR inventory",
+  );
+const durableAuditEntries = await operationalStore.loadAuditEntries();
+if (durableAuditEntries.length > 0) service.audit.restore(durableAuditEntries);
 if (demoMode) installDemoScenarioRuntime(service.checkpoint().state);
 // Historical Provenance/AuditEvent resources are already append-only in
-// Medplum and must not be rewritten on every boot. Current clinical resources
-// and the authenticated checkpoint are sufficient for restart reconciliation.
+// Medplum and must not be rewritten on every boot. The active synthetic
+// scenario is transactionally advanced with accepted commands. Production
+// continues to restore its authenticated scoped legacy checkpoint until an
+// explicit inventory/digest-bound cutover has materialized and verified every
+// native resource plus a separate authorization directory. Normal startup is
+// never allowed to perform that migration implicitly.
 const startupResources = service
   .fhirResources()
   .filter(
@@ -83,10 +91,73 @@ const startupResources = service
       resource.resourceType !== "AuditEvent" &&
       resource.resourceType !== "Provenance",
   );
-await workspace.initialize(startupResources, service.checkpoint(), {
-  // A locally accepted checkpoint must reach Medplum through its leased
-  // clinical projection job. Startup must not bypass that durable queue.
-  reconcile: projectedCheckpoint === null && locallyAcceptedCheckpoint === null,
+let bootstrapEmptyDemoProjection = false;
+if (demoMode && workspace.mode === "medplum") {
+  if (!workspace.loadManagedProjectionInventory)
+    throw new Error("MANAGED_PROJECTION_INVENTORY_READ_NOT_AVAILABLE");
+  const actual = await workspace.loadManagedProjectionInventory();
+  const actualTotal = Object.values(actual).reduce(
+    (total, count) => total + count,
+    0,
+  );
+  const diagnostics = await operationalStore.deliveryDiagnostics();
+  const unresolvedClinical = Object.entries(
+    diagnostics.clinicalProjections,
+  ).some(([state, count]) => state !== "delivered" && count > 0);
+  if (actualTotal === 0) {
+    if (unresolvedClinical)
+      throw new Error("DEMO_BOOTSTRAP_BLOCKED_BY_PENDING_CLINICAL_PROJECTION");
+    bootstrapEmptyDemoProjection = true;
+  } else if (!unresolvedClinical) {
+    if (!workspace.loadCanonicalClinicalState || !activeScenario)
+      throw new Error("RESOURCE_NATIVE_CLINICAL_READ_NOT_AVAILABLE");
+    const native = await workspace.loadCanonicalClinicalState();
+    // Resource-native clinical data may reference identities, but it is never
+    // an authorization directory. Bind every actor/owner reference to the
+    // already authenticated scenario directory before accepting the read.
+    validateCanonicalClinicalReferences(native, activeScenario.state.users);
+    const expectedClinicalState = {
+      users: activeScenario.state.users,
+      patients: activeScenario.state.patients,
+      tasks: activeScenario.state.tasks,
+      observations: activeScenario.state.observations,
+      notes: activeScenario.state.notes,
+      communications: activeScenario.state.communications,
+      intake: activeScenario.state.intake,
+      roundActions: activeScenario.state.roundActions,
+    };
+    const nativeClinicalState = {
+      users: native.users,
+      patients: native.patients,
+      tasks: native.tasks,
+      observations: native.observations,
+      notes: native.notes,
+      communications: native.communications,
+      intake: native.intake,
+      roundActions: native.roundActions,
+    };
+    const currentDiagnostics = await operationalStore.deliveryDiagnostics();
+    const acceptedDuringRead = Object.entries(
+      currentDiagnostics.clinicalProjections,
+    ).some(([state, count]) => state !== "delivered" && count > 0);
+    if (!acceptedDuringRead) {
+      // A non-empty FHIR inventory is not proof of a complete projection.
+      // Until an explicit generation/digest cutover exists, PostgreSQL stays
+      // authoritative and FHIR is verified against it, never copied over it.
+      if (
+        scenarioDigest(nativeClinicalState) !==
+        scenarioDigest(expectedClinicalState)
+      )
+        throw new Error("RESOURCE_NATIVE_PROJECTION_DIVERGENCE");
+    }
+  }
+}
+await workspace.initialize(startupResources, undefined, {
+  // Production startup is read-only. In particular, absence of a legacy
+  // checkpoint must never turn an empty process cache into a destructive
+  // stale-resource cleanup. Explicit migration materializes v2 resources;
+  // normal startup only verifies transport and reads native state.
+  reconcile: bootstrapEmptyDemoProjection,
 });
 const app = buildApp(service, {
   workspace,

@@ -146,4 +146,52 @@ describe("document inspection", () => {
       }),
     ).rejects.toThrow("DOCUMENT_INSPECTION_DIGEST_MISMATCH");
   });
+
+  it("rejects public parser egress unless its exact origin is reviewed", () => {
+    expect(
+      () =>
+        new LocalDocumentInspectionGateway({
+          baseUrl: "https://parser.example.invalid",
+        }),
+    ).toThrow("DOCUMENT_INSPECTION_ORIGIN_NOT_ALLOWED");
+    expect(
+      () =>
+        new LocalDocumentInspectionGateway({
+          baseUrl: "https://parser.example.invalid",
+          allowedOrigins: ["https://parser.example.invalid"],
+        }),
+    ).not.toThrow();
+  });
+
+  it("never follows redirects while attachment bytes are in flight", async () => {
+    let redirectedRequestSeen = false;
+    const server = createServer((request, response) => {
+      if (request.url === "/redirected") {
+        redirectedRequestSeen = true;
+        response.end();
+        return;
+      }
+      response.statusCode = 307;
+      response.setHeader("location", "/redirected");
+      response.end();
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("NO_ADDRESS");
+    const gateway = new LocalDocumentInspectionGateway({
+      baseUrl: `http://127.0.0.1:${address.port}`,
+    });
+    const bytes = new TextEncoder().encode("%PDF- synthetic");
+    const result = await gateway.inspect({
+      bytes,
+      fileName: "redirect.pdf",
+      mediaType: "application/pdf",
+      expectedSha256: createHash("sha256").update(bytes).digest("hex"),
+    });
+    expect(result.state).toBe("failed");
+    expect(redirectedRequestSeen).toBe(false);
+  });
 });
