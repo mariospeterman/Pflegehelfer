@@ -1185,6 +1185,7 @@ export function App() {
     return stored === "light" || stored === "dark" ? stored : "system";
   });
   const generation = useRef(0);
+  const contextTransition = useRef(0);
   const assistantContextBinding = useRef(
     createAssistantContextBindingCoordinator(),
   );
@@ -1464,6 +1465,7 @@ export function App() {
 
   const choosePatient = async (id: string | null): Promise<boolean> => {
     if (assistantBusy || contextBusy) return false;
+    const transition = ++contextTransition.current;
     const requestGeneration = generation.current;
     const requestUserId = userId;
     setContextBusy(true);
@@ -1501,12 +1503,12 @@ export function App() {
       );
       return false;
     } finally {
-      if (requestGeneration === generation.current && requestUserId === userId)
-        setContextBusy(false);
+      if (contextTransition.current === transition) setContextBusy(false);
     }
   };
   const changeUser = (next: string) => {
     generation.current += 1;
+    contextTransition.current += 1;
     rotateAssistantClientContext();
     assistantContextBinding.current.reset();
     setContextBusy(false);
